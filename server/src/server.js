@@ -41,21 +41,28 @@ const nextApp = next({
   dir: path.resolve(__dirname, "../.."),
 });
 const handleNextRequest = nextApp.getRequestHandler();
-const PORT = process.env.PORT || 3000;
+const PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
 const expoWebBuildDirectory = path.resolve(__dirname, "../../mobile/dist");
 const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
 const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
 const webClientOrigin = "'self'";
 
-const configuredOrigins = process.env.CORS_ORIGIN
-  ?.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean) || [];
+const configuredOrigins = new Set(
+  (process.env.CORS_ORIGIN || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
 
 // CORS configuration
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || configuredOrigins.includes(origin)) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (configuredOrigins.has(origin)) {
       callback(null, true);
       return;
     }
@@ -118,7 +125,7 @@ app.use((req, res, next) => {
   cors({
     ...corsOptions,
     origin: (origin, callback) => {
-      if (!origin || origin === requestOrigin || configuredOrigins.includes(origin)) {
+      if (!origin || origin === requestOrigin || configuredOrigins.has(origin)) {
         callback(null, true);
         return;
       }
@@ -136,6 +143,18 @@ app.use("/uploads", express.static(uploadDirectory, {
 }));
 if (hasExpoWebBuild) {
   app.use("/app", express.static(expoWebBuildDirectory, {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+  }));
+  app.use("/_expo", express.static(path.join(expoWebBuildDirectory, "_expo"), {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+  }));
+  app.use("/assets", express.static(path.join(expoWebBuildDirectory, "assets"), {
     immutable: !isDevelopment,
     maxAge: isDevelopment ? 0 : "1y",
     dotfiles: "deny",

@@ -2,7 +2,7 @@ require("dotenv").config();
 const prisma = require("../src/db/client");
 const { generateToken } = require("../src/utils/auth");
 
-const apiOrigin = (process.env.SMOKE_API_URL || "http://localhost:3000").replace(/\/+$/, "");
+const apiOrigin = (process.env.SMOKE_API_URL || "http://localhost:3001").replace(/\/+$/, "");
 const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 let reporterId;
 let subjectId;

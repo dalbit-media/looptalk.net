@@ -19,6 +19,13 @@ const parseMessages = (value) => {
   }
 };
 
+export const readConversationMessagesBatch = async (userId, conversationIds = []) => {
+  if (!userId || !conversationIds.length) return [];
+  const keys = conversationIds.map((conversationId) => conversationKey(userId, conversationId));
+  const entries = await AsyncStorage.multiGet(keys);
+  return entries.map(([, value]) => parseMessages(value));
+};
+
 export const readConversationMessages = async (userId, conversationId) => {
   if (!userId || !conversationId) return [];
   return parseMessages(await AsyncStorage.getItem(conversationKey(userId, conversationId)));

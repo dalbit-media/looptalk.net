@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from "react-native";
 import { useAuthStore } from "../../store/authStore";
+import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { SocialAuthButtons } from "../../components/SocialAuthButtons";
@@ -33,12 +34,27 @@ export const RegisterScreen = ({ route, navigation }) => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [bootstrapAvailable, setBootstrapAvailable] = useState(null);
   const invitationCode = route.params?.invitationCode || route.params?.code;
   const contactInputRef = useRef(null);
   const passwordInputRef = useRef(null);
   const confirmPasswordInputRef = useRef(null);
 
   const register = useAuthStore((state) => state.register);
+
+  useEffect(() => {
+    let active = true;
+    AuthAPI.getBootstrapStatus()
+      .then(({ bootstrapAvailable: available }) => {
+        if (active) setBootstrapAvailable(available);
+      })
+      .catch(() => {
+        if (active) setBootstrapAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleRegister = async () => {
     if (loading) return;
@@ -74,7 +90,7 @@ export const RegisterScreen = ({ route, navigation }) => {
       return;
     }
 
-    if (!invitationCode && !route.params?.isBootstrap) {
+    if (!invitationCode && bootstrapAvailable === false) {
       showAlert(t("common.error"), t("auth.invitationRequired"));
       return;
     }

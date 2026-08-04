@@ -6,6 +6,7 @@ import { useCallStore } from "./callStore";
 import {
   readMessageOutbox,
   readConversationMessages,
+  readConversationMessagesBatch,
   updateMessageOutbox,
   updateConversationMessages,
 } from "../storage/conversationStorage";
@@ -302,18 +303,20 @@ export const useMessageStore = create((set, get) => ({
     set({ loading: true });
     try {
       const conversations = await api.getConversations(token);
-      const hydrated = await Promise.all(
-        conversations.map(async (conversation) => {
-          const messages = await readConversationMessages(userId, conversation.id);
-          return {
-            ...conversation,
-            messages: messages.length
-              ? [messages[messages.length - 1]]
-              : conversation.messages || [],
-            unreadCount: conversation.unreadCount || 0,
-          };
-        })
+      const cachedMessages = await readConversationMessagesBatch(
+        userId,
+        conversations.map((conversation) => conversation.id)
       );
+      const hydrated = conversations.map((conversation, index) => {
+        const messages = cachedMessages[index] || [];
+        return {
+          ...conversation,
+          messages: messages.length
+            ? [messages[messages.length - 1]]
+            : conversation.messages || [],
+          unreadCount: conversation.unreadCount || 0,
+        };
+      });
       hydrated.sort(
         (left, right) =>
           new Date(right.messages?.[0]?.createdAt || right.createdAt) -

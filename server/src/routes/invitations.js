@@ -89,20 +89,18 @@ const normalizeLanguage = (language) => (
 const getRequestLanguage = (req) => normalizeLanguage(
   req.query.lang || req.body?.language || req.get("accept-language")?.slice(0, 2)
 );
-const getPublicUrl = (req) => (
-  process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`
-).replace(/\/$/, "");
+const getRequestOrigin = (req) => `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
 const getInvitationUrl = (code, language = "ko", req) => (
-  `${getPublicUrl(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
+  `${getRequestOrigin(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
 );
 const getPreviewUrl = (code, language = "ko", req) => (
-  `${getPublicUrl(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
+  `${getRequestOrigin(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
 );
 const getAppUrl = (code) => `looptalk://register?code=${encodeURIComponent(code)}`;
 const getWebRegistrationUrl = (code, req) => {
   const clientUrl = new URL(
     process.env.WEB_CLIENT_URL || "/app/",
-    `${getPublicUrl(req)}/`
+    `${getRequestOrigin(req)}/`
   );
   clientUrl.pathname = `${clientUrl.pathname.replace(/\/?$/, "/")}register`;
   clientUrl.searchParams.set("code", code);
