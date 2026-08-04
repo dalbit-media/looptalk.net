@@ -173,6 +173,7 @@ function App() {
 
     const messageStore = useMessageStore.getState();
     messageStore.initSocket(token, userId);
+    messageStore.flushOutbox(token);
     messageStore.loadConversations(token, userId);
     useContactStore.getState().loadContacts(token);
     openPendingMessageNotification();

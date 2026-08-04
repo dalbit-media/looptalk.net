@@ -5,7 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node scripts/start.js",
-    "dev": "node --watch src/server.js --dev",
+    "dev": "node src/server.js --dev",
+    "dev:watch": "node --watch src/server.js --dev",
     "test": "node --test",
     "check": "node scripts/check.js",
     "smoke:release": "node scripts/release-smoke.js",

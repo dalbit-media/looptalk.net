@@ -1,4 +1,6 @@
-require("dotenv").config();
+require("dotenv").config({
+  path: require("node:path").resolve(__dirname, "../.env"),
+});
 const fs = require("node:fs");
 const { validateEnvironment } = require("./config/environment");
 const Sentry = require("@sentry/node");
@@ -36,12 +38,14 @@ const {
 const app = express();
 const server = http.createServer(app);
 const isDevelopment = process.argv.includes("--dev");
+const allowLoopbackOrigins = isDevelopment || process.env.NODE_ENV !== "production";
 const nextApp = next({
   dev: isDevelopment,
   dir: path.resolve(__dirname, "../.."),
 });
 const handleNextRequest = nextApp.getRequestHandler();
-const PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
+const BASE_PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
+const MAX_DEV_PORT_ATTEMPTS = 20;
 const expoWebBuildDirectory = path.resolve(__dirname, "../../mobile/dist");
 const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
 const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
@@ -54,15 +58,27 @@ const configuredOrigins = new Set(
     .filter(Boolean)
 );
 
+const isLoopbackOrigin = (origin) => {
+  try {
+    const url = new URL(origin);
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedOrigin = (origin, requestOrigin) => {
+  if (!origin) return true;
+  if (requestOrigin && origin === requestOrigin) return true;
+  if (configuredOrigins.has(origin)) return true;
+  if (allowLoopbackOrigins && isLoopbackOrigin(origin)) return true;
+  return false;
+};
+
 // CORS configuration
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
-
-    if (configuredOrigins.has(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }
@@ -110,7 +126,11 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
     contentSecurityPolicy: {
       directives: {
-        scriptSrc: ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
+        scriptSrc: [
+          "'self'",
+          (req, res) => `'nonce-${res.locals.cspNonce}'`,
+          ...(isDevelopment ? ["'unsafe-eval'"] : []),
+        ],
         frameSrc: ["'self'", webClientOrigin],
       },
     },
@@ -125,7 +145,7 @@ app.use((req, res, next) => {
   cors({
     ...corsOptions,
     origin: (origin, callback) => {
-      if (!origin || origin === requestOrigin || configuredOrigins.has(origin)) {
+      if (isAllowedOrigin(origin, requestOrigin)) {
         callback(null, true);
         return;
       }
@@ -557,16 +577,63 @@ app.use((err, req, res, next) => {
 
 // Start server only after the distributed adapter is ready. This prevents an
 // instance from accepting sockets that other instances cannot yet reach.
+const listenOnPort = (port) => new Promise((resolve, reject) => {
+  const onError = (error) => {
+    server.off("listening", onListening);
+    reject(error);
+  };
+  const onListening = () => {
+    server.off("error", onError);
+    resolve(port);
+  };
+
+  server.once("error", onError);
+  server.once("listening", onListening);
+  server.listen(port);
+});
+
+const startHttpServer = async () => {
+  let port = BASE_PORT;
+  let attempts = 0;
+
+  while (true) {
+    try {
+      await listenOnPort(port);
+      if (port !== BASE_PORT) {
+        console.warn(
+          `Port ${BASE_PORT} was busy; LoopTalk started on port ${port} instead.`
+        );
+      }
+      return port;
+    } catch (error) {
+      const canTryNextPort =
+        isDevelopment &&
+        error?.code === "EADDRINUSE" &&
+        attempts < MAX_DEV_PORT_ATTEMPTS;
+      if (!canTryNextPort) {
+        throw error;
+      }
+      attempts += 1;
+      port += 1;
+    }
+  }
+};
+
 const startServer = async () => {
   await nextApp.prepare();
   await initializeCallInfrastructure(io);
-  server.listen(PORT, () => {
-    console.log(`🚀 LoopTalk server running on port ${PORT}`);
-  });
+  const port = await startHttpServer();
+  console.log(`🚀 LoopTalk server running on port ${port}`);
 };
 
 startServer().catch((error) => {
   Sentry.captureException(error);
+  if (error?.code === "EADDRINUSE") {
+    console.error(
+      `Port ${BASE_PORT} is already in use. Another LoopTalk server may already be running.`
+    );
+    process.exit(0);
+  }
   console.error("Unable to start server:", error);
   process.exit(1);
 });
@@ -591,7 +658,10 @@ const shutdown = (signal) => {
       await closeCallInfrastructure();
       await prisma.$disconnect();
     } finally {
-      process.exit(error ? 1 : 0);
+      if (error) {
+        console.error("Error during server close:", error);
+      }
+      process.exit(0);
     }
   });
 };

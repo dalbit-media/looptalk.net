@@ -86,6 +86,9 @@ export const ChatScreen = ({ route, navigation }) => {
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const flatListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const isNearBottomRef = useRef(true);
+  const lastKeyboardSubmitAtRef = useRef(0);
+  const isWeb = Platform.OS === "web";
 
   const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
@@ -215,15 +218,29 @@ export const ChatScreen = ({ route, navigation }) => {
     };
   }, [conversationId, user.id, token, joinConversation, leaveConversation, loadMessages]);
 
-  useEffect(() => {
-    if (!searchActive) scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    if (flatListRef.current && messages.length > 0 && !searchActive) {
-      flatListRef.current.scrollToEnd({ animated: true });
-    }
+  const scrollToBottom = (animated = true) => {
+    if (!flatListRef.current || messages.length === 0 || searchActive) return;
+    const performScroll = () => {
+      // Run both APIs to reliably land at absolute bottom across RN + web.
+      flatListRef.current?.scrollToEnd({ animated });
+      flatListRef.current?.scrollToOffset({ offset: Number.MAX_SAFE_INTEGER, animated });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(performScroll));
+    setTimeout(performScroll, 80);
+    setTimeout(performScroll, 180);
   };
+
+  useEffect(() => {
+    if (searchActive || messages.length === 0) return;
+    scrollToBottom(true);
+  }, [messages, searchActive]);
+
+  useEffect(() => {
+    if (!searchActive && isNearBottomRef.current) {
+      scrollToBottom(false);
+    }
+    // Keep last message visible when composer height changes.
+  }, [searchActive, recordingVoice, !!replyTarget, !!editTarget]);
 
   const handleStartCall = async (callType) => {
     if (!peerUser) return;
@@ -271,6 +288,7 @@ export const ChatScreen = ({ route, navigation }) => {
         setReplyTarget(null);
         await sendMessage(conversationId, text, token, replyToId);
         stopTyping(conversationId, user.id);
+        scrollToBottom(true);
       }
     } catch (error) {
       if (editTarget) setMessageText(text);
@@ -554,12 +572,35 @@ export const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleRetryMessage = async (item) => {
-    if (item.deliveryState !== "failed" || !item.clientMessageId) return;
+    if (
+      !["queued", "failed"].includes(item.deliveryState) ||
+      !item.clientMessageId
+    ) {
+      return;
+    }
     try {
       await retryMessage(item.clientMessageId, token);
     } catch (error) {
       showAlert(t("common.error"), t("messages.sendFailed"));
     }
+  };
+
+  const handleInputKeyPress = (event) => {
+    if (!isWeb) return;
+    const key = event?.nativeEvent?.key;
+    if (key !== "Enter" && key !== "NumpadEnter") return;
+    event?.preventDefault?.();
+    const now = Date.now();
+    if (now - lastKeyboardSubmitAtRef.current < 150) return;
+    lastKeyboardSubmitAtRef.current = now;
+    handleSendMessage();
+  };
+
+  const handleInputSubmitEditing = () => {
+    const now = Date.now();
+    if (now - lastKeyboardSubmitAtRef.current < 150) return;
+    lastKeyboardSubmitAtRef.current = now;
+    handleSendMessage();
   };
 
   const renderMessageItem = ({ item }) => {
@@ -880,7 +921,18 @@ export const ChatScreen = ({ route, navigation }) => {
         keyExtractor={(item) => item.id}
         renderItem={renderMessageItem}
         contentContainerStyle={styles.messageList}
-        onContentSizeChange={scrollToBottom}
+        keyboardShouldPersistTaps="always"
+        onLayout={() => scrollToBottom(false)}
+        onContentSizeChange={() => {
+          scrollToBottom(false);
+        }}
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          const distanceFromBottom =
+            contentSize.height - (contentOffset.y + layoutMeasurement.height);
+          isNearBottomRef.current = distanceFromBottom < 120;
+        }}
+        scrollEventThrottle={16}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             flatListRef.current?.scrollToIndex({
@@ -912,6 +964,7 @@ export const ChatScreen = ({ route, navigation }) => {
             title={t("messages.noMessages")}
           />
         }
+        ListFooterComponent={<View style={styles.listBottomSpacer} />}
       />
 
       {typingIndicator}
@@ -962,10 +1015,14 @@ export const ChatScreen = ({ route, navigation }) => {
             placeholderTextColor={colors.mutedText}
             value={messageText}
             onChangeText={handleTyping}
-            multiline
+            onKeyPress={isWeb ? handleInputKeyPress : undefined}
+            onSubmitEditing={handleInputSubmitEditing}
+            multiline={!isWeb}
             maxLength={10000}
-            maxHeight={100}
+            maxHeight={isWeb ? undefined : 100}
             editable={!sending}
+            returnKeyType="send"
+            blurOnSubmit={false}
           />
 
           {messageText.trim() ? (
@@ -1053,7 +1110,11 @@ const createStyles = (colors) => StyleSheet.create({
   messageList: {
     flexGrow: 1,
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
+  listBottomSpacer: {
+    height: 18,
   },
   loadEarlierButton: {
     alignSelf: "center",
