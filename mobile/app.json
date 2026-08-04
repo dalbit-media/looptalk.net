@@ -1,0 +1,125 @@
+{
+  "expo": {
+    "name": "LoopTalk",
+    "slug": "looptalk",
+    "scheme": "looptalk",
+    "version": "1.0.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.looptalk.app",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:looptalk.app"
+      ],
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ],
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "LoopTalk needs camera access to take photos, record videos, and make video calls.",
+        "NSMicrophoneUsageDescription": "LoopTalk needs microphone access to record voice messages and make calls.",
+        "NSPhotoLibraryUsageDescription": "LoopTalk needs photo library access to share photos and videos.",
+        "NSPhotoLibraryAddUsageDescription": "LoopTalk needs permission to save media you receive."
+      }
+    },
+    "android": {
+      "package": "com.looptalk.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5F7FA"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "BLUETOOTH_CONNECT",
+        "WAKE_LOCK",
+        "READ_PHONE_STATE",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "looptalk.app",
+              "pathPrefix": "/app/register"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#ffffff",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "dark": {
+            "backgroundColor": "#1c1c1e"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/adaptive-icon.png",
+          "color": "#087BEF",
+          "defaultChannel": "incoming-calls",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "expo-apple-authentication",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "LoopTalk needs photo library access to share photos and videos.",
+          "cameraPermission": "LoopTalk needs camera access to take photos and record videos.",
+          "microphonePermission": "LoopTalk needs microphone access to record videos with sound."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "LoopTalk needs microphone access to record voice messages and make calls."
+        }
+      ],
+      "expo-video",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "LoopTalk needs camera access to make video calls.",
+          "microphonePermission": "LoopTalk needs microphone access to make calls."
+        }
+      ],
+      "expo-secure-store",
+      "@sentry/react-native/expo"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b46b3ae4-a427-4bc3-81e9-3a6481be1d1e"
+      }
+    }
+  }
+}

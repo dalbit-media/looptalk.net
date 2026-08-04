@@ -1,0 +1,45 @@
+name: Release gate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            mobile/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix server
+      - run: npm ci --prefix mobile
+      - run: npm run check
+      - run: npm run build
+      - run: git diff --check
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: looptalk:release-gate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,17 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "checkJs": false,
+    "noEmit": true
+  },
+  "include": [
+    "App.js",
+    "src/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".expo",
+    ".expo-validation"
+  ]
+}

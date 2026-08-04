@@ -1,0 +1,203 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String @id @default(cuid())
+  username        String @unique
+  email           String? @unique
+  phoneNumber     String? @unique
+  passwordHash    String?
+  appleId         String? @unique
+  googleId        String? @unique
+  displayName     String
+  profilePicture  String?
+  bio             String?
+  status          String @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  contacts        Contact[]
+  contactedBy     Contact[] @relation("contactedBy")
+  conversations   ConversationParticipant[]
+  deviceTokens    DeviceToken[]
+  invitations     Invitation[]
+  blocks          Block[]
+  blockedBy       Block[] @relation("blockedBy")
+  messages        Message[]
+  reactions       MessageReaction[]
+  reportsSubmitted Report[] @relation("ReportReporter")
+  reportsReceived  Report[] @relation("ReportSubject")
+
+  @@index([username])
+  @@index([email])
+  @@index([phoneNumber])
+}
+
+model Contact {
+  id              String @id @default(cuid())
+  userId          String
+  contactUserId   String
+  groupName       String // Family 1, All Contacts 1, Work 1, Project 1, School 1, Class 1, etc.
+  nickname        String?
+  isFavorite      Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactUser     User @relation("contactedBy", fields: [contactUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contactUserId])
+  @@index([userId])
+  @@index([groupName])
+}
+
+model Conversation {
+  id              String @id @default(cuid())
+  name            String?
+  isGroupChat     Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastMessageAt   DateTime?
+
+  participants    ConversationParticipant[]
+  messages        Message[]
+
+  @@index([createdAt])
+}
+
+model ConversationParticipant {
+  id              String @id @default(cuid())
+  conversationId  String
+  userId          String
+  role            String @default("MEMBER")
+  joinedAt        DateTime @default(now())
+  lastReadAt      DateTime?
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model DeviceToken {
+  id              String @id @default(cuid())
+  userId          String
+  token           String @unique
+  platform        String // ios, android, web
+  isActive        Boolean @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Invitation {
+  id              String @id @default(cuid())
+  inviterId       String
+  inviteeEmail    String?
+  code            String @unique
+  status          String @default("PENDING")
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  inviter         User @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([inviteeEmail])
+  @@index([code])
+}
+
+model Block {
+  id              String @id @default(cuid())
+  userId          String
+  blockedUserId   String
+  createdAt       DateTime @default(now())
+
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blockedUser     User @relation("blockedBy", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, blockedUserId])
+  @@index([userId])
+}
+
+model Message {
+  id              String @id @default(cuid())
+  conversationId  String
+  senderId        String
+  clientMessageId String?
+  content         String? @db.Text
+  messageType     String @default("TEXT") // TEXT, IMAGE, VIDEO, VOICE, DRAWING
+  mediaUrl        String?
+  thumbnailUrl    String?
+  duration        Int?
+  width           Int?
+  height          Int?
+  fileName        String?
+  fileSize        Int?
+  replyToId       String?
+  editedAt        DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo         Message? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies         Message[] @relation("MessageReplies")
+  reactions       MessageReaction[]
+  reports         Report[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([replyToId])
+  @@unique([senderId, clientMessageId])
+}
+
+model MessageReaction {
+  id              String @id @default(cuid())
+  messageId       String
+  userId          String
+  emoji           String
+  createdAt       DateTime @default(now())
+
+  message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+}
+
+model Report {
+  id              String   @id @default(cuid())
+  reporterId      String?
+  reportedUserId  String?
+  messageId       String?
+  category        String
+  details         String?  @db.Text
+  contentSnapshot String?  @db.Text
+  status          String   @default("OPEN")
+  createdAt       DateTime @default(now())
+  reviewedAt      DateTime?
+
+  reporter     User?    @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  reportedUser User?    @relation("ReportSubject", fields: [reportedUserId], references: [id], onDelete: SetNull)
+  message      Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([reporterId, createdAt])
+  @@index([reportedUserId, status])
+  @@index([messageId])
+  @@index([status, createdAt])
+}
+

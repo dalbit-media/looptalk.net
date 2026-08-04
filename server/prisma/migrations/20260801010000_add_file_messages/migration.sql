@@ -1,0 +1,3 @@
+ALTER TABLE `Message`
+  ADD COLUMN `fileName` VARCHAR(191) NULL,
+  ADD COLUMN `fileSize` INTEGER NULL;

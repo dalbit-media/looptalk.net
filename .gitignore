@@ -1,0 +1,87 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Production
+/build
+/dist
+.expo/
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor and IDE
+.vscode/
+!.vscode/
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Expo
+.env
+.env.local
+mobile/.expo-validation/
+
+# Mobile
+ios/Pods
+android/gradle
+android/app/debug
+android/app/release
+*.jks
+*.keystore
+
+# Media
+uploads/
+*.jpg
+*.jpeg
+*.png
+!mobile/assets/
+!mobile/assets/*.png
+*.gif
+*.mov
+*.mp4
+
+# Archives
+*.zip
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.cache
+.parcel-cache
+.next
+out/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Crash dumps
+dump.rdb

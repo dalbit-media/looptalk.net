@@ -1,0 +1,15 @@
+.git
+.github
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.development.example
+mobile/dist
+mobile/.expo
+mobile/.expo-validation
+mobile/.expo/web-dist
+.next
+server/prisma/dev.db*
+server/uploads/*
+*.log

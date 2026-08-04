@@ -1,0 +1,49 @@
+{
+  "name": "looptalk-server",
+  "version": "1.0.0",
+  "description": "LoopTalk Next.js server with Socket.io and Prisma",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "dev": "node --watch src/server.js --dev",
+    "test": "node --test",
+    "check": "node scripts/check.js",
+    "smoke:release": "node scripts/release-smoke.js",
+    "seed": "node src/db/seed.js",
+    "migrate": "npx prisma migrate deploy",
+    "prisma:generate": "npx prisma generate",
+    "db:push": "npx prisma db push --skip-generate",
+    "db:reset": "npx prisma db push --force-reset --skip-generate",
+    "db:studio": "npx prisma studio",
+    "db:setup": "npm run prisma:generate && npm run db:push"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "@sentry/node": "^10.68.0",
+    "@socket.io/redis-streams-adapter": "^0.3.1",
+    "apple-signin-auth": "^2.1.0",
+    "axios": "1.18.1",
+    "bcryptjs": "3.0.3",
+    "cheerio": "1.2.0",
+    "cors": "2.8.6",
+    "dotenv": "16.4.5",
+    "expo-server-sdk": "^6.1.0",
+    "express": "5.2.1",
+    "express-rate-limit": "8.6.0",
+    "google-auth-library": "^10.9.1",
+    "helmet": "8.3.0",
+    "jsonwebtoken": "9.0.3",
+    "multer": "2.2.0",
+    "prisma": "5.22.0",
+    "redis": "^6.1.0",
+    "sharp": "0.35.3",
+    "socket.io": "4.8.3",
+    "uuid": "11.1.1"
+  },
+  "overrides": {
+    "ws": "^8.21.1",
+    "cookie": "^2.0.1",
+    "postcss": "^8.5.18",
+    "sharp": "0.35.3"
+  }
+}
