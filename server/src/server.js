@@ -51,10 +51,21 @@ const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
 const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
 const webClientOrigin = "'self'";
 
+const normalizeOrigin = (value) => {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed.replace(/\/+$/, "");
+  }
+};
+
 const configuredOrigins = new Set(
   (process.env.CORS_ORIGIN || "")
     .split(",")
-    .map((origin) => origin.trim())
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 );
 
@@ -67,11 +78,16 @@ const isLoopbackOrigin = (origin) => {
   }
 };
 
+// Same-origin requests never need CORS_ORIGIN. The allowlist is only for
+// cross-origin browser clients, while loopback origins stay available for
+// local development and production-like local verification.
 const isAllowedOrigin = (origin, requestOrigin) => {
   if (!origin) return true;
-  if (requestOrigin && origin === requestOrigin) return true;
-  if (configuredOrigins.has(origin)) return true;
-  if (allowLoopbackOrigins && isLoopbackOrigin(origin)) return true;
+  const normalizedOrigin = normalizeOrigin(origin);
+  const normalizedRequestOrigin = normalizeOrigin(requestOrigin);
+  if (normalizedRequestOrigin && normalizedOrigin === normalizedRequestOrigin) return true;
+  if (normalizedOrigin && configuredOrigins.has(normalizedOrigin)) return true;
+  if (allowLoopbackOrigins && isLoopbackOrigin(normalizedOrigin || origin)) return true;
   return false;
 };
 
