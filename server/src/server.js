@@ -1,4 +1,5 @@
 require("dotenv").config();
+const fs = require("node:fs");
 const { validateEnvironment } = require("./config/environment");
 const Sentry = require("@sentry/node");
 const next = require("next");
@@ -41,6 +42,9 @@ const nextApp = next({
 });
 const handleNextRequest = nextApp.getRequestHandler();
 const PORT = process.env.PORT || 3000;
+const expoWebBuildDirectory = path.resolve(__dirname, "../../mobile/dist");
+const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
+const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
 const webClientOrigin = "'self'";
 
 const configuredOrigins = process.env.CORS_ORIGIN
@@ -130,6 +134,25 @@ app.use("/uploads", express.static(uploadDirectory, {
   dotfiles: "deny",
   index: false,
 }));
+if (hasExpoWebBuild) {
+  app.use("/app", express.static(expoWebBuildDirectory, {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+  }));
+  app.use("/app", (req, res, next) => {
+    if (req.path === "/" || !req.path.includes(".")) {
+      res.sendFile(expoWebIndexFile);
+      return;
+    }
+    next();
+  });
+} else if (!isDevelopment) {
+  console.warn(
+    `Expo web build not found at ${expoWebIndexFile}; /app will fall back to the Next.js browser client.`
+  );
+}
 
 // Rate limiting (scoped to the API only, so page loads/static assets are unaffected)
 const limiter = rateLimit({

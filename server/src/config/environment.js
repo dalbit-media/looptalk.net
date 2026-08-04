@@ -19,8 +19,8 @@ const validateEnvironment = (environment = process.env) => {
     );
   }
 
-  if (!environment.DATABASE_URL.startsWith("mysql://")) {
-    throw new Error("DATABASE_URL must be a MySQL connection string");
+  if (!environment.DATABASE_URL.startsWith("file:")) {
+    throw new Error("DATABASE_URL must be a SQLite file URL");
   }
 
   if (

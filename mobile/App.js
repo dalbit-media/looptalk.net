@@ -1,9 +1,10 @@
 import "react-native-url-polyfill/auto";
 import { useEffect, useState } from "react";
-import { LogBox } from "react-native";
+import { LogBox, Platform } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import {
   createNavigationContainerRef,
+  getPathFromState as getNavigationPathFromState,
   NavigationContainer,
 } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -17,6 +18,7 @@ import { useMessageStore } from "./src/store/messageStore";
 import { useContactStore } from "./src/store/contactStore";
 import { AppSplash } from "./src/components/AppSplash";
 import { CallOverlay } from "./src/components/CallOverlay";
+import { WebAlertHost } from "./src/components/WebAlertHost";
 import { setupCallNotifications } from "./src/utils/callNotifications";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
@@ -58,8 +60,33 @@ const handleMessageNotification = (data) => {
 };
 
 const linking = {
-  prefixes: ["looptalk://", "https://looptalk.app/app/"],
+  prefixes: [
+    "looptalk://",
+    "https://looptalk.app/app/",
+    Platform.OS === "web" && typeof window !== "undefined"
+      ? `${window.location.origin}/app/`
+      : null,
+  ].filter(Boolean),
   config: { screens: { Register: "register" } },
+  getPathFromState: (state, options) => {
+    const path = getNavigationPathFromState(state, options);
+    return Platform.OS === "web" ? `/app${path}` : path;
+  },
+};
+
+const getWebInvitationState = () => {
+  if (Platform.OS !== "web" || typeof window === "undefined") return undefined;
+  if (!window.location.pathname.replace(/\/$/, "").endsWith("/app/register")) {
+    return undefined;
+  }
+
+  const code = new URLSearchParams(window.location.search).get("code")?.trim();
+  if (!code) return undefined;
+
+  return {
+    index: 0,
+    routes: [{ name: "Register", params: { code } }],
+  };
 };
 
 LogBox.ignoreLogs([
@@ -84,6 +111,7 @@ function App() {
   const userId = useAuthStore((state) => state.user?.id);
   const loading = useAuthStore((state) => state.loading);
   const [showSplash, setShowSplash] = useState(true);
+  const [initialNavigationState] = useState(getWebInvitationState);
   const { navigationTheme } = useAppTheme();
 
   useEffect(() => {
@@ -116,6 +144,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS === "web") return undefined;
     let cleanupNotifications;
     setupNativeCalling({
       onAnswer: (callId) =>
@@ -161,11 +190,13 @@ function App() {
         ref={navigationRef}
         theme={navigationTheme}
         linking={linking}
+        initialState={token ? undefined : initialNavigationState}
         onReady={openPendingMessageNotification}
       >
         {token ? <AppStack /> : <AuthStack />}
       </NavigationContainer>
       {token ? <CallOverlay /> : null}
+      <WebAlertHost />
     </GestureHandlerRootView>
   );
 }

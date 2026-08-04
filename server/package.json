@@ -10,7 +10,7 @@
     "check": "node scripts/check.js",
     "smoke:release": "node scripts/release-smoke.js",
     "seed": "node src/db/seed.js",
-    "migrate": "npx prisma migrate deploy",
+    "migrate": "npx prisma db push --skip-generate --accept-data-loss",
     "prisma:generate": "npx prisma generate",
     "db:push": "npx prisma db push --skip-generate",
     "db:reset": "npx prisma db push --force-reset --skip-generate",

@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -138,7 +138,7 @@ model Message {
   conversationId  String
   senderId        String
   clientMessageId String?
-  content         String? @db.Text
+  content         String?
   messageType     String @default("TEXT") // TEXT, IMAGE, VIDEO, VOICE, DRAWING
   mediaUrl        String?
   thumbnailUrl    String?
@@ -185,8 +185,8 @@ model Report {
   reportedUserId  String?
   messageId       String?
   category        String
-  details         String?  @db.Text
-  contentSnapshot String?  @db.Text
+  details         String?
+  contentSnapshot String?
   status          String   @default("OPEN")
   createdAt       DateTime @default(now())
   reviewedAt      DateTime?

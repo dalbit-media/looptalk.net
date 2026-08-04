@@ -1,13 +1,15 @@
 import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Platform } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  Platform,
+} from "react-native";
 import { useAlertStore } from "../store/alertStore";
 import { useAppTheme } from "../hooks/useAppTheme";
 
-// Renders the web fallback for Alert.alert() (see utils/showAlert.js).
-// Only meaningful on web — react-native-web's Alert.alert() is a no-op, so
-// without this, every confirmation/error dialog in the app would silently
-// do nothing on web (login/registration errors, logout confirm, message
-// reactions, reply/edit/delete menus, etc.).
 export const WebAlertHost = () => {
   const { colors } = useAppTheme();
   const request = useAlertStore((state) => state.request);
@@ -28,11 +30,7 @@ export const WebAlertHost = () => {
 
   return (
     <Modal transparent animationType="fade" onRequestClose={hide}>
-      <TouchableOpacity
-        style={styles.backdrop}
-        activeOpacity={1}
-        onPress={hide}
-      >
+      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={hide}>
         <TouchableOpacity activeOpacity={1} style={styles.card} onPress={() => {}}>
           {!!request.title && <Text style={styles.title}>{request.title}</Text>}
           {!!request.message && <Text style={styles.message}>{request.message}</Text>}

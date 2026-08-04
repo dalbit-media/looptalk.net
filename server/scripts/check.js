@@ -77,7 +77,7 @@ run(process.execPath, ["--test"]);
 const prismaCli = require.resolve("prisma/build/index.js");
 run(process.execPath, [prismaCli, "validate", "--schema", "prisma/schema.prisma"], {
   ...process.env,
-  DATABASE_URL: "mysql://user:password@localhost:3306/looptalk",
+  DATABASE_URL: "file:./check.db",
 });
 
 console.log(

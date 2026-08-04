@@ -10,7 +10,7 @@ test("requires the database URL and JWT secret", () => {
 });
 
 const validEnvironment = {
-  DATABASE_URL: "mysql://user:password@db.example.com:3306/looptalk",
+  DATABASE_URL: "file:./dev.db",
   JWT_SECRET: "a-strong-secret-with-at-least-32-characters",
   CORS_ORIGIN: "https://app.looptalk.example",
   PUBLIC_URL: "https://api.looptalk.example",
@@ -35,10 +35,10 @@ test("accepts a minimal configuration", () => {
   );
 });
 
-test("requires MySQL", () => {
+test("requires SQLite", () => {
   assert.throws(
-    () => validateEnvironment({ ...validEnvironment, DATABASE_URL: "file:./dev.db" }),
-    /MySQL connection string/
+    () => validateEnvironment({ ...validEnvironment, DATABASE_URL: "mysql://user:password@db.example.com:3306/looptalk" }),
+    /SQLite file URL/
   );
 });
 

@@ -1,5 +1,4 @@
 import { setStringAsync } from "expo-clipboard";
-import { Platform } from "react-native";
 
 const copyTextOnWeb = (text) => {
   if (globalThis.navigator?.clipboard && globalThis.isSecureContext) {
@@ -30,6 +29,5 @@ export const copyText = async (text) => {
     throw new Error("Clipboard text is required");
   }
 
-  if (Platform.OS === "web") return copyTextOnWeb(text);
-  return setStringAsync(text);
+  return copyTextOnWeb(text) || setStringAsync(text);
 };

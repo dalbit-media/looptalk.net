@@ -19,11 +19,18 @@ const nextConfig = {
   },
   webpack: (config, { dev, webpack }) => {
     const path = require("node:path");
+    const expoFontServerContext = path.resolve(
+      __dirname,
+      "mobile/src/utils/expoFontServerContext.web.js"
+    );
     config.resolve.alias["react-native$"] = "react-native-web";
     config.resolve.alias["react-native-reanimated"] = false;
     config.resolve.alias[
       path.resolve(__dirname, "node_modules/expo-font/build/serverContext.web.js")
-    ] = path.resolve(__dirname, "web/src/utils/expoFontServerContext.web.js");
+    ] = expoFontServerContext;
+    config.resolve.alias[
+      path.resolve(__dirname, "mobile/node_modules/expo-font/build/serverContext.web.js")
+    ] = expoFontServerContext;
     config.resolve.extensions = [
       ".web.js",
       ".web.jsx",
@@ -34,7 +41,7 @@ const nextConfig = {
     config.module.rules.push({
       test: /\.(js|jsx|ts|tsx)$/,
       include: [
-        path.resolve(__dirname, "web"),
+        path.resolve(__dirname, "mobile"),
         path.resolve(__dirname, "node_modules/@expo/vector-icons"),
         path.resolve(__dirname, "node_modules/expo"),
         path.resolve(__dirname, "node_modules/expo-modules-core"),
