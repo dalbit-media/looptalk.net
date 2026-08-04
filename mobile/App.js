@@ -22,9 +22,18 @@ import { WebAlertHost } from "./src/components/WebAlertHost";
 import { setupCallNotifications } from "./src/utils/callNotifications";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
-import * as Sentry from "@sentry/react-native";
 
-Sentry.init({
+const sentryModule = (() => {
+  if (Platform.OS === "web") return null;
+  try {
+    const runtimeRequire = Function("return require")();
+    return runtimeRequire("@sentry/react-native");
+  } catch {
+    return null;
+  }
+})();
+
+sentryModule?.init?.({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
   enabled: Boolean(process.env.EXPO_PUBLIC_SENTRY_DSN),
   environment: __DEV__ ? "development" : "production",
@@ -202,4 +211,4 @@ function App() {
   );
 }
 
-export default Sentry.wrap(App);
+export default sentryModule?.wrap ? sentryModule.wrap(App) : App;
