@@ -27,10 +27,12 @@ const MessagesStack = () => {
         headerStyle: {
           backgroundColor: colors.surface,
         },
-        headerTintColor: colors.text,
+        headerTintColor: colors.primary,
         headerTitleStyle: {
           fontWeight: "600",
+          color: colors.text,
         },
+        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen
@@ -43,7 +45,6 @@ const MessagesStack = () => {
         component={ChatScreen}
         options={({ route }) => ({
           title: route.params?.name || t("messages.chat"),
-          headerBackTitleVisible: false,
         })}
       />
       <Stack.Screen
@@ -69,10 +70,12 @@ const ContactsStack = () => {
         headerStyle: {
           backgroundColor: colors.surface,
         },
-        headerTintColor: colors.text,
+        headerTintColor: colors.primary,
         headerTitleStyle: {
           fontWeight: "600",
+          color: colors.text,
         },
+        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen
@@ -103,8 +106,9 @@ const SettingsStack = () => {
     <Stack.Navigator
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.text,
-        headerTitleStyle: { fontWeight: "600" },
+        headerTintColor: colors.primary,
+        headerTitleStyle: { fontWeight: "600", color: colors.text },
+        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen

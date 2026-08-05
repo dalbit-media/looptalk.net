@@ -10,6 +10,7 @@ import {
   Platform,
   ScrollView,
 } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuthStore } from "../../store/authStore";
 import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
@@ -67,6 +68,16 @@ export const LoginScreen = ({ navigation }) => {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      {navigation.canGoBack() && (
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.back")}
+        >
+          <Ionicons name="chevron-back" size={28} color={colors.primary} />
+        </TouchableOpacity>
+      )}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -221,5 +232,15 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.primary,
     fontSize: 14,
     marginTop: 16,
+  },
+  backButton: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 56 : 16,
+    left: 12,
+    zIndex: 1,
+    padding: 8,
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
   },
 });

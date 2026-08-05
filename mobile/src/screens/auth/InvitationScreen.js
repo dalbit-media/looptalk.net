@@ -141,7 +141,7 @@ export const InvitationScreen = ({ route, navigation }) => {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => navigation.navigate("Login")}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
           </TouchableOpacity>
         </View>

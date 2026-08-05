@@ -237,7 +237,7 @@ export const RegisterScreen = ({ route, navigation }) => {
           />
 
           <TouchableOpacity
-            onPress={() => navigation.navigate("Login")}
+            onPress={() => navigation.goBack()}
             disabled={loading}
           >
             <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
