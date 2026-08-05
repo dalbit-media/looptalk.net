@@ -30,6 +30,27 @@
     --grid-line: rgba(23, 32, 29, 0.055);
     --header-height: 76px;
   }
+  /* Fallback before theme.js runs: respect system preference */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #f3f5f3;
+      --paper: #181a19;
+      --white: #232624;
+      --coral: #ff8068;
+      --mint: #315f49;
+      --yellow: #d1ab48;
+      --line: rgba(243, 245, 243, 0.2);
+      --muted: #abb2ae;
+      --on-ink: #171918;
+      --admin-bg: #151716;
+      --drawer: #202321;
+      --drawer-overlay: rgba(32, 35, 33, 0.94);
+      --received: #343835;
+      --code-bg: #343835;
+      --metric-muted: #abb2ae;
+      --grid-line: rgba(243, 245, 243, 0.06);
+    }
+  }
   :root[data-theme="dark"] {
     --ink: #f3f5f3;
     --paper: #181a19;

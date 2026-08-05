@@ -88,6 +88,8 @@ export const ChatScreen = ({ route, navigation }) => {
   const typingTimeoutRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const lastKeyboardSubmitAtRef = useRef(0);
+  const prevMessagesCountRef = useRef(0);
+  const contentScrollTimerRef = useRef(null);
   const isWeb = Platform.OS === "web";
 
   const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -220,19 +222,25 @@ export const ChatScreen = ({ route, navigation }) => {
 
   const scrollToBottom = (animated = true) => {
     if (!flatListRef.current || messages.length === 0 || searchActive) return;
-    const performScroll = () => {
-      // Run both APIs to reliably land at absolute bottom across RN + web.
+    // Run both APIs to reliably land at absolute bottom across RN + web.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       flatListRef.current?.scrollToEnd({ animated });
       flatListRef.current?.scrollToOffset({ offset: Number.MAX_SAFE_INTEGER, animated });
-    };
-    requestAnimationFrame(() => requestAnimationFrame(performScroll));
-    setTimeout(performScroll, 80);
-    setTimeout(performScroll, 180);
+    }));
   };
 
   useEffect(() => {
-    if (searchActive || messages.length === 0) return;
-    scrollToBottom(true);
+    if (messages.length === 0) {
+      prevMessagesCountRef.current = 0;
+      return;
+    }
+    if (searchActive) return;
+    const wasEmpty = prevMessagesCountRef.current === 0;
+    prevMessagesCountRef.current = messages.length;
+    // Initial load: onContentSizeChange debounce handles scroll once content settles.
+    if (!wasEmpty && isNearBottomRef.current) {
+      scrollToBottom(true);
+    }
   }, [messages, searchActive]);
 
   useEffect(() => {
@@ -924,7 +932,9 @@ export const ChatScreen = ({ route, navigation }) => {
         keyboardShouldPersistTaps="always"
         onLayout={() => scrollToBottom(false)}
         onContentSizeChange={() => {
-          scrollToBottom(false);
+          // Debounce: wait for content to stop changing before scrolling to actual bottom.
+          clearTimeout(contentScrollTimerRef.current);
+          contentScrollTimerRef.current = setTimeout(() => scrollToBottom(false), 150);
         }}
         onScroll={(event) => {
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;

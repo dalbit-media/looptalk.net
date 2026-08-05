@@ -8,6 +8,7 @@ import {
   NavigationContainer,
 } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useAuthStore } from "./src/store/authStore";
 import { AuthStack } from "./src/navigation/AuthStack";
 import { AppStack } from "./src/navigation/AppStack";
@@ -196,6 +197,7 @@ function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
       <NavigationContainer
         ref={navigationRef}
         theme={navigationTheme}
@@ -207,6 +209,7 @@ function App() {
       </NavigationContainer>
       {token ? <CallOverlay /> : null}
       <WebAlertHost />
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

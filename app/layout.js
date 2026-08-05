@@ -1,8 +1,5 @@
 import Script from "next/script";
-import { headers } from "next/headers";
 import "./site.css";
-
-const themeScript = `try{const t=localStorage.getItem("themeMode");document.documentElement.dataset.theme=t==="light"||t==="dark"?t:(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{}`;
 
 export const metadata = {
   icons: { icon: "/site/app-icon.svg" },
@@ -12,18 +9,13 @@ export const metadata = {
 export const viewport = { themeColor: "#f4f1e8" };
 export const dynamic = "force-dynamic";
 
-export default async function RootLayout({ children }) {
-  const nonce = (await headers()).get("x-nonce") || undefined;
-
+export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <Script id="looptalk-theme" nonce={nonce} strategy="beforeInteractive">
-          {themeScript}
-        </Script>
-        <Script src="/site/site-i18n.js" nonce={nonce} strategy="beforeInteractive" />
+        <Script src="/site/site-i18n.js" strategy="afterInteractive" />
         {children}
-        <Script src="/site/site.js" nonce={nonce} strategy="afterInteractive" />
+        <Script src="/site/site.js" strategy="afterInteractive" />
       </body>
     </html>
   );
