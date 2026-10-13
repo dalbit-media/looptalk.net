@@ -109,9 +109,14 @@ export const RegisterScreen = ({ route, navigation }) => {
         normalizedDisplayName
       );
     } catch (error) {
+      const serverMessage = error.response?.data?.error;
+      const requestId = error.response?.data?.requestId;
+      const message = serverMessage || error.message || t("auth.registrationFailed");
       showAlert(
         t("auth.registrationFailed"),
-        t("common.error")
+        requestId
+          ? `${message}\n${t("auth.errorReference", { id: requestId })}`
+          : message
       );
     } finally {
       setLoading(false);

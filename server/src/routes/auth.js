@@ -262,8 +262,11 @@ router.post("/register", async (req, res) => {
     if (error.code === "P2034") {
       return res.status(409).json({ error: "Registration changed; please try again" });
     }
-    console.error("Registration error:", error);
-    res.status(500).json({ error: "Registration failed" });
+    console.error(`Registration error [${req.requestId}]:`, error);
+    res.status(500).json({
+      error: "Registration failed",
+      requestId: req.requestId,
+    });
   }
 });
 
