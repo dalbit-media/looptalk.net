@@ -31,6 +31,7 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const THEME_OPTIONS = ["system", "light", "dark"];
+const CHAT_TEXT_SIZE_OPTIONS = ["standard", "large", "extraLarge"];
 
 export const SettingsScreen = ({ navigation }) => {
   const logout = useAuthStore((state) => state.logout);
@@ -40,11 +41,13 @@ export const SettingsScreen = ({ navigation }) => {
   const token = useAuthStore((state) => state.token);
   const language = usePreferencesStore((state) => state.language);
   const themeMode = usePreferencesStore((state) => state.themeMode);
+  const chatTextSize = usePreferencesStore((state) => state.chatTextSize);
   const notificationsEnabled = usePreferencesStore(
     (state) => state.notificationsEnabled
   );
   const updateLanguage = usePreferencesStore((state) => state.setLanguage);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
+  const setChatTextSize = usePreferencesStore((state) => state.setChatTextSize);
   const setNotificationsEnabled = usePreferencesStore(
     (state) => state.setNotificationsEnabled
   );
@@ -272,6 +275,49 @@ export const SettingsScreen = ({ navigation }) => {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+        </View>
+
+        <View style={styles.modeItem}>
+          <View style={styles.modeHeading}>
+            <Ionicons name="text" size={20} color={colors.primary} />
+            <View style={styles.settingContent}>
+              <Text style={styles.settingLabel}>{t("settings.chatTextSize")}</Text>
+              <Text style={styles.settingValue}>
+                {t("settings.chatTextSizeDescription")}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.textSizeControl}>
+            {CHAT_TEXT_SIZE_OPTIONS.map((option) => {
+              const selected = chatTextSize === option;
+              const sampleSize = option === "standard" ? 16 : option === "large" ? 20 : 24;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.textSizeOption, selected && styles.segmentSelected]}
+                  onPress={() => setChatTextSize(option)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={t(`settings.chatTextSize.${option}`)}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={[
+                      styles.textSizeSample,
+                      { fontSize: sampleSize, color: selected ? "#FFFFFF" : colors.text },
+                    ]}
+                  >
+                    Aa
+                  </Text>
+                  <Text
+                    style={[styles.textSizeLabel, selected && styles.segmentTextSelected]}
+                  >
+                    {t(`settings.chatTextSize.${option}`)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
 
@@ -555,6 +601,30 @@ const createStyles = (colors) => StyleSheet.create({
   themeControl: {
     flexDirection: "row",
     gap: 8,
+  },
+  textSizeControl: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  textSizeOption: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 72,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: colors.input,
+    paddingHorizontal: 3,
+  },
+  textSizeSample: {
+    fontWeight: "700",
+  },
+  textSizeLabel: {
+    color: colors.secondaryText,
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 3,
+    textAlign: "center",
   },
   themeOption: {
     flex: 1,

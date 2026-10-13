@@ -172,6 +172,11 @@ export const CallOverlay = () => {
     }
   };
 
+  const handleAcceptCall = async () => {
+    const accepted = await acceptCall();
+    if (!accepted) showAlert(t("common.error"), t("calls.callFailed"));
+  };
+
   const statusLabel = () => {
     if (call.status === "declined") return t("calls.declined");
     if (call.status === "ended") return t("calls.ended");
@@ -274,7 +279,7 @@ export const CallOverlay = () => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.circleButton, styles.acceptButton]}
-                  onPress={acceptCall}
+                  onPress={handleAcceptCall}
                 >
                   <Ionicons name="call" size={28} color="#fff" />
                 </TouchableOpacity>

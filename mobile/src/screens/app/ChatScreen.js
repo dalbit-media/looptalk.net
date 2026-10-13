@@ -28,6 +28,7 @@ import { HighlightText } from "../../components/HighlightText";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useCallStore } from "../../store/callStore";
+import { usePreferencesStore } from "../../store/preferencesStore";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { showAlert } from "../../utils/showAlert";
@@ -40,6 +41,8 @@ const formatFileSize = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const CHAT_MESSAGE_FONT_SIZES = { standard: 16, large: 19, extraLarge: 22 };
+
 export const ChatScreen = ({ route, navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
@@ -47,6 +50,9 @@ export const ChatScreen = ({ route, navigation }) => {
   const { conversationId } = route.params;
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const chatTextSize = usePreferencesStore((state) => state.chatTextSize);
+  const chatMessageFontSize =
+    CHAT_MESSAGE_FONT_SIZES[chatTextSize] || CHAT_MESSAGE_FONT_SIZES.standard;
 
   const messages = useMessageStore((state) => state.messages);
   const conversations = useMessageStore((state) => state.conversations);
@@ -615,7 +621,9 @@ export const ChatScreen = ({ route, navigation }) => {
     if (item.messageType === "SYSTEM") {
       return (
         <View style={styles.systemMessageRow}>
-          <Text style={styles.systemMessageText}>{item.content}</Text>
+          <Text style={[styles.systemMessageText, { fontSize: chatMessageFontSize }]}>
+            {item.content}
+          </Text>
           <Text style={styles.systemMessageTime}>
             {new Date(item.createdAt).toLocaleTimeString([], {
               hour: "2-digit",
@@ -682,7 +690,14 @@ export const ChatScreen = ({ route, navigation }) => {
           )}
 
           {item.deletedAt ? (
-            <Text style={[styles.messageText, styles.deletedText, isOwn && styles.ownMessageText]}>
+            <Text
+              style={[
+                styles.messageText,
+                { fontSize: chatMessageFontSize },
+                styles.deletedText,
+                isOwn && styles.ownMessageText,
+              ]}
+            >
               {t("messages.messageDeleted")}
             </Text>
           ) : (
@@ -705,7 +720,11 @@ export const ChatScreen = ({ route, navigation }) => {
                   text={item.content}
                   query={highlightQuery}
                   active={isCurrentMatch}
-                  style={[styles.messageText, isOwn && styles.ownMessageText]}
+                  style={[
+                    styles.messageText,
+                    { fontSize: chatMessageFontSize },
+                    isOwn && styles.ownMessageText,
+                  ]}
                 />
               )}
 
@@ -732,7 +751,14 @@ export const ChatScreen = ({ route, navigation }) => {
                     <Ionicons name="document-text-outline" size={25} color={isOwn ? "#fff" : colors.primary} />
                   </View>
                   <View style={styles.fileInfo}>
-                    <Text style={[styles.fileName, isOwn && styles.ownMessageText]} numberOfLines={2}>
+                    <Text
+                      style={[
+                        styles.fileName,
+                        { fontSize: chatMessageFontSize },
+                        isOwn && styles.ownMessageText,
+                      ]}
+                      numberOfLines={2}
+                    >
                       {item.fileName || t("messages.file")}
                     </Text>
                     {item.fileSize != null && (

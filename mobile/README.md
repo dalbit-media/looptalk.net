@@ -231,6 +231,29 @@ Google social authentication also uses these optional variables:
 	`eas build --platform all --profile production`, and complete physical-device
 	certification before submitting either binary.
 
+### iOS App Store Release
+
+A Mac is not required to build or submit the iOS app. EAS builds it on Expo's
+cloud macOS builders, and EAS Submit can upload it to App Store Connect. A Mac
+is needed for local iOS Simulator builds and other local Xcode workflows; test
+the signed release on physical iPhones before submission.
+
+App Store distribution requires Apple Developer Program membership and access
+to App Store Connect for `com.looptalk.app`. Before submitting, deploy and
+verify the production HTTPS service, configure EAS production variables and iOS
+signing, complete the real-device release checks, and prepare store screenshots,
+privacy disclosures, and a working reviewer account. LoopTalk is invitation-
+only, so include access instructions in the private review notes.
+
+```bash
+npx eas-cli@latest build --platform ios --profile production
+npx eas-cli@latest submit --platform ios --profile production
+```
+
+See [the launch runbook](../docs/LAUNCH_RUNBOOK.md) for the complete release
+gates and [the store listing](../docs/STORE_LISTING.md) for listing and review
+requirements.
+
 ### Source Layout
 
 ```text

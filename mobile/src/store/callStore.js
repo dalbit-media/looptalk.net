@@ -685,12 +685,18 @@ export const useCallStore = create((set, get) => ({
       call.status !== "ringing" ||
       !pendingOffer
     ) return;
-    if (!get().socket?.connected) return;
+    if (!get().socket?.connected) return false;
 
     try {
       if (ringTimer) clearTimeout(ringTimer);
       ringTimer = null;
       set({ call: { ...call, status: "connecting" } });
+      connectTimer = setTimeout(() => {
+        connectTimer = null;
+        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
+          get().endCall();
+        }
+      }, CONNECT_TIMEOUT_MS);
       answerNativeCall(call.callId);
       const localStream = await captureLocalMedia(call.callType);
       if (get().call?.callId !== call.callId) {
@@ -730,15 +736,11 @@ export const useCallStore = create((set, get) => ({
         sdp: optimizedAnswer,
       }, true);
       set({ pendingOffer: null });
-      connectTimer = setTimeout(() => {
-        connectTimer = null;
-        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
-          get().endCall();
-        }
-      }, CONNECT_TIMEOUT_MS);
+      return true;
     } catch (error) {
       console.error("Error accepting call:", error);
       get().declineCall();
+      return false;
     }
   },
 
