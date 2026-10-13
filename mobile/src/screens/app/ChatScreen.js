@@ -494,7 +494,10 @@ export const ChatScreen = ({ route, navigation }) => {
       await sendMediaMessage(conversationId, payload, token);
     } catch (error) {
       console.error("Error sending media message:", error);
-      showAlert(t("common.error"), t("messages.mediaUploadFailed"));
+      showAlert(
+        t("common.error"),
+        error.response?.data?.error || t("messages.mediaUploadFailed")
+      );
     } finally {
       setUploadingMedia(false);
     }
