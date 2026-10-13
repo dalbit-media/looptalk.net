@@ -41,6 +41,7 @@ const isDevelopment = process.argv.includes("--dev");
 const allowLoopbackOrigins = isDevelopment || process.env.NODE_ENV !== "production";
 const nextApp = next({
   dev: isDevelopment,
+  webpack: isDevelopment,
   dir: path.resolve(__dirname, "../.."),
 });
 const handleNextRequest = nextApp.getRequestHandler();
@@ -183,6 +184,11 @@ if (hasExpoWebBuild) {
     maxAge: isDevelopment ? 0 : "1y",
     dotfiles: "deny",
     index: false,
+    setHeaders: (res, filePath) => {
+      if (path.basename(filePath) === "manifest.webmanifest") {
+        res.setHeader("Cache-Control", "no-cache");
+      }
+    },
   }));
   app.use("/_expo", express.static(path.join(expoWebBuildDirectory, "_expo"), {
     immutable: !isDevelopment,
@@ -250,6 +256,7 @@ app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/media", require("./routes/media"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/invitations", require("./routes/invitations"));
+app.use("/api/admin", require("./routes/admin"));
 app.use("/api/link-preview", require("./routes/linkPreview"));
 app.use("/api/calls", require("./routes/calls"));
 app.use("/api/reports", require("./routes/reports"));

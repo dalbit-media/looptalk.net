@@ -18,11 +18,13 @@ import { usePreferencesStore } from "./src/store/preferencesStore";
 import { useMessageStore } from "./src/store/messageStore";
 import { useContactStore } from "./src/store/contactStore";
 import { AppSplash } from "./src/components/AppSplash";
+import { AppTextScaleProvider } from "./src/components/AppText";
 import { CallOverlay } from "./src/components/CallOverlay";
 import { WebAlertHost } from "./src/components/WebAlertHost";
 import { setupCallNotifications } from "./src/utils/callNotifications";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
+import "./src/utils/webAppInstall";
 
 const sentryModule = (() => {
   if (Platform.OS === "web") return null;
@@ -154,6 +156,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS !== "web" || !token || typeof window === "undefined") return;
+    const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+    if (returnTo === "/admin") window.location.replace(returnTo);
+  }, [token]);
+
+  useEffect(() => {
     if (Platform.OS === "web") return undefined;
     let cleanupNotifications;
     setupNativeCalling({
@@ -197,19 +205,21 @@ function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-      <NavigationContainer
-        ref={navigationRef}
-        theme={navigationTheme}
-        linking={linking}
-        initialState={token ? undefined : initialNavigationState}
-        onReady={openPendingMessageNotification}
-      >
-        {token ? <AppStack /> : <AuthStack />}
-      </NavigationContainer>
-      {token ? <CallOverlay /> : null}
-      <WebAlertHost />
-      </SafeAreaProvider>
+      <AppTextScaleProvider>
+        <SafeAreaProvider>
+          <NavigationContainer
+            ref={navigationRef}
+            theme={navigationTheme}
+            linking={linking}
+            initialState={token ? undefined : initialNavigationState}
+            onReady={openPendingMessageNotification}
+          >
+            {token ? <AppStack /> : <AuthStack />}
+          </NavigationContainer>
+          {token ? <CallOverlay /> : null}
+          <WebAlertHost />
+        </SafeAreaProvider>
+      </AppTextScaleProvider>
     </GestureHandlerRootView>
   );
 }

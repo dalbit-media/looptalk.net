@@ -1,13 +1,6 @@
 import React, { useRef, useState } from "react";
-import {
-  FlatList,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { FlatList, Platform, StyleSheet, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { LanguageFooter } from "../../components/LanguageFooter";
 import { useAppTheme } from "../../hooks/useAppTheme";

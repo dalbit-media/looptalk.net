@@ -377,6 +377,17 @@ Abuse reports are submitted with `POST /api/reports`. Users listed in
 `ADMIN_USER_IDS` can page reports with `GET /api/reports` and update review
 status with `PATCH /api/reports/:id`.
 
+The `/admin` dashboard loads live counts and monthly invitation growth from
+`GET /api/admin/overview`, which is restricted to authenticated users listed
+in `ADMIN_USER_IDS`. Invitation acceptance timestamps are recorded going
+forward; existing accepted invitations have no historical acceptance date.
+Apply the `acceptedAt` schema change to an existing database and regenerate
+the Prisma client with `npm run db:push --prefix server` followed by
+`npm run prisma:generate --prefix server`. The dashboard estimates active message
+payload bytes from text and declared attachment sizes, measures uploaded files
+on the server disk, and does not report client-local storage. End-to-end
+encryption and user-managed cloud/disk backups are not implemented.
+
 ### Socket.io
 
 Clients authenticate with `auth.token`. Supported client events are

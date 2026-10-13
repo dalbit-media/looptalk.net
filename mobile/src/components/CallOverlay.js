@@ -1,16 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  Vibration,
-  Platform,
-  Animated,
-  PanResponder,
-  Dimensions,
-} from "react-native";
+import { View, StyleSheet, TouchableOpacity, Modal, Vibration, Platform, Animated, PanResponder, Dimensions } from "react-native";
+import { AppText as Text } from "./AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useCallStore } from "../store/callStore";
 import { useAppTheme } from "../hooks/useAppTheme";
@@ -174,7 +164,11 @@ export const CallOverlay = () => {
 
   const handleAcceptCall = async () => {
     const accepted = await acceptCall();
-    if (!accepted) showAlert(t("common.error"), t("calls.callFailed"));
+    if (!accepted) {
+      showAlert(t("common.error"), t("calls.callFailed"));
+    } else if (accepted === "CALL_PERMISSION_DENIED") {
+      showAlert(t("common.error"), t("calls.mediaPermissionDenied"));
+    }
   };
 
   const statusLabel = () => {

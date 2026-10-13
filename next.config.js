@@ -3,6 +3,7 @@ const nextConfig = {
   poweredByHeader: false,
   transpilePackages: [
     "react-native-web",
+    "expo-modules-core",
     "react-native-gesture-handler",
     "react-native-safe-area-context",
     "react-native-screens",
@@ -23,6 +24,7 @@ const nextConfig = {
       __dirname,
       "mobile/src/utils/expoFontServerContext.web.js"
     );
+    const mobileNodeModules = path.resolve(__dirname, "mobile/node_modules");
     config.resolve.alias["react-native$"] = "react-native-web";
     config.resolve.alias["react-native-reanimated"] = false;
     config.resolve.alias[
@@ -46,6 +48,9 @@ const nextConfig = {
         path.resolve(__dirname, "node_modules/expo"),
         path.resolve(__dirname, "node_modules/expo-modules-core"),
         path.resolve(__dirname, "node_modules/expo-image-picker"),
+        path.resolve(mobileNodeModules, "expo"),
+        path.resolve(mobileNodeModules, "expo-modules-core"),
+        path.resolve(mobileNodeModules, "expo-image-picker"),
       ],
       use: {
         loader: "babel-loader",

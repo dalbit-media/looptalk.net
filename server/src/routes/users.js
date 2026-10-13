@@ -15,24 +15,36 @@ router.get("/search", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "Search query is too long" });
     }
 
+    const userSelect = {
+      id: true,
+      username: true,
+      displayName: true,
+      profilePicture: true,
+    };
+    const visibilityFilter = {
+      id: { not: req.userId },
+      NOT: [
+        { blocks: { some: { blockedUserId: req.userId } } },
+        { blockedBy: { some: { userId: req.userId } } },
+      ],
+    };
+    const exactIdMatch = query !== req.userId
+      ? await prisma.user.findFirst({
+          where: { ...visibilityFilter, id: query },
+          select: userSelect,
+        })
+      : null;
+    if (exactIdMatch) return res.json([exactIdMatch]);
+
     const users = await prisma.user.findMany({
       where: {
-        id: { not: req.userId },
-        NOT: [
-          { blocks: { some: { blockedUserId: req.userId } } },
-          { blockedBy: { some: { userId: req.userId } } },
-        ],
+        ...visibilityFilter,
         OR: [
-          { username: { contains: query, mode: "insensitive" } },
-          { displayName: { contains: query, mode: "insensitive" } },
+          { username: { contains: query } },
+          { displayName: { contains: query } },
         ],
       },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        profilePicture: true,
-      },
+      select: userSelect,
       take: 20,
     });
 
@@ -81,10 +93,17 @@ router.put("/", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "Invalid profile data" });
     }
 
-    if (username !== undefined && !/^[a-zA-Z0-9_]{3,24}$/.test(username.trim())) {
+    const normalizedUsername = typeof username === "string" ? username.trim() : undefined;
+    const normalizedDisplayName = typeof displayName === "string" ? displayName.trim() : undefined;
+    const normalizedBio = typeof bio === "string" ? bio.trim() : undefined;
+
+    if (normalizedUsername !== undefined && !/^[a-zA-Z0-9_]{3,24}$/.test(normalizedUsername)) {
       return res.status(400).json({ error: "Invalid username" });
     }
-    if (displayName?.trim().length > 100 || bio?.trim().length > 500) {
+    if (normalizedDisplayName !== undefined && !normalizedDisplayName) {
+      return res.status(400).json({ error: "Display name is required" });
+    }
+    if (normalizedDisplayName?.length > 100 || normalizedBio?.length > 500) {
       return res.status(400).json({ error: "Profile data is too long" });
     }
     if (profilePicture?.trim().length > 2048) {
@@ -94,10 +113,10 @@ router.put("/", authMiddleware, async (req, res) => {
     const user = await prisma.user.update({
       where: { id: req.userId },
       data: {
-        username: username?.trim() || undefined,
-        displayName: displayName || undefined,
-        bio: bio || undefined,
-        profilePicture: profilePicture || undefined,
+        username: normalizedUsername || undefined,
+        displayName: normalizedDisplayName || undefined,
+        bio: normalizedBio === undefined ? undefined : normalizedBio,
+        profilePicture: profilePicture?.trim() || undefined,
       },
       select: {
         id: true,

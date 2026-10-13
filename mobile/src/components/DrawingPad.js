@@ -1,17 +1,12 @@
-import React, { useRef, useState } from "react";
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  PanResponder,
-  Text,
-} from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { View, StyleSheet, TouchableOpacity, Modal, PanResponder, Platform } from "react-native";
+import { AppText as Text } from "./AppText";
 import Svg, { Path } from "react-native-svg";
 import { captureRef } from "react-native-view-shot";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
+import { showAlert } from "../utils/showAlert";
 
 const PALETTE = ["#1C1C1E", "#FF3B30", "#FF9500", "#34C759", "#007AFF", "#AF52DE", "#FFFFFF"];
 const STROKE_WIDTHS = [4, 8, 14];
@@ -32,6 +27,58 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
   const strokeWidthRef = useRef(strokeWidth);
   colorRef.current = color;
   strokeWidthRef.current = strokeWidth;
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return undefined;
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const getPoint = (event) => {
+      const bounds = canvas.getBoundingClientRect();
+      return {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      };
+    };
+    const handlePointerDown = (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      canvas.setPointerCapture?.(event.pointerId);
+      const { x, y } = getPoint(event);
+      currentPathRef.current = {
+        d: `M${x},${y}`,
+        color: colorRef.current,
+        strokeWidth: strokeWidthRef.current,
+      };
+      forceRender((value) => value + 1);
+    };
+    const handlePointerMove = (event) => {
+      if (!currentPathRef.current || (event.buttons & 1) !== 1) return;
+      event.preventDefault();
+      const { x, y } = getPoint(event);
+      currentPathRef.current = {
+        ...currentPathRef.current,
+        d: `${currentPathRef.current.d} L${x},${y}`,
+      };
+      forceRender((value) => value + 1);
+    };
+    const finishPointer = () => {
+      const completedPath = currentPathRef.current;
+      currentPathRef.current = null;
+      if (completedPath) setPaths((prev) => [...prev, completedPath]);
+    };
+
+    canvas.addEventListener("pointerdown", handlePointerDown);
+    canvas.addEventListener("pointermove", handlePointerMove);
+    canvas.addEventListener("pointerup", finishPointer);
+    canvas.addEventListener("pointercancel", finishPointer);
+    return () => {
+      canvas.removeEventListener("pointerdown", handlePointerDown);
+      canvas.removeEventListener("pointermove", handlePointerMove);
+      canvas.removeEventListener("pointerup", finishPointer);
+      canvas.removeEventListener("pointercancel", finishPointer);
+    };
+  }, []);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -56,10 +103,12 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
         forceRender((value) => value + 1);
       },
       onPanResponderRelease: () => {
-        if (currentPathRef.current) {
-          setPaths((prev) => [...prev, currentPathRef.current]);
-          currentPathRef.current = null;
-        }
+        const completedPath = currentPathRef.current;
+        currentPathRef.current = null;
+        if (completedPath) setPaths((prev) => [...prev, completedPath]);
+      },
+      onPanResponderTerminate: () => {
+        currentPathRef.current = null;
       },
     })
   ).current;
@@ -79,9 +128,10 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
     try {
       const uri = await captureRef(canvasRef, { format: "png", quality: 1 });
       setPaths([]);
-      onSend(uri);
+      await onSend(uri);
     } catch (error) {
       console.error("Error capturing drawing:", error);
+      showAlert(t("common.error"), t("messages.mediaUploadFailed"));
     } finally {
       setSending(false);
     }
@@ -125,9 +175,9 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
           ref={canvasRef}
           style={styles.canvas}
           collapsable={false}
-          {...panResponder.panHandlers}
+          {...(Platform.OS === "web" ? {} : panResponder.panHandlers)}
         >
-          <Svg style={StyleSheet.absoluteFill}>
+          <Svg pointerEvents="none" style={StyleSheet.absoluteFill}>
             {paths.map((path, index) => (
               <Path
                 key={index}
@@ -228,6 +278,7 @@ const createStyles = (colors) =>
     canvas: {
       flex: 1,
       backgroundColor: "#FFFFFF",
+      ...(Platform.OS === "web" ? { touchAction: "none", cursor: "crosshair" } : {}),
     },
     toolbar: {
       paddingHorizontal: 16,

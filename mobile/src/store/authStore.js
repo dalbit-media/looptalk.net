@@ -26,13 +26,14 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  register: async (email, phoneNumber, password, invitationCode) => {
+  register: async (email, phoneNumber, password, invitationCode, displayName) => {
     try {
       const response = await api.register(
         email,
         phoneNumber,
         password,
-        invitationCode
+        invitationCode,
+        displayName
       );
       await SecureStore.setItemAsync(TOKEN_KEY, response.token);
       set({ user: response.user, token: response.token });

@@ -1,6 +1,15 @@
 import { api } from "./client";
 
 const appendUpload = async (formData, field, { uri, name, mimeType }) => {
+  if (typeof window !== "undefined") {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`Failed to read upload: ${name}`);
+    }
+    formData.append(field, await response.blob(), name);
+    return;
+  }
+
   formData.append(field, { uri, name, type: mimeType });
 };
 
@@ -163,10 +172,7 @@ export const sendMediaMessage = async (
     `/messages/${conversationId}/media`,
     formData,
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "multipart/form-data",
-      },
+      headers: { Authorization: `Bearer ${token}` },
       onUploadProgress,
     }
   );

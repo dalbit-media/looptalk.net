@@ -26,7 +26,7 @@ const isValidPhoneNumber = (phoneNumber) => /^\+?\d{7,15}$/.test(phoneNumber);
 
 const createRandomUsername = async (tx) => {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const username = `user_${uuidv4().replace(/-/g, "").slice(0, 10)}`;
+    const username = uuidv4().replace(/-/g, "").slice(0, 10);
     const exists = await tx.user.findUnique({ where: { username } });
     if (!exists) return username;
   }
@@ -52,7 +52,7 @@ const acceptInvitation = async (tx, invitation, inviteeId) => {
   await Promise.all([
     tx.invitation.update({
       where: { id: invitation.id },
-      data: { status: "ACCEPTED" },
+      data: { status: "ACCEPTED", acceptedAt },
     }),
     ...contactPairs.map(({ userId, contactUserId }) =>
       tx.contact.upsert({
@@ -163,7 +163,12 @@ router.post("/register", async (req, res) => {
     if (password.length < 6 || password.length > 128) {
       return res.status(400).json({ error: "Password must be 6 to 128 characters" });
     }
-    if (displayName?.trim().length > 100 || invitationCode?.trim().length > 100) {
+
+    const normalizedDisplayName = displayName?.trim() || "";
+    if (!normalizedDisplayName) {
+      return res.status(400).json({ error: "Display name is required" });
+    }
+    if (normalizedDisplayName.length > 100 || invitationCode?.trim().length > 100) {
       return res.status(400).json({ error: "Registration data is too long" });
     }
 
@@ -218,10 +223,7 @@ router.post("/register", async (req, res) => {
           username,
           email: normalizedEmail,
           phoneNumber: normalizedPhoneNumber,
-          displayName:
-            displayName?.trim() ||
-            normalizedEmail?.split("@")[0] ||
-            `User ${normalizedPhoneNumber.slice(-4)}`,
+          displayName: normalizedDisplayName,
           passwordHash,
         },
       });
@@ -365,12 +367,12 @@ router.post("/social", async (req, res) => {
         if (!identity.email) throw new Error("PROVIDER_EMAIL_REQUIRED");
 
         const username = await createRandomUsername(tx);
+        const socialDisplayName = (displayName?.trim() || identity.displayName?.trim() || identity.email.split("@")[0]).slice(0, 100);
         const createdUser = await tx.user.create({
           data: {
             username,
             email: identity.email,
-            displayName:
-              displayName?.trim() || identity.displayName || identity.email.split("@")[0],
+            displayName: socialDisplayName || identity.email.split("@")[0],
             profilePicture: identity.profilePicture,
             [providerField]: identity.providerId,
           },

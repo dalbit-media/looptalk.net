@@ -14,6 +14,33 @@ export const updateProfile = async (updates, token) => {
   return response.data;
 };
 
+export const uploadProfilePicture = async (file, token) => {
+  const formData = new FormData();
+  const fileName = file.fileName || "profile-picture.jpg";
+
+  if (file.file) {
+    formData.append("file", file.file, fileName);
+  } else if (typeof window !== "undefined") {
+    const fileResponse = await fetch(file.uri);
+    if (!fileResponse.ok) {
+      throw new Error("Failed to read selected profile picture");
+    }
+    formData.append("file", await fileResponse.blob(), fileName);
+  } else {
+    formData.append("file", {
+      uri: file.uri,
+      name: fileName,
+      type: file.mimeType || "image/jpeg",
+    });
+  }
+
+  const response = await api.post("/media/profile-picture", formData, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  return response.data;
+};
+
 export const searchUsers = async (query, token) => {
   const response = await api.get("/users/search", {
     params: { q: query },

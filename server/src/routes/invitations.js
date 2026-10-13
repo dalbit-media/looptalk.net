@@ -425,6 +425,13 @@ router.get("/", authMiddleware, async (req, res) => {
     const invitations = await prisma.invitation.findMany({
       where: { inviterId: req.userId },
       orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        expiresAt: true,
+        createdAt: true,
+      },
     });
 
     res.json(invitations.map((invitation) => ({

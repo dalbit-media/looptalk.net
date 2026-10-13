@@ -1,17 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-  Image,
-  Linking,
-} from "react-native";
+import { View, StyleSheet, FlatList, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking } from "react-native";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
+import { AppText as Text } from "../../components/AppText";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
@@ -28,9 +18,9 @@ import { HighlightText } from "../../components/HighlightText";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useCallStore } from "../../store/callStore";
-import { usePreferencesStore } from "../../store/preferencesStore";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { API_URL } from "../../config/environment";
 import { showAlert } from "../../utils/showAlert";
 import * as ReportAPI from "../../api/reports";
 
@@ -41,7 +31,7 @@ const formatFileSize = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const CHAT_MESSAGE_FONT_SIZES = { standard: 16, large: 19, extraLarge: 22 };
+const ATTACHMENT_DISMISS_FALLBACK_MS = 500;
 
 export const ChatScreen = ({ route, navigation }) => {
   const t = useTranslation();
@@ -50,9 +40,6 @@ export const ChatScreen = ({ route, navigation }) => {
   const { conversationId } = route.params;
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
-  const chatTextSize = usePreferencesStore((state) => state.chatTextSize);
-  const chatMessageFontSize =
-    CHAT_MESSAGE_FONT_SIZES[chatTextSize] || CHAT_MESSAGE_FONT_SIZES.standard;
 
   const messages = useMessageStore((state) => state.messages);
   const conversations = useMessageStore((state) => state.conversations);
@@ -85,18 +72,32 @@ export const ChatScreen = ({ route, navigation }) => {
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [replyTarget, setReplyTarget] = useState(null);
+  const [quotedMessageId, setQuotedMessageId] = useState(null);
+  const [jumpingToReply, setJumpingToReply] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [searchActive, setSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFilter, setSearchFilter] = useState("all");
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
+  const [unreadBelowCount, setUnreadBelowCount] = useState(0);
+  const [loadedConversationId, setLoadedConversationId] = useState(null);
+  const [laidOutConversationId, setLaidOutConversationId] = useState(null);
+  const [contentConversationId, setContentConversationId] = useState(null);
+  const [positionedConversationId, setPositionedConversationId] = useState(null);
   const flatListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const lastKeyboardSubmitAtRef = useRef(0);
-  const prevMessagesCountRef = useRef(0);
+  const lastMessageIdRef = useRef(null);
   const contentScrollTimerRef = useRef(null);
+  const initialScrollTimersRef = useRef([]);
+  const drawingLaunchTimerRef = useRef(null);
+  const quoteHighlightTimerRef = useRef(null);
+  const quoteJumpActiveRef = useRef(false);
+  const messagesRef = useRef(messages);
   const isWeb = Platform.OS === "web";
+  messagesRef.current = messages;
 
   const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
@@ -139,6 +140,48 @@ export const ChatScreen = ({ route, navigation }) => {
     }
   };
 
+  const jumpToQuotedMessage = async (targetMessageId) => {
+    if (!targetMessageId || jumpingToReply) return;
+    setJumpingToReply(true);
+    try {
+      quoteJumpActiveRef.current = true;
+      clearTimeout(contentScrollTimerRef.current);
+      initialScrollTimersRef.current.forEach(clearTimeout);
+      initialScrollTimersRef.current = [];
+      let state = useMessageStore.getState();
+      let targetIndex = state.messages.findIndex((message) => message.id === targetMessageId);
+      while (
+        targetIndex < 0 &&
+        state.currentConversation?.id === conversationId &&
+        state.hasOlderMessages
+      ) {
+        const loadedOlderMessages = await loadOlderMessages(conversationId, token);
+        state = useMessageStore.getState();
+        targetIndex = state.messages.findIndex((message) => message.id === targetMessageId);
+        if (!loadedOlderMessages) break;
+      }
+
+      if (targetIndex < 0) {
+        showAlert(t("common.error"), t("messages.quotedMessageUnavailable"));
+        return;
+      }
+
+      setQuotedMessageId(targetMessageId);
+      isNearBottomRef.current = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => requestScrollToIndex(targetIndex)));
+      if (quoteHighlightTimerRef.current) clearTimeout(quoteHighlightTimerRef.current);
+      quoteHighlightTimerRef.current = setTimeout(() => {
+        setQuotedMessageId(null);
+        quoteHighlightTimerRef.current = null;
+      }, 2500);
+    } finally {
+      setTimeout(() => {
+        quoteJumpActiveRef.current = false;
+      }, 1200);
+      setJumpingToReply(false);
+    }
+  };
+
   const goToMatch = (targetIndex) => {
     if (!matches.length) return;
     const nextIndex = ((targetIndex % matches.length) + matches.length) % matches.length;
@@ -164,9 +207,39 @@ export const ChatScreen = ({ route, navigation }) => {
     setCurrentMatchIndex(0);
   };
 
+  const openUserProfile = (targetUserId) => {
+    if (targetUserId) {
+      navigation.navigate("Profile", { userId: targetUserId });
+    }
+  };
+
   useEffect(() => {
     navigation.setOptions({
-      title: conversation?.name || route.params?.name || t("messages.chat"),
+      headerTitle: () => peerUser ? (
+        <TouchableOpacity
+          style={styles.headerProfileTitle}
+          onPress={() => openUserProfile(peerUser.id)}
+          accessibilityRole="button"
+          accessibilityLabel={t("profile.viewProfile", { name: peerUser.displayName })}
+        >
+          <View style={styles.headerProfileAvatar}>
+            {peerUser.profilePicture ? (
+              <Image
+                source={{ uri: `${API_URL}${peerUser.profilePicture}` }}
+                style={styles.headerProfileAvatarImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={styles.headerProfileAvatarText}>
+                {(peerUser.displayName || peerUser.username || "?")[0]}
+              </Text>
+            )}
+          </View>
+          <Text style={styles.headerProfileName} numberOfLines={1}>
+            {conversation?.name || route.params?.name || peerUser.displayName || t("messages.chat")}
+          </Text>
+        </TouchableOpacity>
+      ) : conversation?.name || route.params?.name || t("messages.chat"),
       headerRight: () => (
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -213,13 +286,22 @@ export const ChatScreen = ({ route, navigation }) => {
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigation, canCall, canVideoCall, peerUser?.id, conversation?.isGroupChat]);
+  }, [navigation, canCall, canVideoCall, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.isGroupChat]);
 
   useEffect(() => {
-    loadMessages(conversationId, user.id, token);
+    let isActive = true;
+    setLoadedConversationId(null);
+    setLaidOutConversationId(null);
+    setContentConversationId(null);
+    setPositionedConversationId(null);
+    isNearBottomRef.current = true;
+    loadMessages(conversationId, user.id, token).finally(() => {
+      if (isActive) setLoadedConversationId(conversationId);
+    });
     joinConversation(conversationId);
 
     return () => {
+      isActive = false;
       stopTyping(conversationId, user.id);
       leaveConversation(conversationId);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -227,29 +309,108 @@ export const ChatScreen = ({ route, navigation }) => {
   }, [conversationId, user.id, token, joinConversation, leaveConversation, loadMessages]);
 
   const scrollToBottom = (animated = true) => {
-    if (!flatListRef.current || messages.length === 0 || searchActive) return;
-    // Run both APIs to reliably land at absolute bottom across RN + web.
+    if (!flatListRef.current || messagesRef.current.length === 0 || searchActive) return;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      flatListRef.current?.scrollToEnd({ animated });
-      flatListRef.current?.scrollToOffset({ offset: Number.MAX_SAFE_INTEGER, animated });
+      const list = flatListRef.current;
+      list?.scrollToEnd({ animated });
+      if (Platform.OS === "web") {
+        list?.scrollToOffset({
+          offset: Number.MAX_SAFE_INTEGER,
+          animated,
+        });
+      }
     }));
   };
 
   useEffect(() => {
+    lastMessageIdRef.current = null;
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
+    setUnreadBelowCount(0);
+    return () => {
+      if (contentScrollTimerRef.current) {
+        clearTimeout(contentScrollTimerRef.current);
+      }
+    };
+  }, [conversationId]);
+
+  useEffect(
+    () => () => {
+      if (drawingLaunchTimerRef.current) {
+        clearTimeout(drawingLaunchTimerRef.current);
+      }
+      if (quoteHighlightTimerRef.current) {
+        clearTimeout(quoteHighlightTimerRef.current);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (
+      loadedConversationId !== conversationId ||
+      laidOutConversationId !== conversationId
+    ) {
+      return;
+    }
+    if (!messagesRef.current.length) {
+      setPositionedConversationId(conversationId);
+      return;
+    }
+    if (contentConversationId !== conversationId) return;
+    initialScrollTimersRef.current.forEach(clearTimeout);
+    initialScrollTimersRef.current = [];
+    [0, 80, 180, 320].forEach((delay) => {
+      const timer = setTimeout(() => {
+        scrollToBottom(false);
+      }, delay);
+      initialScrollTimersRef.current.push(timer);
+    });
+    const positionedTimer = setTimeout(() => {
+      isNearBottomRef.current = true;
+      setPositionedConversationId(conversationId);
+    }, 400);
+    initialScrollTimersRef.current.push(positionedTimer);
+    return () => {
+      initialScrollTimersRef.current.forEach(clearTimeout);
+      initialScrollTimersRef.current = [];
+    };
+  }, [
+    conversationId,
+    loadedConversationId,
+    laidOutConversationId,
+    contentConversationId,
+  ]);
+
+  useEffect(() => {
     if (messages.length === 0) {
-      prevMessagesCountRef.current = 0;
+      lastMessageIdRef.current = null;
       return;
     }
     if (searchActive) return;
-    const wasEmpty = prevMessagesCountRef.current === 0;
-    prevMessagesCountRef.current = messages.length;
-    // Initial load: onContentSizeChange debounce handles scroll once content settles.
-    if (!wasEmpty && isNearBottomRef.current) {
+    const latestMessage = messages[messages.length - 1];
+    const previousLatestMessageId = lastMessageIdRef.current;
+    lastMessageIdRef.current = latestMessage.id;
+    if (
+      previousLatestMessageId &&
+      latestMessage.id !== previousLatestMessageId &&
+      isNearBottomRef.current
+    ) {
       scrollToBottom(true);
+      return;
     }
-  }, [messages, searchActive]);
+    if (
+      previousLatestMessageId &&
+      latestMessage.id !== previousLatestMessageId &&
+      latestMessage.senderId !== user.id &&
+      !isNearBottomRef.current
+    ) {
+      setUnreadBelowCount((count) => count + 1);
+    }
+  }, [messages, searchActive, user.id]);
 
   useEffect(() => {
+    if (searchActive) setShowScrollToLatest(false);
     if (!searchActive && isNearBottomRef.current) {
       scrollToBottom(false);
     }
@@ -259,10 +420,22 @@ export const ChatScreen = ({ route, navigation }) => {
   const handleStartCall = async (callType) => {
     if (!peerUser) return;
     try {
-      await startCall(conversationId, callType, peerUser);
+      const result = await startCall(conversationId, callType, peerUser);
+      if (result === "device-unavailable") {
+        showAlert(t("common.error"), t("calls.deviceNotFound"));
+      }
     } catch (error) {
       console.error("Error starting call:", error);
-      showAlert(t("common.error"), t("calls.callFailed"));
+      showAlert(
+        t("common.error"),
+        error?.code === "CALL_PERMISSION_DENIED" ||
+          error?.name === "NotAllowedError" ||
+          error?.name === "SecurityError"
+          ? t("calls.mediaPermissionDenied")
+          : error?.code === "CALL_SIGNALING_UNAVAILABLE"
+            ? t("calls.signalingUnavailable")
+            : t("calls.callFailed")
+      );
     }
   };
 
@@ -471,8 +644,21 @@ export const ChatScreen = ({ route, navigation }) => {
       setRecordingVoice(true);
     } else if (key === "drawing") {
       setAttachmentSheetVisible(false);
-      setDrawingVisible(true);
+      if (drawingLaunchTimerRef.current) {
+        clearTimeout(drawingLaunchTimerRef.current);
+      }
+      drawingLaunchTimerRef.current = setTimeout(() => {
+        drawingLaunchTimerRef.current = null;
+        setDrawingVisible(true);
+      }, ATTACHMENT_DISMISS_FALLBACK_MS);
     }
+  };
+
+  const handleAttachmentSheetDismiss = () => {
+    if (!drawingLaunchTimerRef.current) return;
+    clearTimeout(drawingLaunchTimerRef.current);
+    drawingLaunchTimerRef.current = null;
+    setDrawingVisible(true);
   };
 
   const handleOpenLink = (url) => {
@@ -617,11 +803,11 @@ export const ChatScreen = ({ route, navigation }) => {
     handleSendMessage();
   };
 
-  const renderMessageItem = ({ item }) => {
+  const renderMessageItem = ({ item, index }) => {
     if (item.messageType === "SYSTEM") {
       return (
         <View style={styles.systemMessageRow}>
-          <Text style={[styles.systemMessageText, { fontSize: chatMessageFontSize }]}>
+          <Text style={styles.systemMessageText}>
             {item.content}
           </Text>
           <Text style={styles.systemMessageTime}>
@@ -636,9 +822,23 @@ export const ChatScreen = ({ route, navigation }) => {
 
     const isOwn = item.senderId === user.id;
     const senderName =
-      item.sender?.displayName || item.sender?.username || "Unknown user";
+      item.sender?.displayName || item.sender?.username || t("messages.unknownUser");
+    const senderAvatarUri = item.sender?.profilePicture
+      ? `${API_URL}${item.sender.profilePicture}`
+      : null;
+    const previousMessage = messages[index - 1];
+    const isSameSenderBurst =
+      previousMessage &&
+      previousMessage.messageType !== "SYSTEM" &&
+      previousMessage.senderId === item.senderId &&
+      new Date(item.createdAt) - new Date(previousMessage.createdAt) < 5 * 60 * 1000;
+    const isFirstInSenderGroup =
+      !isSameSenderBurst;
+    const showSenderName = conversation?.isGroupChat && !isOwn && isFirstInSenderGroup;
+    const showSenderAvatar = conversation?.isGroupChat && !isOwn && isFirstInSenderGroup;
     const isCurrentMatch =
       searchActive && matches.length > 0 && matches[currentMatchIndex]?.id === item.id;
+    const isQuotedMessage = item.id === quotedMessageId;
     const isMatch = searchActive && matches.some((match) => match.id === item.id);
     const highlightQuery = searchActive ? searchQuery : "";
     const readRecipients = isOwn && !item.deliveryState
@@ -661,12 +861,25 @@ export const ChatScreen = ({ route, navigation }) => {
         style={[
           styles.messageRow,
           isOwn ? styles.ownMessageRow : styles.otherMessageRow,
+          !isFirstInSenderGroup && styles.continuedMessageRow,
         ]}
       >
-        {!isOwn && (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{senderName[0]}</Text>
-          </View>
+        {showSenderAvatar && (
+          <TouchableOpacity
+            style={styles.avatar}
+            onPress={() => openUserProfile(item.sender?.id || item.senderId)}
+            accessibilityRole="button"
+            accessibilityLabel={t("profile.viewProfile", { name: senderName })}
+          >
+            {senderAvatarUri ? (
+              <Image source={{ uri: senderAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
+            ) : (
+              <Text style={styles.avatarText}>{senderName[0]}</Text>
+            )}
+          </TouchableOpacity>
+        )}
+        {conversation?.isGroupChat && !isOwn && !showSenderAvatar && (
+          <View style={styles.avatarSpacer} />
         )}
 
         <TouchableOpacity
@@ -676,11 +889,14 @@ export const ChatScreen = ({ route, navigation }) => {
           style={[
             styles.messageBubble,
             isOwn ? styles.ownBubble : styles.otherBubble,
+            conversation?.isGroupChat && !isOwn && styles.groupOtherBubble,
+            !isFirstInSenderGroup && (isOwn ? styles.continuedOwnBubble : styles.continuedOtherBubble),
             isMatch && styles.matchedBubble,
             isCurrentMatch && styles.currentMatchBubble,
+            isQuotedMessage && styles.quotedMessageBubble,
           ]}
         >
-          {!isOwn && (
+          {showSenderName && (
             <HighlightText
               text={senderName}
               query={highlightQuery}
@@ -693,7 +909,6 @@ export const ChatScreen = ({ route, navigation }) => {
             <Text
               style={[
                 styles.messageText,
-                { fontSize: chatMessageFontSize },
                 styles.deletedText,
                 isOwn && styles.ownMessageText,
               ]}
@@ -703,16 +918,30 @@ export const ChatScreen = ({ route, navigation }) => {
           ) : (
             <>
               {item.replyTo && (
-                <View style={styles.replyPreview}>
-                  <Text style={styles.replyPreviewSender} numberOfLines={1}>
+                <TouchableOpacity
+                  style={[styles.replyPreview, isOwn && styles.ownReplyPreview]}
+                  onPress={() => jumpToQuotedMessage(item.replyTo.id || item.replyToId)}
+                  disabled={jumpingToReply || !(item.replyTo.id || item.replyToId)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.replyTo.sender?.displayName || item.replyTo.sender?.username || ""}: ${item.replyTo.isDeleted
+                    ? t("messages.messageDeleted")
+                    : item.replyTo.content || `[${item.replyTo.messageType}]`}`}
+                >
+                  <Text
+                    style={[styles.replyPreviewSender, isOwn && styles.ownReplyPreviewText]}
+                    numberOfLines={1}
+                  >
                     {item.replyTo.sender?.displayName || item.replyTo.sender?.username}
                   </Text>
-                  <Text style={styles.replyPreviewText} numberOfLines={1}>
+                  <Text
+                    style={[styles.replyPreviewText, isOwn && styles.ownReplyPreviewText]}
+                    numberOfLines={2}
+                  >
                     {item.replyTo.isDeleted
                       ? t("messages.messageDeleted")
                       : item.replyTo.content || `[${item.replyTo.messageType}]`}
                   </Text>
-                </View>
+                </TouchableOpacity>
               )}
 
               {item.messageType === "TEXT" && (
@@ -722,7 +951,6 @@ export const ChatScreen = ({ route, navigation }) => {
                   active={isCurrentMatch}
                   style={[
                     styles.messageText,
-                    { fontSize: chatMessageFontSize },
                     isOwn && styles.ownMessageText,
                   ]}
                 />
@@ -754,7 +982,6 @@ export const ChatScreen = ({ route, navigation }) => {
                     <Text
                       style={[
                         styles.fileName,
-                        { fontSize: chatMessageFontSize },
                         isOwn && styles.ownMessageText,
                       ]}
                       numberOfLines={2}
@@ -862,14 +1089,27 @@ export const ChatScreen = ({ route, navigation }) => {
     );
   };
 
-  const typingIndicator =
-    typingUsers.size > 0 ? (
-      <View style={styles.typingContainer}>
+  const activeTypists = [...typingUsers]
+    .filter((userId) => userId !== user.id)
+    .map((userId) =>
+      conversation?.participants?.find((participant) => participant.userId === userId)
+        ?.user?.displayName || t("messages.someone")
+    );
+  const typingLabel = activeTypists.length === 1
+    ? t("messages.userIsTyping", { name: activeTypists[0] })
+    : activeTypists.length > 1
+      ? t("messages.peopleAreTyping", { count: activeTypists.length })
+      : "";
+  const typingIndicator = typingLabel ? (
+    <View style={styles.typingContainer} accessibilityLiveRegion="polite">
+      <View style={styles.typingBubble}>
         <View style={styles.typingDot} />
         <View style={styles.typingDot} />
         <View style={styles.typingDot} />
       </View>
-    ) : null;
+      <Text style={styles.typingLabel}>{typingLabel}</Text>
+    </View>
+  ) : null;
 
   return (
     <KeyboardAvoidingView
@@ -950,23 +1190,58 @@ export const ChatScreen = ({ route, navigation }) => {
       )}
 
       <FlatList
+        key={conversationId}
         ref={flatListRef}
         data={messages}
         keyExtractor={(item) => item.id}
         renderItem={renderMessageItem}
         contentContainerStyle={styles.messageList}
+        style={positionedConversationId === conversationId ? undefined : styles.initiallyHiddenList}
         keyboardShouldPersistTaps="always"
-        onLayout={() => scrollToBottom(false)}
-        onContentSizeChange={() => {
-          // Debounce: wait for content to stop changing before scrolling to actual bottom.
+        onLayout={() => setLaidOutConversationId(conversationId)}
+        onContentSizeChange={(_, contentHeight) => {
+          if (messages.length > 0 && contentHeight > 0) {
+            setContentConversationId(conversationId);
+          }
+          if (quoteJumpActiveRef.current) return;
+          if (
+            loadedConversationId === conversationId &&
+            positionedConversationId !== conversationId &&
+            messages.length > 0 &&
+            contentHeight > 0
+          ) {
+            scrollToBottom(false);
+            return;
+          }
+          if (
+            messages.length === 0 ||
+            positionedConversationId !== conversationId
+          ) {
+            return;
+          }
           clearTimeout(contentScrollTimerRef.current);
-          contentScrollTimerRef.current = setTimeout(() => scrollToBottom(false), 150);
+          contentScrollTimerRef.current = setTimeout(() => {
+            if (isNearBottomRef.current) {
+              scrollToBottom(true);
+            }
+          }, 80);
         }}
         onScroll={(event) => {
+          if (quoteJumpActiveRef.current) {
+            isNearBottomRef.current = false;
+            return;
+          }
+          if (positionedConversationId !== conversationId) {
+            isNearBottomRef.current = true;
+            return;
+          }
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
           const distanceFromBottom =
             contentSize.height - (contentOffset.y + layoutMeasurement.height);
-          isNearBottomRef.current = distanceFromBottom < 120;
+          const isNearBottom = distanceFromBottom < 100;
+          isNearBottomRef.current = isNearBottom;
+          setShowScrollToLatest(!isNearBottom && messages.length > 0 && !searchActive);
+          if (isNearBottom) setUnreadBelowCount(0);
         }}
         scrollEventThrottle={16}
         onScrollToIndexFailed={(info) => {
@@ -1002,8 +1277,36 @@ export const ChatScreen = ({ route, navigation }) => {
         }
         ListFooterComponent={<View style={styles.listBottomSpacer} />}
       />
+      {positionedConversationId !== conversationId && (
+        <View style={styles.initialLoadOverlay} pointerEvents="none">
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      )}
 
       {typingIndicator}
+
+      {showScrollToLatest && (
+        <TouchableOpacity
+          style={styles.scrollToLatestButton}
+          onPress={() => {
+            setUnreadBelowCount(0);
+            isNearBottomRef.current = true;
+            setShowScrollToLatest(false);
+            scrollToBottom(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t("messages.scrollToLatest")}
+        >
+          <Ionicons name="arrow-down" size={20} color={colors.primary} />
+          {unreadBelowCount > 0 && (
+            <View style={styles.scrollUnreadBadge}>
+              <Text style={styles.scrollUnreadText}>
+                {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
 
       {(replyTarget || editTarget) && (
         <View style={styles.contextBar}>
@@ -1059,6 +1362,7 @@ export const ChatScreen = ({ route, navigation }) => {
             editable={!sending}
             returnKeyType="send"
             blurOnSubmit={false}
+            accessibilityLabel={t("messages.typeMessage")}
           />
 
           {messageText.trim() ? (
@@ -1066,19 +1370,23 @@ export const ChatScreen = ({ route, navigation }) => {
               style={[styles.sendButton, sending && styles.sendButtonDisabled]}
               onPress={handleSendMessage}
               disabled={sending}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.sendMessage")}
             >
               {sending ? (
-                <ActivityIndicator size="small" color={colors.primary} />
+                <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Ionicons name="send" size={20} color={colors.primary} />
+                <Ionicons name="send" size={18} color="#fff" />
               )}
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.sendButton}
+              style={[styles.sendButton, styles.voiceButton]}
               onPress={() => setRecordingVoice(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.voiceMessage")}
             >
-              <Ionicons name="mic" size={22} color={colors.primary} />
+              <Ionicons name="mic" size={21} color={colors.primary} />
             </TouchableOpacity>
           )}
         </View>
@@ -1088,6 +1396,7 @@ export const ChatScreen = ({ route, navigation }) => {
         visible={attachmentSheetVisible}
         onClose={() => setAttachmentSheetVisible(false)}
         onSelect={handleAttachmentSelect}
+        onDismiss={handleAttachmentSheetDismiss}
       />
 
       <DrawingPad
@@ -1113,10 +1422,50 @@ const createStyles = (colors) => StyleSheet.create({
     padding: 8,
     marginLeft: 4,
   },
+  headerProfileTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    maxWidth: 190,
+  },
+  headerProfileAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    marginRight: 8,
+  },
+  headerProfileAvatarImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+  },
+  headerProfileAvatarText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  headerProfileName: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
   searchContainer: {
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  initiallyHiddenList: {
+    opacity: 0,
+  },
+  initialLoadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
   },
   searchRow: {
     flexDirection: "row",
@@ -1169,6 +1518,9 @@ const createStyles = (colors) => StyleSheet.create({
     marginVertical: 4,
     alignItems: "flex-end",
   },
+  continuedMessageRow: {
+    marginTop: 1,
+  },
   systemMessageRow: {
     alignSelf: "center",
     alignItems: "center",
@@ -1203,6 +1555,15 @@ const createStyles = (colors) => StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginRight: 8,
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  avatarSpacer: {
+    width: 36,
   },
   avatarText: {
     color: "#fff",
@@ -1210,16 +1571,27 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: "600",
   },
   messageBubble: {
-    maxWidth: "80%",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    maxWidth: "82%",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
   ownBubble: {
     backgroundColor: colors.primary,
+    borderBottomRightRadius: 6,
   },
   otherBubble: {
     backgroundColor: colors.input,
+    borderBottomLeftRadius: 6,
+  },
+  groupOtherBubble: {
+    maxWidth: "72%",
+  },
+  continuedOwnBubble: {
+    borderTopRightRadius: 8,
+  },
+  continuedOtherBubble: {
+    borderTopLeftRadius: 8,
   },
   matchedBubble: {
     borderWidth: 1,
@@ -1229,15 +1601,20 @@ const createStyles = (colors) => StyleSheet.create({
     borderWidth: 2,
     borderColor: "#FF9F1C",
   },
+  quotedMessageBubble: {
+    borderWidth: 2,
+    borderColor: "#FF9F1C",
+  },
   senderName: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "700",
     color: colors.secondaryText,
-    marginBottom: 2,
+    marginBottom: 5,
   },
   messageText: {
-    fontSize: 14,
+    fontSize: 18,
     color: colors.text,
+    lineHeight: 28,
   },
   ownMessageText: {
     color: "#fff",
@@ -1273,20 +1650,30 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.mutedText,
   },
   replyPreview: {
-    borderLeftWidth: 3,
+    borderLeftWidth: 4,
     borderLeftColor: colors.primary,
-    paddingLeft: 6,
-    marginBottom: 4,
-    opacity: 0.85,
+    backgroundColor: colors.surface,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 7,
+  },
+  ownReplyPreview: {
+    borderLeftColor: "#FFFFFF",
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
   },
   replyPreviewSender: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: colors.secondaryText,
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.text,
   },
   replyPreviewText: {
-    fontSize: 12,
-    color: colors.secondaryText,
+    fontSize: 14,
+    lineHeight: 19,
+    color: colors.text,
+  },
+  ownReplyPreviewText: {
+    color: "#FFFFFF",
   },
   reactionsRow: {
     flexDirection: "row",
@@ -1422,26 +1809,75 @@ const createStyles = (colors) => StyleSheet.create({
   },
   typingContainer: {
     flexDirection: "row",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     alignItems: "center",
+    gap: 8,
+    minHeight: 38,
+  },
+  typingBubble: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderBottomLeftRadius: 5,
+    backgroundColor: colors.input,
     gap: 4,
   },
   typingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: colors.mutedText,
+  },
+  typingLabel: {
+    color: colors.mutedText,
+    fontSize: 12,
+  },
+  scrollToLatestButton: {
+    position: "absolute",
+    right: 16,
+    bottom: 76,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  scrollUnreadBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+  },
+  scrollUnreadText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700",
   },
   inputContainer: {
     flexDirection: "row",
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingVertical: 9,
     alignItems: "flex-end",
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    gap: 8,
+    gap: 6,
   },
   iconButton: {
     padding: 8,
@@ -1453,13 +1889,22 @@ const createStyles = (colors) => StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
     color: colors.text,
     backgroundColor: colors.input,
     maxHeight: 100,
+    lineHeight: 24,
   },
   sendButton: {
-    padding: 8,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+  },
+  voiceButton: {
+    backgroundColor: colors.primarySoft,
   },
   sendButtonDisabled: {
     opacity: 0.5,

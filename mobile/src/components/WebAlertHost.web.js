@@ -1,12 +1,6 @@
 import React from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  Platform,
-} from "react-native";
+import { View, StyleSheet, TouchableOpacity, Modal, Platform } from "react-native";
+import { AppText as Text } from "./AppText";
 import { useAlertStore } from "../store/alertStore";
 import { useAppTheme } from "../hooks/useAppTheme";
 

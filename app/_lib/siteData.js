@@ -19,20 +19,29 @@ export const legalPages = {
 
 export const getPageView = (page = "landing") => {
   const isAdmin = page === "admin";
+  const isStatistics = page === "statistics";
   const legalPage = legalPages[page];
-  const title = isAdmin
+  const title = isStatistics
+    ? "Statistics · LoopTalk"
+    : isAdmin
     ? "Admin · LoopTalk"
     : legalPage
       ? `${legalPage.title} · LoopTalk`
       : "LoopTalk · Private conversations, thoughtfully connected";
-  const description = isAdmin
-    ? "LoopTalk service administration and health overview."
+  const description = isStatistics
+    ? "Public LoopTalk service statistics covering accounts, invitations, conversations, messages, and storage."
+    : isAdmin
+    ? "LoopTalk invitation growth, messaging footprint, and system data overview."
     : legalPage?.description ||
       "LoopTalk is an invitation-only messenger for private conversations, smart contact groups, and rich sharing across mobile and web.";
 
   return {
-    bodyClass: isAdmin ? "admin-page" : legalPage ? "legal-page" : "landing-page",
-    canonicalPath: isAdmin ? "/admin" : legalPage ? `/${page}` : "/",
+    bodyClass: isAdmin
+      ? "admin-page"
+      : isStatistics
+        ? "admin-page statistics-page"
+        : legalPage ? "legal-page" : "landing-page",
+    canonicalPath: isAdmin ? "/admin" : isStatistics ? "/statistics" : legalPage ? `/${page}` : "/",
     description,
     legalPage,
     noIndex: isAdmin,

@@ -113,6 +113,7 @@ model Invitation {
   status          String @default("PENDING")
   expiresAt       DateTime
   createdAt       DateTime @default(now())
+  acceptedAt      DateTime?
 
   inviter         User @relation(fields: [inviterId], references: [id], onDelete: Cascade)
 
@@ -200,4 +201,3 @@ model Report {
   @@index([messageId])
   @@index([status, createdAt])
 }
-

@@ -383,7 +383,7 @@ export const useMessageStore = create((set, get) => ({
 
   loadOlderMessages: async (conversationId, token) => {
     const { loadingOlderMessages, hasOlderMessages, messages, activeUserId } = get();
-    if (loadingOlderMessages || !hasOlderMessages || !token || !messages.length) return;
+    if (loadingOlderMessages || !hasOlderMessages || !token || !messages.length) return false;
 
     set({ loadingOlderMessages: true });
     try {
@@ -406,8 +406,10 @@ export const useMessageStore = create((set, get) => ({
           hasOlderMessages: olderMessages.length >= 50,
         });
       }
+      return olderMessages.length > 0;
     } catch (error) {
       console.error("Error loading older messages:", error);
+      return false;
     } finally {
       set({ loadingOlderMessages: false });
     }
