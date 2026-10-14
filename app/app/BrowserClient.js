@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 
-const ExpoWebApp = dynamic(() => import("../../web/App"), {
+const ExpoWebApp = dynamic(() => import("../../mobile/App"), {
   ssr: false,
   loading: () => <div className="expo-web-loading" />,
 });

@@ -20,7 +20,7 @@ import { CallOverlay } from "./src/components/CallOverlay";
 import { setupCallNotifications } from "./src/utils/callNotifications";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
-import * as Sentry from "@sentry/react-native";
+import * as Sentry from "./src/utils/sentry";
 
 Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
