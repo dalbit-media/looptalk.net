@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity } from "react-native";
-import { AppText as Text } from "./AppText";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   useAudioRecorder,

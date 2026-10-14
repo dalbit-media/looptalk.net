@@ -6,14 +6,12 @@ import { useCallStore } from "./callStore";
 import {
   readMessageOutbox,
   readConversationMessages,
-  readConversationMessagesBatch,
   updateMessageOutbox,
   updateConversationMessages,
 } from "../storage/conversationStorage";
 import { useAuthStore } from "./authStore";
 
 let outboxFlushPromise = null;
-const OUTBOX_RETRY_INTERVAL_MS = 8000;
 
 const generateClientMessageId = () => {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -25,16 +23,12 @@ const generateClientMessageId = () => {
 };
 
 const mergeMessage = (messages, message) => {
-  const pendingId = message.clientMessageId
-    ? `pending:${message.clientMessageId}`
-    : null;
   const existingIndex = messages.findIndex(
     (item) =>
       item.id === message.id ||
-      (pendingId && item.id === pendingId) ||
       (message.clientMessageId &&
         item.clientMessageId === message.clientMessageId &&
-        (!item.senderId || !message.senderId || item.senderId === message.senderId))
+        item.senderId === message.senderId)
   );
   if (existingIndex === -1) {
     return [...messages, message].sort(
@@ -129,7 +123,6 @@ export const useMessageStore = create((set, get) => ({
   hasOlderMessages: true,
   typingUsers: new Set(),
   onlineUsers: new Set(),
-  outboxRetryTimerId: null,
 
   upsertConversation: (conversation) => {
     if (!conversation?.id) return;
@@ -227,7 +220,6 @@ export const useMessageStore = create((set, get) => ({
 
   initSocket: (token, userId) => {
     get().socket?.disconnect();
-    get().stopOutboxRetry();
     const socket = io(API_URL, {
       auth: { token },
       reconnection: true,
@@ -237,7 +229,6 @@ export const useMessageStore = create((set, get) => ({
     });
 
     set({ socket, activeUserId: userId });
-    get().startOutboxRetry(token);
     useCallStore.getState().attachSocket(socket);
 
     socket.on("connect", () => {
@@ -250,9 +241,6 @@ export const useMessageStore = create((set, get) => ({
       }
     });
     socket.on("disconnect", () => useCallStore.getState()._handleSocketDisconnect());
-    socket.on("connect_error", (error) => {
-      console.error("Message socket connection error:", error?.message || error);
-    });
     socket.on("new_message", (message) => get().receiveMessage(message));
     socket.on("message_edited", (operation) =>
       get().applyMessageOperation(operation, editOperationSpec(operation))
@@ -314,20 +302,18 @@ export const useMessageStore = create((set, get) => ({
     set({ loading: true });
     try {
       const conversations = await api.getConversations(token);
-      const cachedMessages = await readConversationMessagesBatch(
-        userId,
-        conversations.map((conversation) => conversation.id)
+      const hydrated = await Promise.all(
+        conversations.map(async (conversation) => {
+          const messages = await readConversationMessages(userId, conversation.id);
+          return {
+            ...conversation,
+            messages: messages.length
+              ? [messages[messages.length - 1]]
+              : conversation.messages || [],
+            unreadCount: conversation.unreadCount || 0,
+          };
+        })
       );
-      const hydrated = conversations.map((conversation, index) => {
-        const messages = cachedMessages[index] || [];
-        return {
-          ...conversation,
-          messages: messages.length
-            ? [messages[messages.length - 1]]
-            : conversation.messages || [],
-          unreadCount: conversation.unreadCount || 0,
-        };
-      });
       hydrated.sort(
         (left, right) =>
           new Date(right.messages?.[0]?.createdAt || right.createdAt) -
@@ -383,7 +369,7 @@ export const useMessageStore = create((set, get) => ({
 
   loadOlderMessages: async (conversationId, token) => {
     const { loadingOlderMessages, hasOlderMessages, messages, activeUserId } = get();
-    if (loadingOlderMessages || !hasOlderMessages || !token || !messages.length) return false;
+    if (loadingOlderMessages || !hasOlderMessages || !token || !messages.length) return;
 
     set({ loadingOlderMessages: true });
     try {
@@ -406,10 +392,8 @@ export const useMessageStore = create((set, get) => ({
           hasOlderMessages: olderMessages.length >= 50,
         });
       }
-      return olderMessages.length > 0;
     } catch (error) {
       console.error("Error loading older messages:", error);
-      return false;
     } finally {
       set({ loadingOlderMessages: false });
     }
@@ -419,7 +403,6 @@ export const useMessageStore = create((set, get) => ({
     const activeUserId = get().activeUserId;
     const sender = useAuthStore.getState().user;
     if (!activeUserId || !sender) throw new Error("No active user");
-    if (!token) throw new Error("Missing auth token");
 
     const clientMessageId = generateClientMessageId();
     const entry = {
@@ -445,31 +428,13 @@ export const useMessageStore = create((set, get) => ({
       replyTo,
       reactions: [],
       createdAt: entry.createdAt,
-      deliveryState: "sending",
+      deliveryState: get().socket?.connected ? "sending" : "queued",
     };
 
     await updateMessageOutbox(activeUserId, (outbox) => [...outbox, entry]);
     await get().receiveMessage(optimisticMessage);
-    get()._sendOutboxEntry(entry, token).catch((error) => {
-      console.error("Initial message send failed:", error);
-    });
-    return optimisticMessage;
-  },
-
-  startOutboxRetry: (token) => {
-    if (!token || get().outboxRetryTimerId) return;
-    const timerId = setInterval(() => {
-      const state = get();
-      if (!state.activeUserId) return;
-      state.flushOutbox(token);
-    }, OUTBOX_RETRY_INTERVAL_MS);
-    set({ outboxRetryTimerId: timerId });
-  },
-
-  stopOutboxRetry: () => {
-    const timerId = get().outboxRetryTimerId;
-    if (timerId) clearInterval(timerId);
-    set({ outboxRetryTimerId: null });
+    if (!get().socket?.connected) return optimisticMessage;
+    return get()._sendOutboxEntry(entry, token);
   },
 
   _setOutboxDeliveryState: async (entry, deliveryState) => {
@@ -518,12 +483,6 @@ export const useMessageStore = create((set, get) => ({
       const status = error.response?.status;
       const retryable = !status || status === 429 || status >= 500;
       const deliveryState = retryable ? "queued" : "failed";
-      console.error("Unable to send outbox entry:", {
-        conversationId: entry.conversationId,
-        clientMessageId: entry.clientMessageId,
-        status: status || null,
-        retryable,
-      });
       await updateMessageOutbox(activeUserId, (outbox) => outbox.map((item) =>
         item.clientMessageId === entry.clientMessageId
           ? { ...item, status: deliveryState }
@@ -538,34 +497,11 @@ export const useMessageStore = create((set, get) => ({
   flushOutbox: async (token) => {
     if (outboxFlushPromise) return outboxFlushPromise;
     const activeUserId = get().activeUserId;
-    if (!activeUserId || !token) return undefined;
+    if (!activeUserId || !token || !get().socket?.connected) return undefined;
     outboxFlushPromise = (async () => {
-      await updateMessageOutbox(activeUserId, (outbox) => {
-        const knownIds = new Set(outbox.map((item) => item.clientMessageId));
-        const recovered = get().messages
-          .filter(
-            (message) =>
-              message.id?.startsWith("pending:") &&
-              !!message.clientMessageId &&
-              typeof message.content === "string" &&
-              !!message.conversationId &&
-              !knownIds.has(message.clientMessageId)
-          )
-          .map((message) => ({
-            clientMessageId: message.clientMessageId,
-            conversationId: message.conversationId,
-            content: message.content,
-            replyToId: message.replyToId || null,
-            createdAt: message.createdAt || new Date().toISOString(),
-            status: "queued",
-          }));
-        if (!recovered.length) return outbox;
-        return [...outbox, ...recovered];
-      });
-
       const entries = await readMessageOutbox(activeUserId);
       for (const entry of entries) {
-        if (get().activeUserId !== activeUserId) break;
+        if (!get().socket?.connected || get().activeUserId !== activeUserId) break;
         if (entry.status === "failed") continue;
         try {
           await get()._sendOutboxEntry(entry, token);
@@ -581,36 +517,9 @@ export const useMessageStore = create((set, get) => ({
 
   retryMessage: async (clientMessageId, token) => {
     const activeUserId = get().activeUserId;
-    if (!activeUserId || !token) return null;
     const entries = await readMessageOutbox(activeUserId);
-    let entry = entries.find((item) => item.clientMessageId === clientMessageId);
-
-    if (!entry) {
-      const pendingMessage = get().messages.find(
-        (message) =>
-          message.clientMessageId === clientMessageId &&
-          typeof message.content === "string" &&
-          !!message.conversationId
-      );
-      if (!pendingMessage) return null;
-
-      entry = {
-        clientMessageId,
-        conversationId: pendingMessage.conversationId,
-        content: pendingMessage.content,
-        replyToId: pendingMessage.replyToId || null,
-        createdAt: pendingMessage.createdAt || new Date().toISOString(),
-        status: "queued",
-      };
-
-      await updateMessageOutbox(activeUserId, (outbox) => {
-        if (outbox.some((item) => item.clientMessageId === clientMessageId)) {
-          return outbox;
-        }
-        return [...outbox, entry];
-      });
-    }
-
+    const entry = entries.find((item) => item.clientMessageId === clientMessageId);
+    if (!entry) return null;
     return get()._sendOutboxEntry(entry, token);
   },
 
@@ -686,7 +595,6 @@ export const useMessageStore = create((set, get) => ({
 
   cleanup: () => {
     get().socket?.disconnect();
-    get().stopOutboxRetry();
     useCallStore.getState().detachSocket();
     set({
       conversations: [],
@@ -694,7 +602,6 @@ export const useMessageStore = create((set, get) => ({
       messages: [],
       socket: null,
       activeUserId: null,
-      outboxRetryTimerId: null,
       loadingOlderMessages: false,
       hasOlderMessages: true,
       typingUsers: new Set(),

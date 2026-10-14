@@ -9,15 +9,13 @@ export const register = async (
   email,
   phoneNumber,
   password,
-  invitationCode,
-  displayName
+  invitationCode
 ) => {
   const response = await api.post("/auth/register", {
     email,
     phoneNumber,
     password,
     invitationCode,
-    displayName,
   });
   return response.data;
 };

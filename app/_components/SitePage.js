@@ -27,8 +27,8 @@ export const buildMetadata = (page = "landing") => {
 export default function SitePage({ page = "landing" }) {
   const view = getPageView(page);
   const structuredData = JSON.stringify(view.structuredData).replaceAll("<", "\\u003c");
-  const content = page === "admin" || page === "statistics"
-    ? <AdminPage publicView={page === "statistics"} />
+  const content = page === "admin"
+    ? <AdminPage />
     : view.legalPage
       ? <LegalPage page={page} {...view.legalPage} />
       : <LandingPage />;
@@ -37,7 +37,7 @@ export default function SitePage({ page = "landing" }) {
     <div className={`site-page ${view.bodyClass}`}>
       <SiteHeader />
       {content}
-      <SiteFooter showAdminAccess={page === "statistics"} />
+      <SiteFooter />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: structuredData }}

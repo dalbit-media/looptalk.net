@@ -1,6 +1,5 @@
 import React from "react";
-import { ScrollView, TouchableOpacity, StyleSheet } from "react-native";
-import { AppText as Text } from "./AppText";
+import { ScrollView, TouchableOpacity, Text, StyleSheet } from "react-native";
 
 // Horizontally-scrolling row of selectable filter chips.
 export const FilterChips = ({ options, selectedKey, onSelect, colors, style }) => {

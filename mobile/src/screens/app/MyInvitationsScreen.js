@@ -1,6 +1,14 @@
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, FlatList, RefreshControl, Share, StyleSheet, TouchableOpacity, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
+import {
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 import * as InvitationsAPI from "../../api/invitations";
@@ -38,7 +46,6 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
   const activeFilter = FILTERS.includes(route.params?.filter) ? route.params.filter : "all";
   const visibleInvitations = filterInvitations(invitations, activeFilter);
 
@@ -49,39 +56,21 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
     recent: t("contacts.recentConnections"),
   };
 
-  const loadInvitations = useCallback(async (isRefresh = false, isActive = () => true) => {
-    if (!token) {
-      setLoading(false);
-      setLoadFailed(true);
-      return;
-    }
+  const loadInvitations = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const result = await InvitationsAPI.listInvitations(token, language);
-      if (!Array.isArray(result)) {
-        throw new Error("Invitation list response was not an array");
-      }
-      if (!isActive()) return;
-      setInvitations(result);
-      setLoadFailed(false);
+      setInvitations(await InvitationsAPI.listInvitations(token, language));
     } catch (error) {
-      console.error("Unable to load invitations:", error);
-      if (isActive()) setLoadFailed(true);
+      showAlert(t("common.error"), t("settings.invitationsLoadFailed"));
     } finally {
-      if (isActive()) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      setLoading(false);
+      setRefreshing(false);
     }
   }, [language, t, token]);
 
   useFocusEffect(useCallback(() => {
-    let isFocused = true;
-    loadInvitations(false, () => isFocused);
-    return () => {
-      isFocused = false;
-    };
+    loadInvitations();
   }, [loadInvitations]));
 
   const handleShare = (invitation) => Share.share({
@@ -106,22 +95,6 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
-  if (loadFailed) {
-    return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="cloud-offline-outline" size={36} color={colors.mutedText} />
-        <Text style={styles.emptyTitle}>{t("settings.invitationsLoadFailed")}</Text>
-        <TouchableOpacity
-          style={styles.retryButton}
-          onPress={() => loadInvitations()}
-          accessibilityRole="button"
-        >
-          <Text style={styles.retryText}>{t("settings.retryInvitations")}</Text>
-        </TouchableOpacity>
       </View>
     );
   }
@@ -215,25 +188,6 @@ const createStyles = (colors) => StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.surface,
-  },
-  errorContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 14,
-    padding: 24,
-    backgroundColor: colors.surface,
-  },
-  retryButton: {
-    minHeight: 42,
-    justifyContent: "center",
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-  },
-  retryText: {
-    color: "#fff",
-    fontWeight: "600",
   },
   list: { padding: 16, gap: 10 },
   emptyContainer: { flexGrow: 1, padding: 16 },

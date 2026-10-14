@@ -38,7 +38,7 @@ export function SiteHeader() {
         </a>
         <nav aria-label="Primary navigation" data-i18n-aria-label="common.primaryNavigation">
           <a href="/#principles" data-i18n="common.whyLoopTalk">Why LoopTalk</a>
-          <a href="/statistics" data-i18n="common.admin">Statistics</a>
+          <a href="/admin" data-i18n="common.admin">Admin</a>
           <button className="nav-client" type="button" data-open-client="" data-call-button="">
             <span data-i18n="common.openApp">Open web app</span>
             <span className="call-badge" data-call-badge="" aria-hidden="true" hidden>1</span>
@@ -52,23 +52,17 @@ export function SiteHeader() {
   );
 }
 
-export function SiteFooter({ showAdminAccess = false }) {
+export function SiteFooter() {
   return (
     <footer className="site-footer">
-      <a className="wordmark footer-brand" href="/"><BrandMark id="footer" /><b data-i18n="common.brandName">LoopTalk</b></a>
-      <nav className="footer-links" aria-label="Footer navigation" data-i18n-aria-label="common.footerNavigation">
-        <a href="/privacy" data-i18n="common.privacy">Privacy</a>
-        <a href="/terms" data-i18n="common.terms">Terms</a>
-        <a href="/support" data-i18n="common.support">Support</a>
-        <a href="/account-deletion" data-i18n="common.deleteAccount">Delete account</a>
-        {showAdminAccess && (
-          <a href="/app/?returnTo=/admin" data-i18n="common.adminAccess">Admin access</a>
-        )}
-      </nav>
-      <p className="footer-copyright" data-i18n="common.copyright">© {new Date().getFullYear()} LoopTalk</p>
-      <button className="scroll-top" type="button" aria-label="Scroll to top" title="Scroll to top" data-i18n-aria-label="common.scrollToTop" data-i18n-title="common.scrollToTop" data-scroll-top="" hidden>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" /><path d="M12 8v12" /></svg>
-      </button>
+      <a className="wordmark" href="/"><BrandMark id="footer" /><b data-i18n="common.brandName">LoopTalk</b></a>
+      <div className="footer-links">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/support">Support</a>
+        <a href="/account-deletion">Delete account</a>
+      </div>
+      <p data-i18n="common.copyright">© {new Date().getFullYear()} LoopTalk</p>
     </footer>
   );
 }

@@ -15,12 +15,9 @@ export default function LandingPage() {
           <p className="eyebrow" data-i18n="landing.eyebrow">Invitation-only messenger</p>
           <div className="hero-mark"><BrandMark id="hero" /></div>
           <h1 data-i18n="common.brandName">LoopTalk</h1>
-          <p className="hero-lede" data-i18n="landing.lede">A private place to talk, share, and stay close. Bring conversations, organized contacts, photos, drawings, and calls together in one simple messenger.</p>
+          <p className="hero-lede" data-i18n="landing.lede">The people who matter, in a calmer loop. Private conversations, thoughtfully grouped contacts, and rich sharing across every screen.</p>
           <div className="hero-actions">
-            <button className="button button-primary" type="button" data-install-app="">
-              <span data-i18n="common.openLoopTalk">Open web app</span>
-              <ArrowIcon />
-            </button>
+            <OpenClientButton className="button button-primary" labelKey="common.openLoopTalk">Open web app</OpenClientButton>
             <a className="text-link" href="#principles"><span data-i18n="landing.seeHow">See how it works</span><ArrowIcon /></a>
           </div>
           <div className="store-actions" aria-label="Mobile app downloads" data-i18n-aria-label="common.mobileDownloads">
@@ -54,7 +51,8 @@ export default function LandingPage() {
       </section>
 
       <section className="feature-band band">
-        <div className="feature-copy reveal"><p className="eyebrow" data-i18n="landing.featureEyebrow">Designed for focus</p><h2 data-i18n="landing.featureTitle">More ways to stay in the conversation.</h2><p data-i18n="landing.featureBody">Share photos, videos, places, links, and drawings. Keep up with replies, reactions, read receipts, and voice or video calls—all in one place.</p></div>
+        <div className="feature-number reveal">50</div>
+        <div className="feature-copy reveal"><p className="eyebrow" data-i18n="landing.featureEyebrow">Designed for focus</p><h2 data-i18n="landing.featureTitle">Messages load in clear, quick chapters.</h2><p data-i18n="landing.featureBody">Fast pagination, live presence, typing indicators, read receipts, reactions, replies, and local conversation history work together without crowding the screen.</p></div>
       </section>
 
       <section className="network-future band" id="network-future">

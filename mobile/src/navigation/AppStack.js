@@ -1,8 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { TouchableOpacity, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { MessagesScreen } from "../screens/app/MessagesScreen";
 import { ChatScreen } from "../screens/app/ChatScreen";
@@ -15,49 +14,23 @@ import { CreateGroupScreen } from "../screens/app/CreateGroupScreen";
 import { GroupInfoScreen } from "../screens/app/GroupInfoScreen";
 import { useTranslation } from "../hooks/useTranslation";
 import { useAppTheme } from "../hooks/useAppTheme";
-import { usePreferencesStore } from "../store/preferencesStore";
-import { getAppTextScale } from "../utils/chatTextSize";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-const getBackButtonOptions = (navigation, t) => ({
-  headerLeft: ({ tintColor }) => (
-    <TouchableOpacity
-      onPress={() => navigation.goBack()}
-      hitSlop={10}
-      style={{
-        minWidth: 44,
-        minHeight: 44,
-        justifyContent: "center",
-        paddingHorizontal: 8,
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={t("profile.back")}
-    >
-      <Ionicons name="chevron-back" size={24} color={tintColor} />
-    </TouchableOpacity>
-  ),
-});
-
 const MessagesStack = () => {
   const t = useTranslation();
   const { colors } = useAppTheme();
-  const textSize = usePreferencesStore((state) => state.chatTextSize);
-  const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
       screenOptions={{
         headerStyle: {
           backgroundColor: colors.surface,
         },
-        headerTintColor: colors.primary,
+        headerTintColor: colors.text,
         headerTitleStyle: {
-          fontSize: 17 * textScale,
           fontWeight: "600",
-          color: colors.text,
         },
-        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen
@@ -68,34 +41,20 @@ const MessagesStack = () => {
       <Stack.Screen
         name="Chat"
         component={ChatScreen}
-        options={({ route, navigation }) => ({
+        options={({ route }) => ({
           title: route.params?.name || t("messages.chat"),
-          ...getBackButtonOptions(navigation, t),
-        })}
-      />
-      <Stack.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={({ navigation }) => ({
-          title: t("navigation.profile"),
-          ...getBackButtonOptions(navigation, t),
+          headerBackTitleVisible: false,
         })}
       />
       <Stack.Screen
         name="CreateGroup"
         component={CreateGroupScreen}
-        options={({ navigation }) => ({
-          title: t("groups.create"),
-          ...getBackButtonOptions(navigation, t),
-        })}
+        options={{ title: t("groups.create") }}
       />
       <Stack.Screen
         name="GroupInfo"
         component={GroupInfoScreen}
-        options={({ navigation }) => ({
-          title: t("groups.info"),
-          ...getBackButtonOptions(navigation, t),
-        })}
+        options={{ title: t("groups.info") }}
       />
     </Stack.Navigator>
   );
@@ -104,21 +63,16 @@ const MessagesStack = () => {
 const ContactsStack = () => {
   const t = useTranslation();
   const { colors } = useAppTheme();
-  const textSize = usePreferencesStore((state) => state.chatTextSize);
-  const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
       screenOptions={{
         headerStyle: {
           backgroundColor: colors.surface,
         },
-        headerTintColor: colors.primary,
+        headerTintColor: colors.text,
         headerTitleStyle: {
-          fontSize: 17 * textScale,
           fontWeight: "600",
-          color: colors.text,
         },
-        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen
@@ -129,19 +83,13 @@ const ContactsStack = () => {
       <Stack.Screen
         name="AddContact"
         component={AddContactScreen}
-        options={({ navigation, route }) => ({
-          title: route.params?.mode === "search"
-            ? t("contacts.searchForUser")
-            : t("navigation.createInvitationLink"),
-          ...getBackButtonOptions(navigation, t),
-        })}
+        options={{ title: t("navigation.createInvitationLink") }}
       />
       <Stack.Screen
         name="Profile"
         component={ProfileScreen}
-        options={({ navigation }) => ({
-          title: t("navigation.profile"),
-          ...getBackButtonOptions(navigation, t),
+        options={({ route }) => ({
+          title: route.params?.name || t("navigation.profile"),
         })}
       />
     </Stack.Navigator>
@@ -151,19 +99,12 @@ const ContactsStack = () => {
 const SettingsStack = () => {
   const t = useTranslation();
   const { colors } = useAppTheme();
-  const textSize = usePreferencesStore((state) => state.chatTextSize);
-  const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.primary,
-        headerTitleStyle: {
-          fontSize: 17 * textScale,
-          fontWeight: "600",
-          color: colors.text,
-        },
-        headerBackTitleVisible: false,
+        headerTintColor: colors.text,
+        headerTitleStyle: { fontWeight: "600" },
       }}
     >
       <Stack.Screen
@@ -174,18 +115,7 @@ const SettingsStack = () => {
       <Stack.Screen
         name="MyInvitations"
         component={MyInvitationsScreen}
-        options={({ navigation }) => ({
-          title: t("settings.myInvitations"),
-          ...getBackButtonOptions(navigation, t),
-        })}
-      />
-      <Stack.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={({ navigation }) => ({
-          title: t("navigation.profile"),
-          ...getBackButtonOptions(navigation, t),
-        })}
+        options={{ title: t("settings.myInvitations") }}
       />
     </Stack.Navigator>
   );
@@ -194,11 +124,6 @@ const SettingsStack = () => {
 export const AppStack = () => {
   const t = useTranslation();
   const { colors } = useAppTheme();
-  const textSize = usePreferencesStore((state) => state.chatTextSize);
-  const textScale = getAppTextScale(textSize);
-  const insets = useSafeAreaInsets();
-  const tabBarHeight = 84 + Math.round((textScale - 1) * 24) + insets.bottom;
-  const tabBarBottomPadding = Math.max(insets.bottom, 10);
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -217,23 +142,8 @@ export const AppStack = () => {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.mutedText,
         tabBarStyle: {
-          height: tabBarHeight,
-          minHeight: tabBarHeight,
-          paddingTop: 6,
-          paddingBottom: tabBarBottomPadding,
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-        },
-        tabBarItemStyle: {
-          justifyContent: "center",
-        },
-        tabBarIconStyle: {
-          marginTop: 2,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12 * textScale,
-          lineHeight: 18 * textScale,
-          marginBottom: 3 * textScale,
         },
       })}
     >

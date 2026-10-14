@@ -195,27 +195,15 @@ router.get("/:conversationId", authMiddleware, async (req, res) => {
 router.post("/:conversationId/text", authMiddleware, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const startedAt = Date.now();
-    const clientMessageId = req.body.clientMessageId?.trim() || null;
-    const reject = (status, error, reason) => {
-      console.warn("Message send rejected:", {
-        requestId: req.requestId,
-        userId: req.userId,
-        conversationId,
-        clientMessageId,
-        status,
-        reason,
-      });
-      return res.status(status).json({ error });
-    };
     if (
       typeof req.body.content !== "string" ||
       (req.body.replyToId != null && typeof req.body.replyToId !== "string") ||
       (req.body.clientMessageId != null && typeof req.body.clientMessageId !== "string")
     ) {
-      return reject(400, "Invalid message content", "invalid_payload_type");
+      return res.status(400).json({ error: "Invalid message content" });
     }
     const content = req.body.content.trim();
+    const clientMessageId = req.body.clientMessageId?.trim() || null;
 
     if (
       !content ||
@@ -223,19 +211,15 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
       req.body.replyToId?.length > 100 ||
       (clientMessageId && !/^[a-zA-Z0-9_-]{16,100}$/.test(clientMessageId))
     ) {
-      return reject(400, "Invalid message content", "invalid_payload_value");
+      return res.status(400).json({ error: "Invalid message content" });
     }
 
     const participantIds = await getParticipantIds(conversationId, req.userId);
     if (!participantIds) {
-      return reject(403, "Not authorized", "not_participant");
+      return res.status(403).json({ error: "Not authorized" });
     }
     if (await isDirectConversationBlocked(conversationId, req.userId, participantIds)) {
-      return reject(
-        403,
-        "Direct communication is unavailable",
-        "direct_conversation_blocked"
-      );
+      return res.status(403).json({ error: "Direct communication is unavailable" });
     }
 
     if (clientMessageId) {
@@ -251,16 +235,8 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
           existing.content !== content ||
           existing.replyToId !== (req.body.replyToId || null)
         ) {
-          return reject(409, "Message identifier conflict", "client_message_id_conflict");
+          return res.status(409).json({ error: "Message identifier conflict" });
         }
-        console.info("Message send deduplicated:", {
-          requestId: req.requestId,
-          userId: req.userId,
-          conversationId,
-          clientMessageId,
-          messageId: existing.id,
-          durationMs: Date.now() - startedAt,
-        });
         return res.json(serializeMessage(existing));
       }
     }
@@ -271,7 +247,7 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
         select: { id: true },
       });
       if (!replyTarget) {
-        return reject(400, "Reply target not found", "reply_target_not_found");
+        return res.status(400).json({ error: "Reply target not found" });
       }
     }
 
@@ -302,21 +278,13 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
         existing.content !== content ||
         existing.replyToId !== (req.body.replyToId || null)
       ) {
-        return reject(409, "Message identifier conflict", "client_message_id_conflict");
+        return res.status(409).json({ error: "Message identifier conflict" });
       }
-      console.info("Message send deduplicated after conflict:", {
-        requestId: req.requestId,
-        userId: req.userId,
-        conversationId,
-        clientMessageId,
-        messageId: existing.id,
-        durationMs: Date.now() - startedAt,
-      });
       return res.json(serializeMessage(existing));
     }
 
     if (!created.sender) {
-      return reject(401, "User no longer exists", "sender_missing");
+      return res.status(401).json({ error: "User no longer exists" });
     }
 
     await touchConversation(conversationId, created.createdAt);
@@ -326,14 +294,6 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
     notifyInactiveParticipants(req, participantIds, message).catch((error) =>
       console.error("Unable to send message push:", error)
     );
-    console.info("Message send accepted:", {
-      requestId: req.requestId,
-      userId: req.userId,
-      conversationId,
-      clientMessageId,
-      messageId: message.id,
-      durationMs: Date.now() - startedAt,
-    });
     res.status(201).json(message);
   } catch (error) {
     console.error("Error sending message:", error);

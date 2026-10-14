@@ -1,6 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, Modal, Vibration, Platform, Animated, PanResponder, Dimensions } from "react-native";
-import { AppText as Text } from "./AppText";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  Vibration,
+  Platform,
+  Animated,
+  PanResponder,
+  Dimensions,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useCallStore } from "../store/callStore";
 import { useAppTheme } from "../hooks/useAppTheme";
@@ -162,15 +172,6 @@ export const CallOverlay = () => {
     }
   };
 
-  const handleAcceptCall = async () => {
-    const accepted = await acceptCall();
-    if (!accepted) {
-      showAlert(t("common.error"), t("calls.callFailed"));
-    } else if (accepted === "CALL_PERMISSION_DENIED") {
-      showAlert(t("common.error"), t("calls.mediaPermissionDenied"));
-    }
-  };
-
   const statusLabel = () => {
     if (call.status === "declined") return t("calls.declined");
     if (call.status === "ended") return t("calls.ended");
@@ -273,7 +274,7 @@ export const CallOverlay = () => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.circleButton, styles.acceptButton]}
-                  onPress={handleAcceptCall}
+                  onPress={acceptCall}
                 >
                   <Ionicons name="call" size={28} color="#fff" />
                 </TouchableOpacity>

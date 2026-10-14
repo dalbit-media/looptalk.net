@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, StyleSheet, View } from "react-native";
-import { AppText as Text } from "./AppText";
+import { Animated, StyleSheet, Text, View } from "react-native";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
 import { BrandMark } from "./BrandMark";

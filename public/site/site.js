@@ -7,11 +7,10 @@
   const header = document.querySelector(".site-header");
   const incomingCallStorageKey = "looptalk:incoming-call";
   const callStatusChannelName = "looptalk-call-status";
-  let activeLanguage = "ko";
+  let activeLanguage = "en";
   let healthState = { status: "checking", timestamp: null };
   let incomingCallRinging = false;
   let incomingCallTimer = null;
-  let deferredInstallPrompt = null;
 
   const readPreference = (key) => {
     try {
@@ -31,7 +30,14 @@
 
   const resolveLanguage = () => {
     const savedLanguage = readPreference("language");
-    return supportedLanguages.includes(savedLanguage) ? savedLanguage : "ko";
+    if (supportedLanguages.includes(savedLanguage)) return savedLanguage;
+
+    const browserLanguages = navigator.languages?.length
+      ? navigator.languages
+      : [navigator.language];
+    return browserLanguages
+      .map((language) => language?.toLowerCase().split("-")[0])
+      .find((language) => supportedLanguages.includes(language)) || "en";
   };
 
   const renderHealth = () => {
@@ -83,23 +89,17 @@
     document.querySelectorAll("[data-i18n-title]").forEach((element) => {
       element.setAttribute("title", translate(element.dataset.i18nTitle));
     });
-    const isStatistics = Boolean(document.querySelector(".statistics-page"));
-    const isAdmin = Boolean(document.querySelector(".admin-page")) && !isStatistics;
+    const isAdmin = Boolean(document.querySelector(".admin-page"));
     const isLanding = Boolean(document.querySelector(".landing-page"));
-    if (isAdmin || isStatistics || isLanding) {
-      document.title = translate(
-        isStatistics ? "meta.statisticsTitle" : isAdmin ? "meta.adminTitle" : "meta.landingTitle"
-      );
+    if (isAdmin || isLanding) {
+      document.title = translate(isAdmin ? "meta.adminTitle" : "meta.landingTitle");
       document.querySelector('meta[name="description"]')?.setAttribute(
         "content",
-        translate(isStatistics
-          ? "meta.statisticsDescription"
-          : isAdmin ? "meta.adminDescription" : "meta.landingDescription")
+        translate(isAdmin ? "meta.adminDescription" : "meta.landingDescription")
       );
     }
     renderHealth();
     renderIncomingCallBadge(incomingCallRinging);
-    window.dispatchEvent(new Event("looptalk:language-change"));
   };
 
   const renderIncomingCallBadge = (ringing) => {
@@ -172,58 +172,8 @@
     )?.focus();
   };
 
-  const installApp = async () => {
-    if (!deferredInstallPrompt) {
-      const isStandalone =
-        window.matchMedia("(display-mode: standalone)").matches ||
-        window.navigator.standalone === true;
-      if (isStandalone) return;
-      if (!window.location.pathname.startsWith("/app/")) {
-        openClient();
-      }
-      return;
-    }
-
-    const prompt = deferredInstallPrompt;
-    deferredInstallPrompt = null;
-    try {
-      await prompt.prompt();
-      await prompt.userChoice;
-    } catch (error) {
-      console.error("Could not show the web app install prompt:", error);
-    }
-  };
-
-  window.addEventListener("beforeinstallprompt", (event) => {
-    event.preventDefault();
-    deferredInstallPrompt = event;
-  });
-  window.addEventListener("appinstalled", () => {
-    deferredInstallPrompt = null;
-    document.querySelectorAll("[data-install-app]").forEach((button) => {
-      button.hidden = true;
-    });
-  });
-  document.querySelectorAll("[data-install-app]").forEach((button) => {
-    button.addEventListener("click", () => installApp());
-  });
-
   document.querySelectorAll("[data-open-client]").forEach((button) => {
     button.addEventListener("click", openClient);
-  });
-
-  document.querySelectorAll("[data-scroll-top]").forEach((button) => {
-    const syncVisibility = () => {
-      button.hidden = window.scrollY < 320;
-    };
-    window.addEventListener("scroll", syncVisibility, { passive: true });
-    syncVisibility();
-    button.addEventListener("click", () => {
-      window.scrollTo({
-        top: 0,
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      });
-    });
   });
 
   if (typeof BroadcastChannel === "function") {

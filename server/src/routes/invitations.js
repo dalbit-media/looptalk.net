@@ -89,18 +89,20 @@ const normalizeLanguage = (language) => (
 const getRequestLanguage = (req) => normalizeLanguage(
   req.query.lang || req.body?.language || req.get("accept-language")?.slice(0, 2)
 );
-const getRequestOrigin = (req) => `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
+const getPublicUrl = (req) => (
+  process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`
+).replace(/\/$/, "");
 const getInvitationUrl = (code, language = "ko", req) => (
-  `${getRequestOrigin(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
+  `${getPublicUrl(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
 );
 const getPreviewUrl = (code, language = "ko", req) => (
-  `${getRequestOrigin(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
+  `${getPublicUrl(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
 );
 const getAppUrl = (code) => `looptalk://register?code=${encodeURIComponent(code)}`;
 const getWebRegistrationUrl = (code, req) => {
   const clientUrl = new URL(
     process.env.WEB_CLIENT_URL || "/app/",
-    `${getRequestOrigin(req)}/`
+    `${getPublicUrl(req)}/`
   );
   clientUrl.pathname = `${clientUrl.pathname.replace(/\/?$/, "/")}register`;
   clientUrl.searchParams.set("code", code);
@@ -425,13 +427,6 @@ router.get("/", authMiddleware, async (req, res) => {
     const invitations = await prisma.invitation.findMany({
       where: { inviterId: req.userId },
       orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        code: true,
-        status: true,
-        expiresAt: true,
-        createdAt: true,
-      },
     });
 
     res.json(invitations.map((invitation) => ({

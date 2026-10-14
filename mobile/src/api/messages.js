@@ -1,31 +1,7 @@
 import { api } from "./client";
 
 const appendUpload = async (formData, field, { uri, name, mimeType }) => {
-  if (typeof uri !== "string" || !uri) {
-    throw new Error(`Missing upload URI: ${name}`);
-  }
-
-  if (typeof window !== "undefined") {
-    let blob;
-    if (/^[A-Za-z0-9+/]+={0,2}$/.test(uri)) {
-      const binary = globalThis.atob(uri);
-      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-      blob = new Blob([bytes], { type: mimeType });
-    } else {
-      const response = await fetch(uri);
-      if (!response.ok) {
-        throw new Error(`Failed to read upload: ${name} (${response.status})`);
-      }
-      blob = await response.blob();
-    }
-    if (!blob.type && mimeType) {
-      blob = new Blob([blob], { type: mimeType });
-    }
-    formData.append(field, blob, name);
-    return;
-  }
-
-  formData.append(field, { uri, name, type: mimeType || "application/octet-stream" });
+  formData.append(field, { uri, name, type: mimeType });
 };
 
 export const getConversations = async (token) => {
@@ -187,9 +163,11 @@ export const sendMediaMessage = async (
     `/messages/${conversationId}/media`,
     formData,
     {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "multipart/form-data",
+      },
       onUploadProgress,
-      timeout: 120000,
     }
   );
   return response.data;

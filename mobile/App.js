@@ -1,14 +1,12 @@
 import "react-native-url-polyfill/auto";
 import { useEffect, useState } from "react";
-import { LogBox, Platform } from "react-native";
+import { LogBox } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import {
   createNavigationContainerRef,
-  getPathFromState as getNavigationPathFromState,
   NavigationContainer,
 } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useAuthStore } from "./src/store/authStore";
 import { AuthStack } from "./src/navigation/AuthStack";
 import { AppStack } from "./src/navigation/AppStack";
@@ -18,25 +16,13 @@ import { usePreferencesStore } from "./src/store/preferencesStore";
 import { useMessageStore } from "./src/store/messageStore";
 import { useContactStore } from "./src/store/contactStore";
 import { AppSplash } from "./src/components/AppSplash";
-import { AppTextScaleProvider } from "./src/components/AppText";
 import { CallOverlay } from "./src/components/CallOverlay";
-import { WebAlertHost } from "./src/components/WebAlertHost";
 import { setupCallNotifications } from "./src/utils/callNotifications";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
-import "./src/utils/webAppInstall";
+import * as Sentry from "@sentry/react-native";
 
-const sentryModule = (() => {
-  if (Platform.OS === "web") return null;
-  try {
-    const runtimeRequire = Function("return require")();
-    return runtimeRequire("@sentry/react-native");
-  } catch {
-    return null;
-  }
-})();
-
-sentryModule?.init?.({
+Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
   enabled: Boolean(process.env.EXPO_PUBLIC_SENTRY_DSN),
   environment: __DEV__ ? "development" : "production",
@@ -72,33 +58,8 @@ const handleMessageNotification = (data) => {
 };
 
 const linking = {
-  prefixes: [
-    "looptalk://",
-    "https://looptalk.app/app/",
-    Platform.OS === "web" && typeof window !== "undefined"
-      ? `${window.location.origin}/app/`
-      : null,
-  ].filter(Boolean),
+  prefixes: ["looptalk://", "https://looptalk.app/app/"],
   config: { screens: { Register: "register" } },
-  getPathFromState: (state, options) => {
-    const path = getNavigationPathFromState(state, options);
-    return Platform.OS === "web" ? `/app${path}` : path;
-  },
-};
-
-const getWebInvitationState = () => {
-  if (Platform.OS !== "web" || typeof window === "undefined") return undefined;
-  if (!window.location.pathname.replace(/\/$/, "").endsWith("/app/register")) {
-    return undefined;
-  }
-
-  const code = new URLSearchParams(window.location.search).get("code")?.trim();
-  if (!code) return undefined;
-
-  return {
-    index: 0,
-    routes: [{ name: "Register", params: { code } }],
-  };
 };
 
 LogBox.ignoreLogs([
@@ -123,7 +84,6 @@ function App() {
   const userId = useAuthStore((state) => state.user?.id);
   const loading = useAuthStore((state) => state.loading);
   const [showSplash, setShowSplash] = useState(true);
-  const [initialNavigationState] = useState(getWebInvitationState);
   const { navigationTheme } = useAppTheme();
 
   useEffect(() => {
@@ -156,13 +116,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS !== "web" || !token || typeof window === "undefined") return;
-    const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-    if (returnTo === "/admin") window.location.replace(returnTo);
-  }, [token]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return undefined;
     let cleanupNotifications;
     setupNativeCalling({
       onAnswer: (callId) =>
@@ -191,7 +144,6 @@ function App() {
 
     const messageStore = useMessageStore.getState();
     messageStore.initSocket(token, userId);
-    messageStore.flushOutbox(token);
     messageStore.loadConversations(token, userId);
     useContactStore.getState().loadContacts(token);
     openPendingMessageNotification();
@@ -205,23 +157,17 @@ function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <AppTextScaleProvider>
-        <SafeAreaProvider>
-          <NavigationContainer
-            ref={navigationRef}
-            theme={navigationTheme}
-            linking={linking}
-            initialState={token ? undefined : initialNavigationState}
-            onReady={openPendingMessageNotification}
-          >
-            {token ? <AppStack /> : <AuthStack />}
-          </NavigationContainer>
-          {token ? <CallOverlay /> : null}
-          <WebAlertHost />
-        </SafeAreaProvider>
-      </AppTextScaleProvider>
+      <NavigationContainer
+        ref={navigationRef}
+        theme={navigationTheme}
+        linking={linking}
+        onReady={openPendingMessageNotification}
+      >
+        {token ? <AppStack /> : <AuthStack />}
+      </NavigationContainer>
+      {token ? <CallOverlay /> : null}
     </GestureHandlerRootView>
   );
 }
 
-export default sentryModule?.wrap ? sentryModule.wrap(App) : App;
+export default Sentry.wrap(App);

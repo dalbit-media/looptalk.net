@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -113,7 +113,6 @@ model Invitation {
   status          String @default("PENDING")
   expiresAt       DateTime
   createdAt       DateTime @default(now())
-  acceptedAt      DateTime?
 
   inviter         User @relation(fields: [inviterId], references: [id], onDelete: Cascade)
 
@@ -139,7 +138,7 @@ model Message {
   conversationId  String
   senderId        String
   clientMessageId String?
-  content         String?
+  content         String? @db.Text
   messageType     String @default("TEXT") // TEXT, IMAGE, VIDEO, VOICE, DRAWING
   mediaUrl        String?
   thumbnailUrl    String?
@@ -186,8 +185,8 @@ model Report {
   reportedUserId  String?
   messageId       String?
   category        String
-  details         String?
-  contentSnapshot String?
+  details         String?  @db.Text
+  contentSnapshot String?  @db.Text
   status          String   @default("OPEN")
   createdAt       DateTime @default(now())
   reviewedAt      DateTime?
@@ -201,3 +200,4 @@ model Report {
   @@index([messageId])
   @@index([status, createdAt])
 }
+

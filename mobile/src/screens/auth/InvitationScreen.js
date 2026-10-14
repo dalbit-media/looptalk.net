@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
-import { AppTextInput as TextInput } from "../../components/AppTextInput";
-import { AppText as Text } from "../../components/AppText";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from "react-native";
 import * as Invitations from "../../api/invitations";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
@@ -133,7 +141,7 @@ export const InvitationScreen = ({ route, navigation }) => {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => navigation.goBack()}>
+          <TouchableOpacity onPress={() => navigation.navigate("Login")}>
             <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
           </TouchableOpacity>
         </View>

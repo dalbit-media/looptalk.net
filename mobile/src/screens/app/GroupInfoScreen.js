@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, TouchableOpacity, View } from "react-native";
-import { AppTextInput as TextInput } from "../../components/AppTextInput";
-import { AppText as Text } from "../../components/AppText";
+import {
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuthStore } from "../../store/authStore";
 import { useContactStore } from "../../store/contactStore";

@@ -1,6 +1,5 @@
 import React from "react";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
-import { AppText as Text } from "./AppText";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 

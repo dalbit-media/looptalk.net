@@ -1,6 +1,13 @@
 import React, { useRef, useState } from "react";
-import { View, TouchableOpacity, Modal, Pressable, ScrollView, StyleSheet, Dimensions } from "react-native";
-import { AppText as Text } from "./AppText";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Dimensions,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 // Icon button that opens a dropdown menu of filter options anchored below it.
@@ -23,24 +30,7 @@ export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }
     setOpen(false);
   };
 
-  const { width: windowWidth, height: windowHeight } = Dimensions.get("window");
-  const estimatedMenuHeight = options.length * 40 + 12;
-  const menuPosition = anchor
-    ? (() => {
-        const belowTop = anchor.y + anchor.height + 6;
-        const belowSpace = Math.max(windowHeight - belowTop - 8, 0);
-        const aboveSpace = Math.max(anchor.y - 8, 0);
-        const placeAbove =
-          estimatedMenuHeight > belowSpace && aboveSpace > belowSpace;
-        return {
-          top: placeAbove
-            ? Math.max(anchor.y - Math.min(estimatedMenuHeight, aboveSpace) - 6, 8)
-            : belowTop,
-          maxHeight: placeAbove ? aboveSpace : belowSpace,
-          right: Math.max(windowWidth - (anchor.x + anchor.width), 8),
-        };
-      })()
-    : null;
+  const windowWidth = Dimensions.get("window").width;
 
   return (
     <View style={style}>
@@ -58,29 +48,31 @@ export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)}>
           {anchor && (
             <View
-              style={[styles.dropdown, menuPosition]}
+              style={[
+                styles.dropdown,
+                {
+                  top: anchor.y + anchor.height + 6,
+                  right: Math.max(windowWidth - (anchor.x + anchor.width), 8),
+                },
+              ]}
             >
-              <ScrollView bounces={false} keyboardShouldPersistTaps="handled">
-                {options.map((option) => {
-                  const selected = option.key === selectedKey;
-                  return (
-                    <TouchableOpacity
-                      key={option.key}
-                      style={styles.option}
-                      onPress={() => handleSelect(option.key)}
-                      accessibilityRole="button"
-                      accessibilityLabel={option.label}
-                    >
-                      <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
-                        {option.label}
-                      </Text>
-                      {selected && (
-                        <Ionicons name="checkmark" size={16} color={colors.primary} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              {options.map((option) => {
+                const selected = option.key === selectedKey;
+                return (
+                  <TouchableOpacity
+                    key={option.key}
+                    style={styles.option}
+                    onPress={() => handleSelect(option.key)}
+                    accessibilityRole="button"
+                    accessibilityLabel={option.label}
+                  >
+                    <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
+                      {option.label}
+                    </Text>
+                    {selected && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
         </Pressable>
@@ -115,7 +107,6 @@ const createStyles = (colors) =>
       shadowOpacity: 0.15,
       shadowRadius: 6,
       elevation: 6,
-      overflow: "hidden",
     },
     option: {
       flexDirection: "row",

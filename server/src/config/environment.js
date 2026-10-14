@@ -19,8 +19,8 @@ const validateEnvironment = (environment = process.env) => {
     );
   }
 
-  if (!environment.DATABASE_URL.startsWith("file:")) {
-    throw new Error("DATABASE_URL must be a SQLite file URL");
+  if (!environment.DATABASE_URL.startsWith("mysql://")) {
+    throw new Error("DATABASE_URL must be a MySQL connection string");
   }
 
   if (
@@ -29,6 +29,23 @@ const validateEnvironment = (environment = process.env) => {
   ) {
     throw new Error("JWT_SECRET must be a strong secret");
   }
+
+  if (environment.PUBLIC_URL?.trim()) {
+    const publicUrl = parseUrl(environment.PUBLIC_URL, "PUBLIC_URL");
+    if (!["http:", "https:"].includes(publicUrl.protocol)) {
+      throw new Error("PUBLIC_URL must use HTTP or HTTPS");
+    }
+  }
+
+  const corsOrigins = environment.CORS_ORIGIN?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean) || [];
+  corsOrigins.forEach((origin) => {
+    const url = parseUrl(origin, "CORS_ORIGIN");
+    if (!["http:", "https:"].includes(url.protocol)) {
+      throw new Error("CORS_ORIGIN entries must use HTTP or HTTPS");
+    }
+  });
 
   const instanceCount = Number.parseInt(environment.INSTANCE_COUNT || "1", 10);
   if (instanceCount > 1 && !environment.REDIS_URL?.trim()) {

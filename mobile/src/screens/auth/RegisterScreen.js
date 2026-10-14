@@ -1,9 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
-import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
-import { AppTextInput as TextInput } from "../../components/AppTextInput";
-import { AppText as Text } from "../../components/AppText";
+import React, { useRef, useState } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from "react-native";
 import { useAuthStore } from "../../store/authStore";
-import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { SocialAuthButtons } from "../../components/SocialAuthButtons";
@@ -21,13 +28,11 @@ export const RegisterScreen = ({ route, navigation }) => {
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const [contactType, setContactType] = useState("email");
-  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState(route.params?.inviteeEmail || "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [bootstrapAvailable, setBootstrapAvailable] = useState(null);
   const invitationCode = route.params?.invitationCode || route.params?.code;
   const contactInputRef = useRef(null);
   const passwordInputRef = useRef(null);
@@ -35,28 +40,8 @@ export const RegisterScreen = ({ route, navigation }) => {
 
   const register = useAuthStore((state) => state.register);
 
-  useEffect(() => {
-    let active = true;
-    AuthAPI.getBootstrapStatus()
-      .then(({ bootstrapAvailable: available }) => {
-        if (active) setBootstrapAvailable(available);
-      })
-      .catch(() => {
-        if (active) setBootstrapAvailable(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const handleRegister = async () => {
     if (loading) return;
-
-    const normalizedDisplayName = displayName.trim();
-    if (!normalizedDisplayName) {
-      showAlert(t("common.error"), t("auth.displayNameRequired"));
-      return;
-    }
 
     const contact = contactType === "email" ? email.trim() : phoneNumber.trim();
     if (!contact || !password || !confirmPassword) {
@@ -89,12 +74,7 @@ export const RegisterScreen = ({ route, navigation }) => {
       return;
     }
 
-    if (normalizedDisplayName.length > 100) {
-      showAlert(t("common.error"), t("auth.displayNameTooLong"));
-      return;
-    }
-
-    if (!invitationCode && bootstrapAvailable === false) {
+    if (!invitationCode && !route.params?.isBootstrap) {
       showAlert(t("common.error"), t("auth.invitationRequired"));
       return;
     }
@@ -105,18 +85,12 @@ export const RegisterScreen = ({ route, navigation }) => {
         contactType === "email" ? email.trim() : null,
         contactType === "phone" ? phoneNumber.trim() : null,
         password,
-        invitationCode,
-        normalizedDisplayName
+        invitationCode
       );
     } catch (error) {
-      const serverMessage = error.response?.data?.error;
-      const requestId = error.response?.data?.requestId;
-      const message = serverMessage || error.message || t("auth.registrationFailed");
       showAlert(
         t("auth.registrationFailed"),
-        requestId
-          ? `${message}\n${t("auth.errorReference", { id: requestId })}`
-          : message
+        t("common.error")
       );
     } finally {
       setLoading(false);
@@ -139,20 +113,6 @@ export const RegisterScreen = ({ route, navigation }) => {
 
         <View style={styles.form}>
           <Text style={styles.helperText}>{t("auth.usernameAssigned")}</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder={t("auth.displayName")}
-            placeholderTextColor={colors.mutedText}
-            value={displayName}
-            onChangeText={setDisplayName}
-            autoCapitalize="words"
-            maxLength={100}
-            returnKeyType="next"
-            onSubmitEditing={() => contactInputRef.current?.focus()}
-            blurOnSubmit={false}
-            editable={!loading}
-          />
 
           <View style={styles.contactSelector}>
             {["email", "phone"].map((type) => (
@@ -261,7 +221,7 @@ export const RegisterScreen = ({ route, navigation }) => {
           />
 
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={() => navigation.navigate("Login")}
             disabled={loading}
           >
             <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>

@@ -1,6 +1,5 @@
 import React from "react";
-import { StyleSheet } from "react-native";
-import { AppText as Text } from "./AppText";
+import { Text, StyleSheet } from "react-native";
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

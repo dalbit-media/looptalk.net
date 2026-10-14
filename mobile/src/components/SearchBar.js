@@ -1,6 +1,5 @@
 import React from "react";
-import { View, TouchableOpacity, StyleSheet } from "react-native";
-import { AppTextInput as TextInput } from "./AppTextInput";
+import { View, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 // Reusable search input with a leading search icon and a clear ("x") button.

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { AppState, PermissionsAndroid, Platform } from "react-native";
+import { AppState } from "react-native";
 import { api } from "../api/client";
 import { useAuthStore } from "./authStore";
 import {
@@ -77,78 +77,20 @@ const buildMediaConstraints = (callType, facingMode = "user") => ({
       : false,
 });
 
-const requestCallPermissions = async (callType) => {
-  if (Platform.OS !== "android") return;
-
-  const permissions = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
-  if (callType === "video") {
-    permissions.push(PermissionsAndroid.PERMISSIONS.CAMERA);
-  }
-  const results = await PermissionsAndroid.requestMultiple(permissions);
-  const granted = permissions.every(
-    (permission) => results[permission] === PermissionsAndroid.RESULTS.GRANTED
-  );
-  if (!granted) {
-    const error = new Error("Camera and microphone permissions are required for calls");
-    error.code = "CALL_PERMISSION_DENIED";
-    throw error;
-  }
-};
-
 const captureLocalMedia = async (callType, facingMode = "user") => {
-  await requestCallPermissions(callType);
   try {
     return await mediaDevices.getUserMedia(buildMediaConstraints(callType, facingMode));
   } catch (error) {
-    if (error?.name === "NotFoundError") return null;
     const constraintFailure = [
       "OverconstrainedError",
       "ConstraintNotSatisfiedError",
       "TypeError",
     ].includes(error?.name);
     if (!constraintFailure) throw error;
-    try {
-      return await mediaDevices.getUserMedia({
-        audio: true,
-        video: callType === "video" ? { facingMode } : false,
-      });
-    } catch (fallbackError) {
-      if (fallbackError?.name === "NotFoundError") return null;
-      throw fallbackError;
-    }
-  }
-};
-
-const waitForCallSignaling = async (getSocket, timeoutMs = 15000) => {
-  const deadline = Date.now() + timeoutMs;
-  let socket = getSocket();
-
-  while (!socket && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    socket = getSocket();
-  }
-
-  if (socket?.connected) return;
-  if (socket) {
-    await new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        socket.off("connect", finish);
-        resolve();
-      };
-      const timeout = setTimeout(finish, Math.max(0, deadline - Date.now()));
-      socket.on("connect", finish);
-      if (socket.connected) finish();
+    return mediaDevices.getUserMedia({
+      audio: true,
+      video: callType === "video" ? { facingMode } : false,
     });
-  }
-
-  if (!getSocket()?.connected) {
-    const error = new Error("Call signaling is unavailable");
-    error.code = "CALL_SIGNALING_UNAVAILABLE";
-    throw error;
   }
 };
 
@@ -319,7 +261,6 @@ export const useCallStore = create((set, get) => ({
   isCameraOff: false,
   isScreenSharing: false,
   isSpeakerOn: false,
-  isStartingCall: false,
   networkQuality: "good",
   minimized: false,
   audioSender: null,
@@ -595,54 +536,41 @@ export const useCallStore = create((set, get) => ({
     if (callType === "video" && !isVideoCallingSupported) {
       throw new Error("Video calling is not supported on this platform");
     }
-    if (get().call || get().isStartingCall) return;
-    set({ isStartingCall: true });
-    let localStream;
-    let callId;
+    if (get().call) return;
+    if (!get().socket?.connected) {
+      throw new Error("Call signaling is offline");
+    }
+
+    const callId = generateCallId();
+    set({
+      call: {
+        callId,
+        conversationId,
+        callType,
+        direction: "outgoing",
+        status: "ringing",
+        peerUser,
+      },
+      pendingIceCandidates: [],
+    });
+    startNativeOutgoingCall(get().call);
+    ringTimer = setTimeout(() => {
+      ringTimer = null;
+      if (get().call?.callId === callId && get().call?.status === "ringing") {
+        get().endCall();
+      }
+    }, RING_TIMEOUT_MS);
+
     try {
-      localStream = await captureLocalMedia(callType);
-      if (!localStream) return "device-unavailable";
-      if (get().call) {
+      const localStream = await captureLocalMedia(callType);
+      if (get().call?.callId !== callId) {
         localStream.getTracks().forEach((track) => track.stop());
         return;
       }
-
-      const resolvedConversationId = typeof conversationId === "function"
-        ? await conversationId()
-        : conversationId;
-      await waitForCallSignaling(() => get().socket);
-      if (get().call) {
-        localStream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-
-      callId = generateCallId();
-      set({
-        call: {
-          callId,
-          conversationId: resolvedConversationId,
-          callType,
-          direction: "outgoing",
-          status: "ringing",
-          peerUser,
-        },
-        pendingIceCandidates: [],
-      });
       set({ localStream });
-      try {
-        await startNativeOutgoingCall(get().call);
-      } catch (error) {
-        console.error("Unable to start the native call UI:", error);
-      }
-      ringTimer = setTimeout(() => {
-        ringTimer = null;
-        if (get().call?.callId === callId && get().call?.status === "ringing") {
-          get().endCall();
-        }
-      }, RING_TIMEOUT_MS);
       get()._startAudioRoute(callType);
 
-      const pc = await get()._createPeerConnection(resolvedConversationId, callId);
+      const pc = await get()._createPeerConnection(conversationId, callId);
       localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
       set({ pc });
 
@@ -666,20 +594,14 @@ export const useCallStore = create((set, get) => ({
 
       get()._emitSignal(
         "call:invite",
-        { conversationId: resolvedConversationId, callId, callType, sdp: optimizedOffer },
+        { conversationId, callId, callType, sdp: optimizedOffer },
         true
       );
     } catch (error) {
       console.error("Error starting call:", error);
-      if (get().call?.callId === callId) {
-        get()._teardown();
-        set({ call: null });
-      } else if (localStream) {
-        localStream.getTracks().forEach((track) => track.stop());
-      }
+      get()._teardown();
+      set({ call: null });
       throw error;
-    } finally {
-      set({ isStartingCall: false });
     }
   },
 
@@ -697,7 +619,7 @@ export const useCallStore = create((set, get) => ({
       set({ pendingOffer: data.sdp });
       return;
     }
-    if (get().call || get().isStartingCall) {
+    if (get().call) {
       earlyIceCandidates.delete(data.callId);
       get()._emitSignal("call:decline", {
         conversationId: data.conversationId,
@@ -763,18 +685,12 @@ export const useCallStore = create((set, get) => ({
       call.status !== "ringing" ||
       !pendingOffer
     ) return;
-    if (!get().socket?.connected) return false;
+    if (!get().socket?.connected) return;
 
     try {
       if (ringTimer) clearTimeout(ringTimer);
       ringTimer = null;
       set({ call: { ...call, status: "connecting" } });
-      connectTimer = setTimeout(() => {
-        connectTimer = null;
-        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
-          get().endCall();
-        }
-      }, CONNECT_TIMEOUT_MS);
       answerNativeCall(call.callId);
       const localStream = await captureLocalMedia(call.callType);
       if (get().call?.callId !== call.callId) {
@@ -814,11 +730,15 @@ export const useCallStore = create((set, get) => ({
         sdp: optimizedAnswer,
       }, true);
       set({ pendingOffer: null });
-      return true;
+      connectTimer = setTimeout(() => {
+        connectTimer = null;
+        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
+          get().endCall();
+        }
+      }, CONNECT_TIMEOUT_MS);
     } catch (error) {
       console.error("Error accepting call:", error);
       get().declineCall();
-      return error?.code || false;
     }
   },
 

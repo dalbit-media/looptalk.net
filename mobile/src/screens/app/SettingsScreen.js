@@ -1,7 +1,17 @@
 import React, { useState } from "react";
-import { ActivityIndicator, Linking, Modal, Platform, StyleSheet, Switch, TouchableOpacity, View, ScrollView } from "react-native";
-import { AppTextInput as TextInput } from "../../components/AppTextInput";
-import { AppText as Text } from "../../components/AppText";
+import {
+  ActivityIndicator,
+  Linking,
+  Modal,
+  Platform,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  ScrollView,
+} from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as AuthAPI from "../../api/auth";
 import * as UserAPI from "../../api/users";
@@ -12,8 +22,6 @@ import { usePreferencesStore } from "../../store/preferencesStore";
 import { t } from "../../i18n/i18n";
 import { showAlert } from "../../utils/showAlert";
 import { getCallPushToken } from "../../utils/callNotifications";
-import { getChatMessageFontSize } from "../../utils/chatTextSize";
-import { installWebApp } from "../../utils/webAppInstall";
 import { API_URL } from "../../config/environment";
 
 const LANGUAGE_OPTIONS = [
@@ -23,7 +31,6 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const THEME_OPTIONS = ["system", "light", "dark"];
-const CHAT_TEXT_SIZE_OPTIONS = ["standard", "large", "extraLarge"];
 
 export const SettingsScreen = ({ navigation }) => {
   const logout = useAuthStore((state) => state.logout);
@@ -33,13 +40,11 @@ export const SettingsScreen = ({ navigation }) => {
   const token = useAuthStore((state) => state.token);
   const language = usePreferencesStore((state) => state.language);
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const chatTextSize = usePreferencesStore((state) => state.chatTextSize);
   const notificationsEnabled = usePreferencesStore(
     (state) => state.notificationsEnabled
   );
   const updateLanguage = usePreferencesStore((state) => state.setLanguage);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
-  const setChatTextSize = usePreferencesStore((state) => state.setChatTextSize);
   const setNotificationsEnabled = usePreferencesStore(
     (state) => state.setNotificationsEnabled
   );
@@ -50,7 +55,6 @@ export const SettingsScreen = ({ navigation }) => {
   const [username, setUsername] = useState(user?.username || "");
   const [savingUsername, setSavingUsername] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
-  const [externalLinksExpanded, setExternalLinksExpanded] = useState(false);
 
   const handleNotificationsChange = async (enabled) => {
     if (!enabled) {
@@ -136,10 +140,6 @@ export const SettingsScreen = ({ navigation }) => {
     showAlert(t("settings.about"), t("settings.aboutBody"));
   };
 
-  const handleInstallWebApp = () => {
-    installWebApp();
-  };
-
   const handlePermissionSettings = () => {
     Linking.openSettings().catch(() => {
       showAlert(t("settings.privacy"), t("settings.privacyDescription"));
@@ -191,15 +191,15 @@ export const SettingsScreen = ({ navigation }) => {
         <TouchableOpacity
           style={styles.settingItem}
           onPress={() =>
-            navigation.navigate("Profile", {
-              userId: user.id,
-              name: user.displayName,
+            navigation.navigate("Contacts", {
+              screen: "Profile",
+              params: { userId: user.id, name: user.displayName },
             })
           }
         >
-          <Ionicons name="person-outline" size={20} color={colors.primary} />
+          <Ionicons name="person" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.myProfile")}</Text>
+            <Text style={styles.settingLabel}>{t("settings.profile")}</Text>
             <Text style={styles.settingValue}>{user.displayName}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
@@ -222,13 +222,13 @@ export const SettingsScreen = ({ navigation }) => {
 
         <TouchableOpacity
           style={styles.settingItem}
-          onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
+          onPress={() => openPublicPage("/privacy")}
         >
-          <Ionicons name="link" size={20} color={colors.primary} />
+          <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
+            <Text style={styles.settingLabel}>{t("settings.privacy")}</Text>
             <Text style={styles.settingValue}>
-              {t("settings.myInvitationsDescription")}
+              {t("settings.privacyPolicyDescription")}
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
@@ -246,20 +246,6 @@ export const SettingsScreen = ({ navigation }) => {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.preferences")}</Text>
-
-        {Platform.OS === "web" && (
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={handleInstallWebApp}
-          >
-            <Ionicons name="download-outline" size={20} color={colors.primary} />
-            <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>{t("settings.installApp")}</Text>
-              <Text style={styles.settingValue}>{t("settings.installAppDescription")}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
-          </TouchableOpacity>
-        )}
 
         <View style={styles.settingItem}>
           <Ionicons name="language" size={20} color={colors.primary} />
@@ -286,50 +272,6 @@ export const SettingsScreen = ({ navigation }) => {
                 </Text>
               </TouchableOpacity>
             ))}
-          </View>
-        </View>
-
-        <View style={styles.modeItem}>
-          <View style={styles.modeHeading}>
-            <Ionicons name="text" size={20} color={colors.primary} />
-            <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>{t("settings.chatTextSize")}</Text>
-              <Text style={styles.settingValue}>
-                {t("settings.chatTextSizeDescription")}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.textSizeControl}>
-            {CHAT_TEXT_SIZE_OPTIONS.map((option) => {
-              const selected = chatTextSize === option;
-              const sampleSize = getChatMessageFontSize(option);
-              return (
-                <TouchableOpacity
-                  key={option}
-                  style={[styles.textSizeOption, selected && styles.segmentSelected]}
-                  onPress={() => setChatTextSize(option)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={t(`settings.chatTextSize.${option}`)}
-                >
-                  <Text
-                    allowFontScaling={false}
-                    style={[
-                      styles.textSizeSample,
-                      { fontSize: sampleSize, color: selected ? "#FFFFFF" : colors.text },
-                    ]}
-                    allowGlobalTextScale={false}
-                  >
-                    Aa
-                  </Text>
-                  <Text
-                    style={[styles.textSizeLabel, selected && styles.segmentTextSelected]}
-                  >
-                    {t(`settings.chatTextSize.${option}`)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
           </View>
         </View>
 
@@ -391,6 +333,38 @@ export const SettingsScreen = ({ navigation }) => {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.helpSupport")}</Text>
 
+        <TouchableOpacity style={styles.settingItem} onPress={() => openPublicPage("/support")}>
+          <Ionicons name="help-buoy" size={20} color={colors.primary} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("settings.support")}</Text>
+            <Text style={styles.settingValue}>{t("settings.supportDescription")}</Text>
+          </View>
+          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.settingItem} onPress={() => openPublicPage("/terms")}>
+          <Ionicons name="document-text" size={20} color={colors.primary} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("settings.terms")}</Text>
+            <Text style={styles.settingValue}>{t("settings.termsDescription")}</Text>
+          </View>
+          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
+        >
+          <Ionicons name="link" size={20} color={colors.primary} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
+            <Text style={styles.settingValue}>
+              {t("settings.myInvitationsDescription")}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.settingItem} onPress={handleAbout}>
           <Ionicons name="information-circle" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
@@ -399,71 +373,6 @@ export const SettingsScreen = ({ navigation }) => {
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => setExternalLinksExpanded((expanded) => !expanded)}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: externalLinksExpanded }}
-        >
-          <Ionicons name="open-outline" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.externalLinks")}</Text>
-          </View>
-          <Ionicons
-            name={externalLinksExpanded ? "chevron-up" : "chevron-down"}
-            size={20}
-            color={colors.mutedText}
-          />
-        </TouchableOpacity>
-        {externalLinksExpanded && (
-          <View style={styles.externalLinksContent}>
-            <TouchableOpacity
-              style={styles.settingItem}
-              onPress={() => openPublicPage("/privacy")}
-            >
-              <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
-              <View style={styles.settingContent}>
-                <Text style={styles.settingLabel}>{t("settings.privacy")}</Text>
-                <Text style={styles.settingValue}>
-                  {t("settings.privacyPolicyDescription")}
-                </Text>
-              </View>
-              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.settingItem}
-              onPress={() => openPublicPage("/support")}
-            >
-              <Ionicons name="help-buoy" size={20} color={colors.primary} />
-              <View style={styles.settingContent}>
-                <Text style={styles.settingLabel}>{t("settings.support")}</Text>
-                <Text style={styles.settingValue}>{t("settings.supportDescription")}</Text>
-              </View>
-              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.settingItem}
-              onPress={() => openPublicPage("/terms")}
-            >
-              <Ionicons name="document-text" size={20} color={colors.primary} />
-              <View style={styles.settingContent}>
-                <Text style={styles.settingLabel}>{t("settings.terms")}</Text>
-                <Text style={styles.settingValue}>{t("settings.termsDescription")}</Text>
-              </View>
-              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.settingItem}
-              onPress={() => openPublicPage("/account-deletion")}
-            >
-              <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
-              <View style={styles.settingContent}>
-                <Text style={styles.settingLabel}>{t("settings.deletionHelp")}</Text>
-              </View>
-              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-            </TouchableOpacity>
-          </View>
-        )}
       </View>
 
       <View style={styles.section}>
@@ -490,6 +399,16 @@ export const SettingsScreen = ({ navigation }) => {
             <Text style={styles.dangerLabel}>{t("settings.deleteAccount")}</Text>
             <Text style={styles.settingValue}>{t("settings.deleteAccountDescription")}</Text>
           </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => openPublicPage("/account-deletion")}
+        >
+          <Ionicons name="information-circle-outline" size={20} color={colors.secondaryText} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("settings.deletionHelp")}</Text>
+          </View>
+          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
         </TouchableOpacity>
       </View>
 
@@ -593,11 +512,6 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.mutedText,
     marginTop: 2,
   },
-  externalLinksContent: {
-    paddingLeft: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
   dangerItem: {
     backgroundColor: colors.dangerSoft,
   },
@@ -642,37 +556,11 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  textSizeControl: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  textSizeOption: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 72,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    backgroundColor: colors.input,
-    paddingHorizontal: 3,
-  },
-  textSizeSample: {
-    fontWeight: "700",
-  },
-  textSizeLabel: {
-    color: colors.secondaryText,
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 3,
-    textAlign: "center",
-  },
   themeOption: {
     flex: 1,
-    minHeight: 56,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 6,
-    paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: colors.input,
   },
@@ -681,7 +569,6 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     marginTop: 3,
-    textAlign: "center",
   },
   footer: {
     alignItems: "center",

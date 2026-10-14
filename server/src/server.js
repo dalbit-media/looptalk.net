@@ -1,7 +1,4 @@
-require("dotenv").config({
-  path: require("node:path").resolve(__dirname, "../.env"),
-});
-const fs = require("node:fs");
+require("dotenv").config();
 const { validateEnvironment } = require("./config/environment");
 const Sentry = require("@sentry/node");
 const next = require("next");
@@ -38,64 +35,23 @@ const {
 const app = express();
 const server = http.createServer(app);
 const isDevelopment = process.argv.includes("--dev");
-const allowLoopbackOrigins = isDevelopment || process.env.NODE_ENV !== "production";
 const nextApp = next({
   dev: isDevelopment,
-  webpack: isDevelopment,
   dir: path.resolve(__dirname, "../.."),
 });
 const handleNextRequest = nextApp.getRequestHandler();
-const BASE_PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
-const MAX_DEV_PORT_ATTEMPTS = 20;
-const expoWebBuildDirectory = path.resolve(__dirname, "../../mobile/dist");
-const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
-const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
+const PORT = process.env.PORT || 3000;
 const webClientOrigin = "'self'";
 
-const normalizeOrigin = (value) => {
-  if (!value || typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  try {
-    return new URL(trimmed).origin;
-  } catch {
-    return trimmed.replace(/\/+$/, "");
-  }
-};
-
-const configuredOrigins = new Set(
-  (process.env.CORS_ORIGIN || "")
-    .split(",")
-    .map((origin) => normalizeOrigin(origin))
-    .filter(Boolean)
-);
-
-const isLoopbackOrigin = (origin) => {
-  try {
-    const url = new URL(origin);
-    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
-  } catch {
-    return false;
-  }
-};
-
-// Same-origin requests never need CORS_ORIGIN. The allowlist is only for
-// cross-origin browser clients, while loopback origins stay available for
-// local development and production-like local verification.
-const isAllowedOrigin = (origin, requestOrigin) => {
-  if (!origin) return true;
-  const normalizedOrigin = normalizeOrigin(origin);
-  const normalizedRequestOrigin = normalizeOrigin(requestOrigin);
-  if (normalizedRequestOrigin && normalizedOrigin === normalizedRequestOrigin) return true;
-  if (normalizedOrigin && configuredOrigins.has(normalizedOrigin)) return true;
-  if (allowLoopbackOrigins && isLoopbackOrigin(normalizedOrigin || origin)) return true;
-  return false;
-};
+const configuredOrigins = process.env.CORS_ORIGIN
+  ?.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean) || [];
 
 // CORS configuration
 const corsOptions = {
   origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) {
+    if (!origin || configuredOrigins.includes(origin)) {
       callback(null, true);
       return;
     }
@@ -143,11 +99,7 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
     contentSecurityPolicy: {
       directives: {
-        scriptSrc: [
-          "'self'",
-          (req, res) => `'nonce-${res.locals.cspNonce}'`,
-          ...(isDevelopment ? ["'unsafe-eval'"] : []),
-        ],
+        scriptSrc: ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
         frameSrc: ["'self'", webClientOrigin],
       },
     },
@@ -162,7 +114,7 @@ app.use((req, res, next) => {
   cors({
     ...corsOptions,
     origin: (origin, callback) => {
-      if (isAllowedOrigin(origin, requestOrigin)) {
+      if (!origin || origin === requestOrigin || configuredOrigins.includes(origin)) {
         callback(null, true);
         return;
       }
@@ -178,42 +130,6 @@ app.use("/uploads", express.static(uploadDirectory, {
   dotfiles: "deny",
   index: false,
 }));
-if (hasExpoWebBuild) {
-  app.use("/app", express.static(expoWebBuildDirectory, {
-    immutable: !isDevelopment,
-    maxAge: isDevelopment ? 0 : "1y",
-    dotfiles: "deny",
-    index: false,
-    setHeaders: (res, filePath) => {
-      if (path.basename(filePath) === "manifest.webmanifest") {
-        res.setHeader("Cache-Control", "no-cache");
-      }
-    },
-  }));
-  app.use("/_expo", express.static(path.join(expoWebBuildDirectory, "_expo"), {
-    immutable: !isDevelopment,
-    maxAge: isDevelopment ? 0 : "1y",
-    dotfiles: "deny",
-    index: false,
-  }));
-  app.use("/assets", express.static(path.join(expoWebBuildDirectory, "assets"), {
-    immutable: !isDevelopment,
-    maxAge: isDevelopment ? 0 : "1y",
-    dotfiles: "deny",
-    index: false,
-  }));
-  app.use("/app", (req, res, next) => {
-    if (req.path === "/" || !req.path.includes(".")) {
-      res.sendFile(expoWebIndexFile);
-      return;
-    }
-    next();
-  });
-} else if (!isDevelopment) {
-  console.warn(
-    `Expo web build not found at ${expoWebIndexFile}; /app will fall back to the Next.js browser client.`
-  );
-}
 
 // Rate limiting (scoped to the API only, so page loads/static assets are unaffected)
 const limiter = rateLimit({
@@ -256,7 +172,6 @@ app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/media", require("./routes/media"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/invitations", require("./routes/invitations"));
-app.use("/api/admin", require("./routes/admin"));
 app.use("/api/link-preview", require("./routes/linkPreview"));
 app.use("/api/calls", require("./routes/calls"));
 app.use("/api/reports", require("./routes/reports"));
@@ -600,63 +515,16 @@ app.use((err, req, res, next) => {
 
 // Start server only after the distributed adapter is ready. This prevents an
 // instance from accepting sockets that other instances cannot yet reach.
-const listenOnPort = (port) => new Promise((resolve, reject) => {
-  const onError = (error) => {
-    server.off("listening", onListening);
-    reject(error);
-  };
-  const onListening = () => {
-    server.off("error", onError);
-    resolve(port);
-  };
-
-  server.once("error", onError);
-  server.once("listening", onListening);
-  server.listen(port);
-});
-
-const startHttpServer = async () => {
-  let port = BASE_PORT;
-  let attempts = 0;
-
-  while (true) {
-    try {
-      await listenOnPort(port);
-      if (port !== BASE_PORT) {
-        console.warn(
-          `Port ${BASE_PORT} was busy; LoopTalk started on port ${port} instead.`
-        );
-      }
-      return port;
-    } catch (error) {
-      const canTryNextPort =
-        isDevelopment &&
-        error?.code === "EADDRINUSE" &&
-        attempts < MAX_DEV_PORT_ATTEMPTS;
-      if (!canTryNextPort) {
-        throw error;
-      }
-      attempts += 1;
-      port += 1;
-    }
-  }
-};
-
 const startServer = async () => {
   await nextApp.prepare();
   await initializeCallInfrastructure(io);
-  const port = await startHttpServer();
-  console.log(`🚀 LoopTalk server running on port ${port}`);
+  server.listen(PORT, () => {
+    console.log(`🚀 LoopTalk server running on port ${PORT}`);
+  });
 };
 
 startServer().catch((error) => {
   Sentry.captureException(error);
-  if (error?.code === "EADDRINUSE") {
-    console.error(
-      `Port ${BASE_PORT} is already in use. Another LoopTalk server may already be running.`
-    );
-    process.exit(0);
-  }
   console.error("Unable to start server:", error);
   process.exit(1);
 });
@@ -681,10 +549,7 @@ const shutdown = (signal) => {
       await closeCallInfrastructure();
       await prisma.$disconnect();
     } finally {
-      if (error) {
-        console.error("Error during server close:", error);
-      }
-      process.exit(0);
+      process.exit(error ? 1 : 0);
     }
   });
 };
