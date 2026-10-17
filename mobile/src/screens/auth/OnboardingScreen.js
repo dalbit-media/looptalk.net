@@ -1,15 +1,8 @@
 import React, { useRef, useState } from "react";
-import {
-  FlatList,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { FlatList, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { LanguageFooter } from "../../components/LanguageFooter";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { BrandMark } from "../../components/BrandMark";
@@ -174,8 +167,10 @@ export const OnboardingScreen = ({ navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const listRef = useRef(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [sliderHeight, setSliderHeight] = useState(0);
   const styles = createStyles(colors);
   const isLastSlide = activeIndex === SLIDES.length - 1;
 
@@ -196,7 +191,7 @@ export const OnboardingScreen = ({ navigation }) => {
   };
 
   const renderSlide = ({ item }) => (
-    <View style={[styles.slide, { width }]}>
+    <ScrollView style={{ width, height: sliderHeight }} contentContainerStyle={styles.slide} showsVerticalScrollIndicator={false}>
       <SlideIllustration item={item} width={width} colors={colors} styles={styles} />
       <Text style={[styles.eyebrow, { color: item.accent }]}>
         {t(item.eyebrow)}
@@ -209,11 +204,11 @@ export const OnboardingScreen = ({ navigation }) => {
         <Ionicons name="sparkles" size={17} color={item.accent} />
         <Text style={[styles.detail, { color: colors.text }]}>{t(item.detail)}</Text>
       </View>
-    </View>
+    </ScrollView>
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface }]}>
+    <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
       <View style={styles.topBar}>
         <View style={styles.brandLockup}>
           <BrandMark size={32} />
@@ -227,6 +222,8 @@ export const OnboardingScreen = ({ navigation }) => {
       </View>
 
       <FlatList
+          style={styles.slider}
+          onLayout={(event) => setSliderHeight(event.nativeEvent.layout.height)}
           ref={listRef}
           data={SLIDES}
           horizontal
@@ -240,7 +237,7 @@ export const OnboardingScreen = ({ navigation }) => {
           }}
         />
 
-      <View style={styles.controls}>
+      <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom, 20) }]}>
         <View style={styles.pagination}>
           {SLIDES.map((slide, index) => (
             <TouchableOpacity
@@ -261,6 +258,7 @@ export const OnboardingScreen = ({ navigation }) => {
           ))}
         </View>
         <TouchableOpacity
+          accessibilityRole="button"
           style={[styles.nextButton, { backgroundColor: SLIDES[activeIndex].accent }]}
           onPress={handleNext}
         >
@@ -273,14 +271,14 @@ export const OnboardingScreen = ({ navigation }) => {
             color="#FFFFFF"
           />
         </TouchableOpacity>
-        <LanguageFooter />
       </View>
     </View>
   );
 };
 
 const createStyles = (colors) => StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, minHeight: 0 },
+  slider: { flex: 1, minHeight: 0 },
   topBar: {
     minHeight: 72,
     flexDirection: "row",
@@ -294,10 +292,10 @@ const createStyles = (colors) => StyleSheet.create({
   skipButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
   skipText: { fontSize: 14, fontWeight: "600" },
   slide: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: 28,
-    paddingBottom: 8,
+    paddingVertical: 16,
   },
   illustration: {
     height: 226,
@@ -422,7 +420,7 @@ const createStyles = (colors) => StyleSheet.create({
   body: { marginTop: 10, maxWidth: 520, fontSize: 16, lineHeight: 24 },
   detailRow: { marginTop: 13, paddingTop: 12, borderTopWidth: 1, flexDirection: "row", alignItems: "center", gap: 9, maxWidth: 520 },
   detail: { flex: 1, fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  controls: { paddingHorizontal: 24 },
+  controls: { flexShrink: 0, paddingHorizontal: 24, paddingTop: 12 },
   pagination: {
     height: 24,
     flexDirection: "row",

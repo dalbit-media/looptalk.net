@@ -1,43 +1,36 @@
 (() => {
+  window.openLoopTalkClient = (url = "/app/") => {
+    const width = Math.min(520, window.screen.availWidth);
+    const height = Math.min(850, window.screen.availHeight);
+    const left = Math.max(0, Math.round((window.screen.availWidth - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.availHeight - height) / 2));
+    window.open(
+      url,
+      "_blank",
+      `popup=yes,noopener=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no`
+    )?.focus();
+  };
+
   const body = document.body;
   const messages = window.LoopTalkSiteI18n;
-  const supportedLanguages = Object.keys(messages);
-  const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+  // Invitation pages only use the popup launcher.
+  if (!messages) return;
   const menuButton = document.querySelector("[data-toggle-menu]");
   const header = document.querySelector(".site-header");
   const incomingCallStorageKey = "looptalk:incoming-call";
   const callStatusChannelName = "looptalk-call-status";
-  let activeLanguage = "en";
+  let activeLanguage = "ko";
   let healthState = { status: "checking", timestamp: null };
   let incomingCallRinging = false;
   let incomingCallTimer = null;
-
-  const readPreference = (key) => {
-    try {
-      return window.localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  };
+  let deferredInstallPrompt = null;
 
   const translate = (key, replacements = {}) => {
-    const template = messages[activeLanguage]?.[key] || messages.en[key] || key;
+    const template = messages.ko[key] || key;
     return Object.entries(replacements).reduce(
       (value, [name, replacement]) => value.replace(`{${name}}`, replacement),
       template
     );
-  };
-
-  const resolveLanguage = () => {
-    const savedLanguage = readPreference("language");
-    if (supportedLanguages.includes(savedLanguage)) return savedLanguage;
-
-    const browserLanguages = navigator.languages?.length
-      ? navigator.languages
-      : [navigator.language];
-    return browserLanguages
-      .map((language) => language?.toLowerCase().split("-")[0])
-      .find((language) => supportedLanguages.includes(language)) || "en";
   };
 
   const renderHealth = () => {
@@ -75,9 +68,9 @@
     }
   };
 
-  const applyLanguage = (language = resolveLanguage()) => {
-    activeLanguage = supportedLanguages.includes(language) ? language : "en";
-    document.documentElement.lang = activeLanguage;
+  const applyLanguage = () => {
+    activeLanguage = "ko";
+    document.documentElement.lang = "ko";
     document.querySelectorAll("[data-i18n]").forEach((element) => {
       element.textContent = translate(element.dataset.i18n, {
         year: String(new Date().getFullYear()),
@@ -89,13 +82,18 @@
     document.querySelectorAll("[data-i18n-title]").forEach((element) => {
       element.setAttribute("title", translate(element.dataset.i18nTitle));
     });
-    const isAdmin = Boolean(document.querySelector(".admin-page"));
+    const isStatistics = Boolean(document.querySelector(".statistics-page"));
+    const isAdmin = Boolean(document.querySelector(".admin-page")) && !isStatistics;
     const isLanding = Boolean(document.querySelector(".landing-page"));
-    if (isAdmin || isLanding) {
-      document.title = translate(isAdmin ? "meta.adminTitle" : "meta.landingTitle");
+    if (isAdmin || isStatistics || isLanding) {
+      document.title = translate(
+        isStatistics ? "meta.statisticsTitle" : isAdmin ? "meta.adminTitle" : "meta.landingTitle"
+      );
       document.querySelector('meta[name="description"]')?.setAttribute(
         "content",
-        translate(isAdmin ? "meta.adminDescription" : "meta.landingDescription")
+        translate(isStatistics
+          ? "meta.statisticsDescription"
+          : isAdmin ? "meta.adminDescription" : "meta.landingDescription")
       );
     }
     renderHealth();
@@ -125,27 +123,9 @@
       : null;
   };
 
-  const resolveTheme = () => {
-    const savedTheme = readPreference("themeMode");
-    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
-    return systemTheme.matches ? "dark" : "light";
-  };
-
-  const applyTheme = () => {
-    const theme = resolveTheme();
-    document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute(
-      "content",
-      theme === "dark" ? "#181a19" : "#f4f1e8"
-    );
-  };
-
   applyLanguage();
-  applyTheme();
 
   window.addEventListener("storage", (event) => {
-    if (event.key === "language") applyLanguage();
-    if (event.key === "themeMode") applyTheme();
     if (event.key === incomingCallStorageKey && event.newValue) {
       try {
         applyIncomingCallState(JSON.parse(event.newValue));
@@ -154,26 +134,63 @@
       }
     }
   });
-  systemTheme.addEventListener("change", () => {
-    if (readPreference("themeMode") === "system" || !readPreference("themeMode")) {
-      applyTheme();
-    }
-  });
 
   const openClient = () => {
-    const width = Math.min(430, window.screen.availWidth);
-    const height = Math.min(850, window.screen.availHeight);
-    const left = Math.max(0, Math.round((window.screen.availWidth - width) / 2));
-    const top = Math.max(0, Math.round((window.screen.availHeight - height) / 2));
-    window.open(
-      "/app/",
-      "_blank",
-      `popup=yes,noopener=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no`
-    )?.focus();
+    window.openLoopTalkClient();
   };
+
+  const installApp = async () => {
+    if (!deferredInstallPrompt) {
+      const isStandalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        window.navigator.standalone === true;
+      if (isStandalone) return;
+      if (!window.location.pathname.startsWith("/app/")) {
+        openClient();
+      }
+      return;
+    }
+
+    const prompt = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    try {
+      await prompt.prompt();
+      await prompt.userChoice;
+    } catch (error) {
+      console.error("Could not show the web app install prompt:", error);
+    }
+  };
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    document.querySelectorAll("[data-install-app]").forEach((button) => {
+      button.hidden = true;
+    });
+  });
+  document.querySelectorAll("[data-install-app]").forEach((button) => {
+    button.addEventListener("click", () => installApp());
+  });
 
   document.querySelectorAll("[data-open-client]").forEach((button) => {
     button.addEventListener("click", openClient);
+  });
+
+  document.querySelectorAll("[data-scroll-top]").forEach((button) => {
+    const syncVisibility = () => {
+      button.hidden = window.scrollY < 320;
+    };
+    window.addEventListener("scroll", syncVisibility, { passive: true });
+    syncVisibility();
+    button.addEventListener("click", () => {
+      window.scrollTo({
+        top: 0,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+    });
   });
 
   if (typeof BroadcastChannel === "function") {

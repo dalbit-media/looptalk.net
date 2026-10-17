@@ -117,4 +117,19 @@ const sendMessagePush = async ({ recipientIds, conversationId, message }) => {
   await sendPushMessages(messages);
 };
 
-module.exports = { sendIncomingCallPush, sendMessagePush };
+const sendSecureMessagePush = async ({ recipientIds, conversationId, id }) => {
+  if (!recipientIds.length) return;
+  const validDevices = await getActiveDevices(recipientIds);
+  await sendPushMessages(validDevices.map(({ token }) => ({
+    to: token,
+    title: "LoopTalk",
+    body: "Encrypted message",
+    sound: "default",
+    priority: "high",
+    channelId: "messages",
+    collapseId: conversationId,
+    data: { type: "secure_message_available", conversationId, id },
+  })));
+};
+
+module.exports = { sendIncomingCallPush, sendMessagePush, sendSecureMessagePush };

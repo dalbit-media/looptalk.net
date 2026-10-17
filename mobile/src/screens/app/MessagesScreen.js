@@ -1,31 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Image,
-  RefreshControl,
-  Animated,
-} from "react-native";
+import { View, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Image, RefreshControl } from "react-native";
+import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { EmptyState } from "../../components/EmptyState";
 import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
 import { HighlightText } from "../../components/HighlightText";
+import { UserPresence } from "../../components/UserPresence";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
+import { useContactStore } from "../../store/contactStore";
+import { contactDisplayNames, resolveDisplayName } from "../../utils/contactDisplayName";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { API_URL } from "../../config/environment";
 
-const getPeerName = (conversation, userId) => {
+const getPeerName = (conversation, userId, names) => {
   if (conversation.isGroupChat) return null;
   const peer = conversation.participants?.find(
     (participant) => participant.user?.id !== userId
   )?.user;
-  return peer?.displayName || null;
+  return resolveDisplayName(names, peer) || null;
 };
 
 const getMessagePreview = (message, t) => {
@@ -46,11 +41,14 @@ export const MessagesScreen = ({ navigation }) => {
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
   const conversations = useMessageStore((state) => state.conversations);
+  const contacts = useContactStore((state) => state.contacts);
+  const names = useMemo(() => contactDisplayNames(contacts), [contacts]);
+  const onlineUsers = useMessageStore((state) => state.onlineUsers);
+  const presenceConnected = useMessageStore((state) => state.presenceConnected);
   const loading = useMessageStore((state) => state.loading);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterKey, setFilterKey] = useState("all");
-  const scaleAnim = new Animated.Value(1);
 
   const filterOptions = [
     { key: "all", label: t("messages.filterAll") },
@@ -58,7 +56,7 @@ export const MessagesScreen = ({ navigation }) => {
   ];
 
   const getConversationTitle = (conversation) =>
-    conversation.name || getPeerName(conversation, user.id) || t("messages.unnamedChat");
+    conversation.name || getPeerName(conversation, user.id, names) || t("messages.unnamedChat");
 
   const filteredConversations = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -68,7 +66,10 @@ export const MessagesScreen = ({ navigation }) => {
       const title = getConversationTitle(conversation).toLowerCase();
       const lastMessageText = (conversation.messages?.[0]?.content || "").toLowerCase();
       const participantNames = (conversation.participants || [])
-        .map((participant) => participant.user?.displayName?.toLowerCase() || "")
+        .map((participant) => [
+          resolveDisplayName(names, participant.user, participant.userId),
+          participant.user?.username,
+        ].filter(Boolean).join(" ").toLowerCase())
         .join(" ");
       return (
         title.includes(query) ||
@@ -77,7 +78,7 @@ export const MessagesScreen = ({ navigation }) => {
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversations, searchQuery, filterKey, user.id]);
+  }, [conversations, searchQuery, filterKey, user.id, names]);
 
   const loadConversations = useMessageStore((state) => state.loadConversations);
 
@@ -89,21 +90,6 @@ export const MessagesScreen = ({ navigation }) => {
     return () => clearInterval(interval);
   }, [token, user.id]);
 
-  useEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={() => navigation.navigate("CreateGroup")}
-          accessibilityRole="button"
-          accessibilityLabel={t("groups.create")}
-          style={styles.headerButton}
-        >
-          <Ionicons name="people-circle-outline" size={27} color={colors.primary} />
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, t, colors.primary]);
-
   const onRefresh = async () => {
     setRefreshing(true);
     await loadConversations(token, user.id);
@@ -111,22 +97,9 @@ export const MessagesScreen = ({ navigation }) => {
   };
 
   const handlePressConversation = (conversation) => {
-    Animated.sequence([
-      Animated.timing(scaleAnim, {
-        toValue: 0.95,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      navigation.navigate("Chat", {
-        conversationId: conversation.id,
-        name: getConversationTitle(conversation),
-      });
+    navigation.navigate("Chat", {
+      conversationId: conversation.id,
+      name: getConversationTitle(conversation),
     });
   };
 
@@ -137,29 +110,50 @@ export const MessagesScreen = ({ navigation }) => {
       ? new Date(lastMessage.createdAt).toLocaleDateString()
       : "";
     const title = getConversationTitle(item);
+    const peerUser = item.participants?.find(
+      (participant) => participant.user?.id !== user.id
+    )?.user;
+    const peerAvatarUri = peerUser?.profilePicture
+      ? `${API_URL}${peerUser.profilePicture}`
+      : null;
+    const peerName = resolveDisplayName(names, peerUser);
+    const isPeerOnline = presenceConnected && item.participants?.some(
+      (participant) =>
+        participant.userId !== user.id && onlineUsers.has(participant.userId)
+    );
 
     return (
-      <Animated.View
-        style={[
-          styles.conversationItem,
-          {
-            transform: [{ scale: scaleAnim }],
-          },
-        ]}
-      >
+      <View style={styles.conversationItem}>
         <TouchableOpacity
           style={styles.conversationTouchable}
           onPress={() => handlePressConversation(item)}
           activeOpacity={0.7}
         >
-          <View style={styles.avatarContainer}>
+          <TouchableOpacity
+            style={styles.avatarContainer}
+            onPress={(event) => {
+              event.stopPropagation();
+              if (peerUser?.id) {
+                navigation.navigate("Profile", { userId: peerUser.id, name: peerName });
+              }
+            }}
+            disabled={!peerUser?.id || item.isGroupChat}
+            accessibilityRole="button"
+            accessibilityLabel={peerName
+              ? t("profile.viewProfile", { name: peerName })
+              : t("navigation.profile")}
+          >
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {title[0].toUpperCase()}
-              </Text>
+              {peerAvatarUri ? (
+                <Image source={{ uri: peerAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {title[0].toUpperCase()}
+                </Text>
+              )}
             </View>
-            <View style={styles.onlineIndicator} />
-          </View>
+            {isPeerOnline && <View style={styles.onlineIndicator} />}
+          </TouchableOpacity>
 
           <View style={styles.conversationContent}>
             <View style={styles.conversationHeader}>
@@ -177,15 +171,21 @@ export const MessagesScreen = ({ navigation }) => {
               style={styles.lastMessage}
               numberOfLines={1}
             />
+            {!item.isGroupChat && peerUser && <UserPresence user={peerUser} compact />}
           </View>
 
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadText}>
-              {item.unreadCount > 0 ? item.unreadCount : ""}
-            </Text>
-          </View>
+          {item.unreadCount > 0 && (
+            <View
+              style={styles.unreadBadge}
+              accessibilityLabel={t("messages.unreadCount", { count: item.unreadCount })}
+            >
+              <Text style={styles.unreadText}>
+                {item.unreadCount > 99 ? "99+" : item.unreadCount}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -237,6 +237,14 @@ export const MessagesScreen = ({ navigation }) => {
           }
         />
       )}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => navigation.navigate("CreateGroup")}
+        accessibilityRole="button"
+        accessibilityLabel={t("messages.newMessage")}
+      >
+        <Ionicons name="create-outline" size={25} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 };
@@ -265,7 +273,22 @@ const createStyles = (colors) => StyleSheet.create({
   searchBarFlex: {
     flex: 1,
   },
-  headerButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  fab: {
+    position: "absolute",
+    right: 20,
+    bottom: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
+  },
   conversationItem: {
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -287,6 +310,12 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.primary,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
   },
   avatarText: {
     color: "#fff",
@@ -297,7 +326,7 @@ const createStyles = (colors) => StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: "#31a24c",
+    backgroundColor: colors.online,
     position: "absolute",
     bottom: 0,
     right: 0,
@@ -332,12 +361,12 @@ const createStyles = (colors) => StyleSheet.create({
     minWidth: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.unreadBadge,
     justifyContent: "center",
     alignItems: "center",
   },
   unreadText: {
-    color: "#fff",
+    color: colors.onUnreadBadge,
     fontSize: 12,
     fontWeight: "600",
   },

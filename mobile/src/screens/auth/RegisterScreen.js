@@ -1,322 +1,175 @@
-import React, { useRef, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
+import { AppText as Text } from "../../components/AppText";
 import { useAuthStore } from "../../store/authStore";
+import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { SocialAuthButtons } from "../../components/SocialAuthButtons";
-import { LanguageFooter } from "../../components/LanguageFooter";
-import { showAlert } from "../../utils/showAlert";
-import {
-  EMAIL_MAX_LENGTH,
-  isValidEmail,
-  isValidPhoneNumber,
-  PASSWORD_MAX_LENGTH,
-} from "../../utils/validation";
+import { normalizeIdentifier } from "../../utils/accountPrivacy";
 
 export const RegisterScreen = ({ route, navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
-  const [contactType, setContactType] = useState("email");
-  const [email, setEmail] = useState(route.params?.inviteeEmail || "");
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [bootstrapAvailable, setBootstrapAvailable] = useState(null);
   const invitationCode = route.params?.invitationCode || route.params?.code;
-  const contactInputRef = useRef(null);
-  const passwordInputRef = useRef(null);
-  const confirmPasswordInputRef = useRef(null);
-
   const register = useAuthStore((state) => state.register);
+
+  useEffect(() => {
+    let active = true;
+    AuthAPI.getBootstrapStatus()
+      .then(({ bootstrapAvailable: available }) => {
+        if (active) setBootstrapAvailable(available);
+      })
+      .catch(() => {
+        if (active) setBootstrapAvailable(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   const handleRegister = async () => {
     if (loading) return;
-
-    const contact = contactType === "email" ? email.trim() : phoneNumber.trim();
-    if (!contact || !password || !confirmPassword) {
-      showAlert(t("common.error"), t("auth.fillAllFields"));
+    let normalized;
+    try {
+      normalized = normalizeIdentifier(identifier);
+    } catch {
+      setErrorMessage(t(identifier.includes("@") ? "auth.invalidEmail" : "auth.invalidPhoneNumber"));
       return;
     }
-
-    if (contactType === "email" && !isValidEmail(email)) {
-      showAlert(t("common.error"), t("auth.invalidEmail"));
+    if (password.length < 8 || password.length > 128) {
+      setErrorMessage(t(password.length < 8 ? "auth.passwordLength" : "auth.passwordTooLong"));
       return;
     }
-
-    if (contactType === "phone" && !isValidPhoneNumber(phoneNumber)) {
-      showAlert(t("common.error"), t("auth.invalidPhoneNumber"));
-      return;
-    }
-
     if (password !== confirmPassword) {
-      showAlert(t("common.error"), t("auth.passwordMismatch"));
+      setErrorMessage(t("auth.passwordMismatch"));
       return;
     }
-
-    if (password.length < 6) {
-      showAlert(t("common.error"), t("auth.passwordLength"));
+    const name = displayName.trim();
+    if (!name || name.length > 100) {
+      setErrorMessage(t(name ? "auth.displayNameTooLong" : "auth.displayNameRequired"));
       return;
     }
-
-    if (password.length > PASSWORD_MAX_LENGTH) {
-      showAlert(t("common.error"), t("auth.passwordTooLong"));
+    if (!invitationCode && bootstrapAvailable !== true) {
+      setErrorMessage(t("auth.invitationRequired"));
       return;
     }
-
-    if (!invitationCode && !route.params?.isBootstrap) {
-      showAlert(t("common.error"), t("auth.invitationRequired"));
-      return;
-    }
-
+    setErrorMessage("");
     setLoading(true);
     try {
-      await register(
-        contactType === "email" ? email.trim() : null,
-        contactType === "phone" ? phoneNumber.trim() : null,
-        password,
-        invitationCode
-      );
+      await register(normalized, password, name, invitationCode);
+      setPassword("");
+      setConfirmPassword("");
+      setDisplayName("");
     } catch (error) {
-      showAlert(
-        t("auth.registrationFailed"),
-        t("common.error")
-      );
+      setErrorMessage(t(
+        error.response?.status === 409
+          ? "auth.userExists"
+          : error.response?.status === 400 || error.response?.status === 403
+          ? "auth.invalidInvitation"
+          : error.request && !error.response
+            ? "auth.serverUnavailable"
+            : "privacy.registrationFailed"
+      ));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Text style={styles.title}>{t("auth.createAccount")}</Text>
-          <Text style={styles.subtitle}>{t("auth.registerSubtitle")}</Text>
-        </View>
-
-        <View style={styles.form}>
-          <Text style={styles.helperText}>{t("auth.usernameAssigned")}</Text>
-
-          <View style={styles.contactSelector}>
-            {["email", "phone"].map((type) => (
-              <TouchableOpacity
-                key={type}
-                style={[
-                  styles.contactOption,
-                  contactType === type && styles.contactOptionSelected,
-                ]}
-                onPress={() => setContactType(type)}
-                disabled={loading}
-              >
-                <Text
-                  style={[
-                    styles.contactOptionText,
-                    contactType === type && styles.contactOptionTextSelected,
-                  ]}
-                >
-                  {t(type === "email" ? "auth.email" : "auth.phoneNumber")}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {contactType === "email" ? (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text style={styles.title}>{t("auth.createAccount")}</Text>
+            <Text style={styles.notice}>{t("auth.credentialNotice")}</Text>
             <TextInput
-              ref={contactInputRef}
               style={styles.input}
-              placeholder={t("auth.email")}
+              placeholder={t("auth.identifier")}
+              accessibilityLabel={t("auth.identifier")}
               placeholderTextColor={colors.mutedText}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
+              value={identifier}
+              onChangeText={setIdentifier}
               autoCapitalize="none"
-              autoComplete="email"
-              maxLength={EMAIL_MAX_LENGTH}
-              returnKeyType="next"
-              onSubmitEditing={() => passwordInputRef.current?.focus()}
-              blurOnSubmit={false}
-              editable={!loading && !route.params?.inviteeEmail}
-            />
-          ) : (
-            <TextInput
-              ref={contactInputRef}
-              style={styles.input}
-              placeholder={t("auth.phoneNumber")}
-              placeholderTextColor={colors.mutedText}
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-              maxLength={24}
-              returnKeyType="next"
-              onSubmitEditing={() => passwordInputRef.current?.focus()}
-              blurOnSubmit={false}
+              autoCorrect={false}
+              autoComplete="off"
+              maxLength={254}
               editable={!loading}
             />
-          )}
-
-          <TextInput
-            ref={passwordInputRef}
-            style={styles.input}
-            placeholder={t("auth.password")}
-            placeholderTextColor={colors.mutedText}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete="new-password"
-            maxLength={PASSWORD_MAX_LENGTH}
-            returnKeyType="next"
-            onSubmitEditing={() => confirmPasswordInputRef.current?.focus()}
-            blurOnSubmit={false}
-            editable={!loading}
-          />
-
-          <TextInput
-            ref={confirmPasswordInputRef}
-            style={styles.input}
-            placeholder={t("auth.confirmPassword")}
-            placeholderTextColor={colors.mutedText}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            autoComplete="new-password"
-            maxLength={PASSWORD_MAX_LENGTH}
-            returnKeyType="go"
-            onSubmitEditing={handleRegister}
-            editable={!loading}
-          />
-
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleRegister}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>{t("auth.registerButton")}</Text>
-            )}
-          </TouchableOpacity>
-
-          <SocialAuthButtons
-            invitationCode={invitationCode}
-            disabled={loading}
-          />
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate("Login")}
-            disabled={loading}
-          >
-            <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
-          </TouchableOpacity>
-        </View>
-        <LanguageFooter />
+            <TextInput
+              style={styles.input}
+              placeholder={t("auth.password")}
+              accessibilityLabel={t("auth.password")}
+              placeholderTextColor={colors.mutedText}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
+              maxLength={128}
+              editable={!loading}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder={t("auth.confirmPassword")}
+              accessibilityLabel={t("auth.confirmPassword")}
+              placeholderTextColor={colors.mutedText}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
+              maxLength={128}
+              editable={!loading}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder={t("auth.displayName")}
+              accessibilityLabel={t("auth.displayName")}
+              placeholderTextColor={colors.mutedText}
+              value={displayName}
+              onChangeText={setDisplayName}
+              autoCapitalize="words"
+              autoComplete="off"
+              maxLength={100}
+              editable={!loading}
+              returnKeyType="go"
+              onSubmitEditing={handleRegister}
+            />
+            {errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{errorMessage}</Text> : null}
+            <TouchableOpacity
+              style={[styles.button, (loading || (!invitationCode && bootstrapAvailable === null)) && styles.disabled]}
+              disabled={loading || (!invitationCode && bootstrapAvailable === null)}
+              onPress={handleRegister}
+              accessibilityRole="button"
+            >
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t("auth.registerButton")}</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.navigate("Login")} disabled={loading}>
+              <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
+            </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 };
 
 const createStyles = (colors) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surface,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  header: {
-    marginBottom: 40,
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: colors.secondaryText,
-  },
-  helperText: {
-    color: colors.secondaryText,
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: "center",
-  },
-  contactSelector: {
-    flexDirection: "row",
-    backgroundColor: colors.input,
-    borderRadius: 8,
-    padding: 3,
-  },
-  contactOption: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 9,
-    borderRadius: 6,
-  },
-  contactOptionSelected: {
-    backgroundColor: colors.primary,
-  },
-  contactOptionText: {
-    color: colors.secondaryText,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  contactOptionTextSelected: {
-    color: "#fff",
-  },
-  form: {
-    gap: 12,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: colors.text,
-    backgroundColor: colors.input,
-  },
-  button: {
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 20,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  link: {
-    textAlign: "center",
-    color: colors.primary,
-    fontSize: 14,
-    marginTop: 16,
-  },
+  container: { flex: 1, backgroundColor: colors.surface },
+  content: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 20 },
+  title: { fontSize: 28, fontWeight: "700", color: colors.text },
+  notice: { fontSize: 15, lineHeight: 23, color: colors.secondaryText },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 16, fontSize: 16, color: colors.text, backgroundColor: colors.input },
+  button: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center" },
+  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  disabled: { opacity: 0.6 },
+  error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  link: { color: colors.primary, textAlign: "center", padding: 12 },
 });

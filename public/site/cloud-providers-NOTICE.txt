@@ -1,0 +1,13 @@
+Cloud provider and app store icons
+
+Source: Pictogrammers Material Design Icons
+https://github.com/Templarian/MaterialDesign
+
+Icons: microsoft-onedrive, google-drive, apple-icloud, dropbox, apple,
+google-play.
+The SVG path data is reproduced unchanged. Presentation is monochrome.
+Material Design Icons are distributed under the Apache License, Version 2.0.
+https://www.apache.org/licenses/LICENSE-2.0
+
+Provider names and logos are trademarks of their respective owners.
+Their use identifies planned integrations and does not imply endorsement.

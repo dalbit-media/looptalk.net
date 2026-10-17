@@ -1,22 +1,15 @@
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  SectionList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Animated,
-  RefreshControl,
-} from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { View, StyleSheet, SectionList, TouchableOpacity, ActivityIndicator, Animated, RefreshControl } from "react-native";
+import { AppText as Text } from "../../components/AppText";
+import { ContactIdentity } from "../../components/ContactIdentity";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState } from "../../components/EmptyState";
 import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
-import { HighlightText } from "../../components/HighlightText";
 import { useAuthStore } from "../../store/authStore";
 import { useContactStore } from "../../store/contactStore";
+import { useMessageStore } from "../../store/messageStore";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { showAlert } from "../../utils/showAlert";
@@ -43,12 +36,15 @@ export const ContactsScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const token = useAuthStore((state) => state.token);
   const contacts = useContactStore((state) => state.contacts);
+  const onlineUsers = useMessageStore((state) => state.onlineUsers);
+  const presenceConnected = useMessageStore((state) => state.presenceConnected);
   const loading = useContactStore((state) => state.loading);
   const loadContacts = useContactStore((state) => state.loadContacts);
   const toggleFavorite = useContactStore((state) => state.toggleFavorite);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterKey, setFilterKey] = useState("all");
+  const [collapsedGroups, setCollapsedGroups] = useState({});
 
   useEffect(() => {
     loadContacts(token);
@@ -74,7 +70,8 @@ export const ContactsScreen = ({ navigation }) => {
   };
 
   const matchesStatus = (contact) => {
-    const isOnline = contact.contactUser?.status === "ACTIVE";
+    if (filterKey !== "all" && !presenceConnected) return false;
+    const isOnline = onlineUsers.has(contact.contactUser?.id);
     if (filterKey === "online") return isOnline;
     if (filterKey === "offline") return !isOnline;
     return true;
@@ -111,10 +108,13 @@ export const ContactsScreen = ({ navigation }) => {
           title: GROUP_KEYS[groupName]
             ? t(`contacts.${GROUP_KEYS[groupName]}`)
             : groupName,
-          data: filteredList.map((contact) => ({
-            ...contact,
-            _key: `${groupName}-${contact.id}`,
-          })),
+          memberUsers: filteredList.map((contact) => contact.contactUser).filter(Boolean),
+          data: collapsedGroups[groupName]
+            ? []
+            : filteredList.map((contact) => ({
+                ...contact,
+                _key: `${groupName}-${contact.id}`,
+              })),
         });
       }
     });
@@ -124,15 +124,67 @@ export const ContactsScreen = ({ navigation }) => {
       sections.unshift({
         key: "favorites",
         title: t("contacts.favorites"),
-        data: favorites.map((contact) => ({
-          ...contact,
-          _key: `favorites-${contact.id}`,
-        })),
+        memberUsers: favorites.map((contact) => contact.contactUser).filter(Boolean),
+        data: collapsedGroups.favorites
+          ? []
+          : favorites.map((contact) => ({
+              ...contact,
+              _key: `favorites-${contact.id}`,
+            })),
       });
     }
 
     return sections;
   };
+
+  const sections = useMemo(
+    () => convertToSections(),
+    [contacts, onlineUsers, presenceConnected, searchQuery, filterKey, collapsedGroups, t]
+  );
+  const sectionKeys = sections.map((section) => section.key);
+  const sectionKeysKey = sectionKeys.join("|");
+  const allGroupsCollapsed =
+    sections.length > 0 && sections.every((section) => collapsedGroups[section.key]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate("AddContact", { mode: "search" })}
+            hitSlop={10}
+            style={styles.headerAction}
+            accessibilityRole="button"
+            accessibilityLabel={t("contacts.searchUsersById")}
+          >
+            <View style={styles.searchHeaderIcon}>
+              <Ionicons name="search" size={22} color={colors.headerIcon} />
+              <View style={styles.addBadge}>
+                <Ionicons name="add" size={12} color="#FFFFFF" />
+              </View>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() =>
+              setCollapsedGroups(
+                Object.fromEntries(sectionKeys.map((key) => [key, !allGroupsCollapsed]))
+              )
+            }
+            hitSlop={10}
+            style={styles.headerAction}
+            accessibilityRole="button"
+            accessibilityLabel={t(allGroupsCollapsed ? "contacts.expandGroups" : "contacts.collapseGroups")}
+          >
+            <Ionicons
+              name={allGroupsCollapsed ? "albums-outline" : "albums"}
+              size={23}
+              color={colors.headerIcon}
+            />
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [allGroupsCollapsed, colors, navigation, sectionKeysKey, t]);
 
   const renderContactItem = ({ item }) => {
     const scaleAnim = new Animated.Value(1);
@@ -152,7 +204,7 @@ export const ContactsScreen = ({ navigation }) => {
       ]).start(() => {
         navigation.navigate("Profile", {
           userId: item.contactUser.id,
-          name: item.contactUser.displayName,
+          name: item.nickname || item.contactUser.displayName,
         });
       });
     };
@@ -178,32 +230,13 @@ export const ContactsScreen = ({ navigation }) => {
           onPress={handlePress}
           activeOpacity={0.7}
         >
-          <View style={styles.contactAvatar}>
-            <Text style={styles.avatarText}>
-              {item.contactUser.displayName[0].toUpperCase()}
-            </Text>
-          </View>
-
-          <View style={styles.contactInfo}>
-            <HighlightText
-              text={item.nickname || item.contactUser.displayName}
-              query={searchQuery}
-              style={styles.contactName}
-              numberOfLines={1}
-            />
-            <HighlightText
-              text={`@${item.contactUser.username}`}
-              query={searchQuery}
-              style={styles.contactUsername}
-              numberOfLines={1}
-            />
-            {item.contactUser.status === "ACTIVE" && (
-              <View style={styles.onlineStatus}>
-                <View style={styles.onlineIndicator} />
-                <Text style={styles.onlineText}>{t("contacts.online")}</Text>
-              </View>
-            )}
-          </View>
+          <ContactIdentity
+            user={item.contactUser}
+            displayName={item.nickname || item.contactUser.displayName}
+            searchQuery={searchQuery}
+            showOnline
+            colors={colors}
+          />
 
           <TouchableOpacity
             style={styles.favoriteButton}
@@ -227,13 +260,50 @@ export const ContactsScreen = ({ navigation }) => {
     );
   };
 
-  const renderSectionHeader = ({ section: { title } }) => (
+  const renderSectionHeader = ({ section }) => (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <TouchableOpacity
+        style={styles.sectionTitleButton}
+        onPress={() =>
+          setCollapsedGroups((current) => ({
+            ...current,
+            [section.key]: !current[section.key],
+          }))
+        }
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !collapsedGroups[section.key] }}
+      >
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+        <Text style={styles.sectionCount}>{section.memberUsers.length}</Text>
+        <Ionicons
+          name={collapsedGroups[section.key] ? "chevron-down" : "chevron-up"}
+          size={18}
+          color={colors.secondaryText}
+        />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.groupChatButton}
+        onPress={() =>
+          navigation.getParent()?.navigate("Messages", {
+            screen: "CreateGroup",
+            params: {
+              initialSelectedUsers: section.memberUsers,
+              startAtName: true,
+            },
+          })
+        }
+        disabled={section.memberUsers.length < 2}
+        accessibilityRole="button"
+        accessibilityLabel={t("contacts.startGroupChatFromGroup", { group: section.title })}
+      >
+        <Ionicons
+          name="people-outline"
+          size={20}
+          color={section.memberUsers.length < 2 ? colors.mutedText : colors.primary}
+        />
+      </TouchableOpacity>
     </View>
   );
-
-  const sections = convertToSections();
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -319,17 +389,63 @@ const createStyles = (colors) => StyleSheet.create({
     flex: 1,
   },
   sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: colors.background,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    minHeight: 42,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  sectionTitleButton: {
+    flex: 1,
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "700",
     color: colors.secondaryText,
     textTransform: "uppercase",
+  },
+  sectionCount: {
+    color: colors.mutedText,
+    fontSize: 12,
+  },
+  groupChatButton: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: 8,
+  },
+  headerAction: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchHeaderIcon: {
+    width: 28,
+    height: 28,
+    justifyContent: "center",
+  },
+  addBadge: {
+    position: "absolute",
+    right: -2,
+    top: -2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
   },
   contactItem: {
     borderBottomWidth: 1,
@@ -340,50 +456,6 @@ const createStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     alignItems: "center",
-  },
-  contactAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  avatarText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  contactInfo: {
-    flex: 1,
-  },
-  contactName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.text,
-  },
-  contactUsername: {
-    fontSize: 12,
-    color: colors.mutedText,
-    marginTop: 2,
-  },
-  onlineStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 4,
-    gap: 4,
-  },
-  onlineIndicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#31a24c",
-  },
-  onlineText: {
-    fontSize: 11,
-    color: "#31a24c",
-    fontWeight: "500",
   },
   favoriteButton: {
     padding: 4,

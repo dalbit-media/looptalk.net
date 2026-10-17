@@ -5,40 +5,58 @@ export const getBootstrapStatus = async () => {
   return response.data;
 };
 
-export const register = async (
-  email,
-  phoneNumber,
-  password,
-  invitationCode
-) => {
+export const getCredentialParameters = async (identifier) => {
+  const response = await api.post("/auth/credential-parameters", { identifier });
+  return response.data;
+};
+
+export const register = async (identifier, credentialSalt, publicKey, vault, invitationCode, displayName) => {
   const response = await api.post("/auth/register", {
-    email,
-    phoneNumber,
-    password,
-    invitationCode,
-  });
-  return response.data;
-};
-
-export const login = async (identifier, password) => {
-  const response = await api.post("/auth/login", {
     identifier,
-    password,
+    credentialSalt,
+    publicKey,
+    vault,
+    invitationCode,
+    ...(displayName === undefined ? {} : { displayName }),
   });
   return response.data;
 };
 
-export const socialAuth = async (
-  provider,
-  idToken,
-  invitationCode,
-  displayName
-) => {
-  const response = await api.post("/auth/social", {
-    provider,
-    idToken,
-    invitationCode,
-    displayName,
+export const getChallenge = async (accountId) => {
+  const response = await api.post("/auth/challenge", { accountId });
+  return response.data;
+};
+
+export const login = async (accountId, challengeId, signature) => {
+  const response = await api.post("/auth/login", {
+    accountId,
+    challengeId,
+    signature,
+  });
+  return response.data;
+};
+
+export const legacyLogin = async (identifier, password) => {
+  const response = await api.post("/auth/legacy-login", { identifier, password });
+  return response.data;
+};
+
+export const getLegacyData = async (token) => {
+  const response = await api.get("/auth/legacy-data", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
+
+export const migrateLegacyAccount = async (publicKey, vault, token, identifier, credentialSalt) => {
+  const response = await api.post("/auth/migrate", {
+    identifier,
+    credentialSalt,
+    publicKey,
+    vault,
+    confirmation: "ENCRYPT_AND_REMOVE_LEGACY_PROFILE",
+  }, {
+    headers: { Authorization: `Bearer ${token}` },
   });
   return response.data;
 };
@@ -48,6 +66,13 @@ export const getCurrentUser = async (token) => {
     headers: { Authorization: `Bearer ${token}` },
   });
   return response.data;
+};
+
+export const getInvitationOnboarding = async (token) => {
+  const response = await api.get("/auth/invitation-onboarding", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data.onboarding;
 };
 
 export const registerDeviceToken = async (deviceToken, platform, authToken) => {

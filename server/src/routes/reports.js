@@ -27,8 +27,16 @@ const requireReportAdmin = (req, res, next) => {
 router.post("/", authMiddleware, async (req, res) => {
   try {
     const { reportedUserId, messageId, category, details } = req.body || {};
+    if (details) return require("../utils/privateAccounts").upgradeRequired(res);
+    const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
+    if (owner?.authPublicKey && req.body.discloseToOperator !== true) {
+      return res.status(400).json({ error: "Explicit operator disclosure consent is required", code: "REPORT_DISCLOSURE_REQUIRED" });
+    }
     if ((!reportedUserId && !messageId) || !REPORT_CATEGORIES.has(category)) {
       return res.status(400).json({ error: "A report target and valid category are required" });
+    }
+    if ([reportedUserId, messageId].some((id) => id != null && (typeof id !== "string" || !id || id.length > 100))) {
+      return res.status(400).json({ error: "Invalid report target" });
     }
     if (details != null && (typeof details !== "string" || details.trim().length > 1000)) {
       return res.status(400).json({ error: "Report details must be 1000 characters or fewer" });
@@ -36,6 +44,7 @@ router.post("/", authMiddleware, async (req, res) => {
 
     let subjectId = reportedUserId || null;
     let contentSnapshot = null;
+    let legacyMessageId = messageId || null;
     if (messageId) {
       const message = await prisma.message.findFirst({
         where: {
@@ -51,13 +60,26 @@ router.post("/", authMiddleware, async (req, res) => {
           createdAt: true,
         },
       });
-      if (!message) return res.status(404).json({ error: "Message not found" });
-      subjectId = message.senderId;
-      contentSnapshot = JSON.stringify(message);
+      if (message) {
+        subjectId = message.senderId;
+        contentSnapshot = JSON.stringify({ senderId: message.senderId, messageType: message.messageType, createdAt: message.createdAt });
+      } else {
+        const dispatch = await prisma.secureDispatch.findFirst({
+          where: {
+            OR: [{ id: messageId }, { messageId, kind: "message" }],
+            conversation: { participants: { some: { userId: req.userId } } },
+          },
+          select: { id: true, messageId: true, conversationId: true, senderId: true, kind: true, createdAt: true },
+        });
+        if (!dispatch) return res.status(404).json({ error: "Message not found" });
+        subjectId = dispatch.senderId;
+        contentSnapshot = JSON.stringify({ encrypted: true, ...dispatch });
+        legacyMessageId = null;
+      }
     } else {
       const subject = await prisma.user.findUnique({
         where: { id: subjectId },
-        select: { id: true, username: true, displayName: true, bio: true },
+        select: { id: true },
       });
       if (!subject) return res.status(404).json({ error: "User not found" });
       contentSnapshot = JSON.stringify(subject);
@@ -71,7 +93,8 @@ router.post("/", authMiddleware, async (req, res) => {
       where: {
         reporterId: req.userId,
         reportedUserId: subjectId,
-        messageId: messageId || null,
+        messageId: legacyMessageId,
+        ...(messageId && !legacyMessageId ? { contentSnapshot } : {}),
         category,
         createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
       },
@@ -85,7 +108,7 @@ router.post("/", authMiddleware, async (req, res) => {
       data: {
         reporterId: req.userId,
         reportedUserId: subjectId,
-        messageId: messageId || null,
+        messageId: legacyMessageId,
         category,
         details: details?.trim() || null,
         contentSnapshot,
@@ -111,8 +134,8 @@ router.get("/", authMiddleware, requireReportAdmin, async (req, res) => {
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
       include: {
-        reporter: { select: { id: true, username: true, displayName: true } },
-        reportedUser: { select: { id: true, username: true, displayName: true } },
+        reporter: { select: { id: true, username: true, publicUsername: true, publicDisplayName: true, displayName: true } },
+        reportedUser: { select: { id: true, username: true, publicUsername: true, publicDisplayName: true, displayName: true } },
       },
     });
     res.json(reports);

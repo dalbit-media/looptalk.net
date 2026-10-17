@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -16,12 +16,22 @@ model User {
   email           String? @unique
   phoneNumber     String? @unique
   passwordHash    String?
+  authPublicKey   String? @unique
+  authAccountId   String? @unique
+  credentialSalt String?
+  contactLookup  String? @unique
+  encryptedIdentifier String?
+  publicUsername String? @unique
+  publicDisplayName String?
+  encryptedVault  String?
+  vaultRevision   Int @default(0)
   appleId         String? @unique
   googleId        String? @unique
   displayName     String
   profilePicture  String?
   bio             String?
   status          String @default("ACTIVE")
+  lastActiveAt    DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -30,7 +40,9 @@ model User {
   contactedBy     Contact[] @relation("contactedBy")
   conversations   ConversationParticipant[]
   deviceTokens    DeviceToken[]
+  secureDevices   SecureDevice[]
   invitations     Invitation[]
+  acceptedInvitation Invitation? @relation("AcceptedInvitation")
   blocks          Block[]
   blockedBy       Block[] @relation("blockedBy")
   messages        Message[]
@@ -61,9 +73,15 @@ model Contact {
   @@index([groupName])
 }
 
+model WebAppInstallation {
+  installationId String @id
+  createdAt      DateTime @default(now())
+}
+
 model Conversation {
   id              String @id @default(cuid())
   name            String?
+  kind            String @default("CHAT") // CHAT, WELCOME
   isGroupChat     Boolean @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -71,8 +89,10 @@ model Conversation {
 
   participants    ConversationParticipant[]
   messages        Message[]
+  secureDispatches SecureDispatch[]
 
   @@index([createdAt])
+  @@index([kind, lastMessageAt])
 }
 
 model ConversationParticipant {
@@ -105,6 +125,18 @@ model DeviceToken {
   @@index([userId])
 }
 
+// Operational topology only; invitation labels and owner history remain encrypted.
+model PrivateInvitation {
+  code            String @id
+  status          String @default("PENDING")
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  inviterId       String?
+  inviterDisplayName String?
+  acceptedById    String? @unique
+  acceptedAt      DateTime?
+}
+
 model Invitation {
   id              String @id @default(cuid())
   inviterId       String
@@ -113,8 +145,11 @@ model Invitation {
   status          String @default("PENDING")
   expiresAt       DateTime
   createdAt       DateTime @default(now())
+  acceptedAt      DateTime?
+  acceptedById    String? @unique
 
   inviter         User @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  acceptedBy      User? @relation("AcceptedInvitation", fields: [acceptedById], references: [id], onDelete: SetNull)
 
   @@index([inviteeEmail])
   @@index([code])
@@ -138,7 +173,8 @@ model Message {
   conversationId  String
   senderId        String
   clientMessageId String?
-  content         String? @db.Text
+  automaticWelcome Boolean @default(false)
+  content         String?
   messageType     String @default("TEXT") // TEXT, IMAGE, VIDEO, VOICE, DRAWING
   mediaUrl        String?
   thumbnailUrl    String?
@@ -185,8 +221,8 @@ model Report {
   reportedUserId  String?
   messageId       String?
   category        String
-  details         String?  @db.Text
-  contentSnapshot String?  @db.Text
+  details         String?
+  contentSnapshot String?
   status          String   @default("OPEN")
   createdAt       DateTime @default(now())
   reviewedAt      DateTime?
@@ -201,3 +237,50 @@ model Report {
   @@index([status, createdAt])
 }
 
+// Public identity keys only. Device identifiers and keys are immutable.
+model SecureDevice {
+  deviceId  String @id
+  userId    String
+  publicKey String
+  createdAt DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  envelopes SecureEnvelope[]
+
+  @@index([userId])
+}
+
+// Content-free receipts survive queue deletion for replay and operation authorization.
+model SecureDispatch {
+  id             String @id
+  digest         String
+  conversationId String
+  messageId      String
+  kind           String
+  senderId       String
+  senderDeviceId String
+  senderPublicKey String
+  createdAt      DateTime @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  payload        SecurePayload?
+  envelopes      SecureEnvelope[]
+
+  @@index([conversationId, messageId, kind])
+}
+
+model SecurePayload {
+  dispatchId String @id
+  ciphertext Bytes
+  dispatch   SecureDispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+}
+
+model SecureEnvelope {
+  dispatchId String
+  deviceId   String
+  nonce      String
+  wrappedKey String
+  dispatch   SecureDispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  device     SecureDevice @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+
+  @@id([dispatchId, deviceId])
+  @@index([deviceId])
+}

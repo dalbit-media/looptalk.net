@@ -1,10 +1,15 @@
-require("dotenv").config();
+require("./config/load-environment").loadEnvironment();
+const fs = require("node:fs");
 const { validateEnvironment } = require("./config/environment");
-const Sentry = require("@sentry/node");
-const next = require("next");
+const { performance } = require("node:perf_hooks");
+const { createNextHandler } = require("./utils/nextHandler");
+const { createContentSecurityPolicy } = require("./utils/contentSecurityPolicy");
+const { createCorsPolicy } = require("./utils/corsPolicy");
+const { readAppState } = require("./utils/appState");
 
 validateEnvironment();
-Sentry.init({
+const Sentry = process.env.SENTRY_DSN ? require("@sentry/node") : null;
+Sentry?.init({
   dsn: process.env.SENTRY_DSN,
   enabled: Boolean(process.env.SENTRY_DSN),
   release: process.env.RELEASE_VERSION || "looptalk-server@1.0.0",
@@ -18,6 +23,8 @@ const http = require("http");
 const socketIo = require("socket.io");
 const jwt = require("jsonwebtoken");
 const prisma = require("./db/client");
+const { createPresenceService } = require("./utils/presence");
+const { upgradeWelcomeConversations } = require("./utils/welcomeConversation");
 const path = require("path");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
@@ -28,6 +35,7 @@ const {
   closeCallInfrastructure,
   getPendingCalls,
   initializeCallInfrastructure,
+  resumeActiveCall,
   savePendingCalls,
 } = require("./utils/callInfrastructure");
 
@@ -35,40 +43,31 @@ const {
 const app = express();
 const server = http.createServer(app);
 const isDevelopment = process.argv.includes("--dev");
-const nextApp = next({
-  dev: isDevelopment,
-  dir: path.resolve(__dirname, "../.."),
-});
-const handleNextRequest = nextApp.getRequestHandler();
-const PORT = process.env.PORT || 3000;
+const BASE_PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
+const MAX_DEV_PORT_ATTEMPTS = 20;
+const expoWebBuildDirectory = path.resolve(__dirname, "../../mobile/dist");
+const expoWebIndexFile = path.join(expoWebBuildDirectory, "index.html");
+const hasExpoWebBuild = fs.existsSync(expoWebIndexFile);
 const webClientOrigin = "'self'";
+const nextHandler = createNextHandler(() => {
+  console.log("Preparing Next.js website...");
+  return require("next")({
+    dev: isDevelopment,
+    webpack: isDevelopment,
+    dir: path.resolve(__dirname, "../.."),
+  });
+});
 
-const configuredOrigins = process.env.CORS_ORIGIN
-  ?.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean) || [];
-
-// CORS configuration
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin || configuredOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error("Origin is not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
+// Engine.IO and Express must evaluate the same request-aware policy.
+const corsOptions = createCorsPolicy({ isDevelopment });
 
 // Socket.io configuration
+const CALL_DISCONNECT_GRACE_MS = 45000;
 const io = socketIo(server, {
   cors: corsOptions,
   transports: ["websocket", "polling"],
   connectionStateRecovery: {
-    maxDisconnectionDuration: 20000,
+    maxDisconnectionDuration: CALL_DISCONNECT_GRACE_MS,
     skipMiddlewares: false,
   },
 });
@@ -79,6 +78,7 @@ io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error("Unauthorized"));
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.migrationOnly) return next(new Error("Migration required"));
     socket.userId = decoded.id;
     next();
   } catch (error) {
@@ -97,30 +97,18 @@ app.use((req, res, next) => {
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
-    contentSecurityPolicy: {
-      directives: {
-        scriptSrc: ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
-        frameSrc: ["'self'", webClientOrigin],
-      },
-    },
+    contentSecurityPolicy: createContentSecurityPolicy({ isDevelopment, webClientOrigin }),
   })
 );
 app.use((req, res, next) => {
   req.headers["content-security-policy"] = res.getHeader("content-security-policy");
   next();
 });
-app.use((req, res, next) => {
-  const requestOrigin = `${req.protocol}://${req.get("host")}`;
-  cors({
-    ...corsOptions,
-    origin: (origin, callback) => {
-      if (!origin || origin === requestOrigin || configuredOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Origin is not allowed by CORS"));
-    },
-  })(req, res, next);
+app.use(cors(corsOptions));
+const appState = readAppState();
+app.get("/api/app-state", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(appState);
 });
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ limit: "1mb", extended: true }));
@@ -130,6 +118,42 @@ app.use("/uploads", express.static(uploadDirectory, {
   dotfiles: "deny",
   index: false,
 }));
+if (hasExpoWebBuild) {
+  app.use("/app", express.static(expoWebBuildDirectory, {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+    setHeaders: (res, filePath) => {
+      if (path.basename(filePath) === "manifest.webmanifest") {
+        res.setHeader("Cache-Control", "no-cache");
+      }
+    },
+  }));
+  app.use("/_expo", express.static(path.join(expoWebBuildDirectory, "_expo"), {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+  }));
+  app.use("/assets", express.static(path.join(expoWebBuildDirectory, "assets"), {
+    immutable: !isDevelopment,
+    maxAge: isDevelopment ? 0 : "1y",
+    dotfiles: "deny",
+    index: false,
+  }));
+  app.use("/app", (req, res, next) => {
+    if (req.path === "/" || !req.path.includes(".")) {
+      res.sendFile(expoWebIndexFile);
+      return;
+    }
+    next();
+  });
+} else if (!isDevelopment) {
+  console.warn(
+    `Expo web build not found at ${expoWebIndexFile}; /app will fall back to the Next.js browser client.`
+  );
+}
 
 // Rate limiting (scoped to the API only, so page loads/static assets are unaffected)
 const limiter = rateLimit({
@@ -153,13 +177,13 @@ const authLimiter = rateLimit({
 // Store every active device connection for accurate presence and preserve
 // call ownership briefly while Socket.IO recovers from a network handoff.
 const userSockets = new Map();
+const presence = createPresenceService({ io, prisma });
 const activeCallsBySocket = new Map();
 const callDisconnectTimers = new Map();
-const CALL_DISCONNECT_GRACE_MS = 20000;
 const clearActiveCall = (callId) => {
   activeCallsBySocket.forEach((calls, socketId) => {
     calls.delete(callId);
-    if (calls.size === 0 && !callDisconnectTimers.has(socketId)) {
+    if (calls.size === 0 && !callDisconnectTimers.has(socketId) && !io.sockets.sockets.has(socketId)) {
       activeCallsBySocket.delete(socketId);
     }
   });
@@ -167,11 +191,14 @@ const clearActiveCall = (callId) => {
 
 app.use("/api/auth", authLimiter, require("./routes/auth"));
 app.use("/api/messages", require("./routes/messages"));
+app.use("/api/secure", require("./routes/secure"));
 app.use("/api/conversations", require("./routes/conversations"));
 app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/media", require("./routes/media"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/invitations", require("./routes/invitations"));
+app.use("/api/admin", require("./routes/admin"));
+app.use("/api/telemetry", require("./routes/telemetry"));
 app.use("/api/link-preview", require("./routes/linkPreview"));
 app.use("/api/calls", require("./routes/calls"));
 app.use("/api/reports", require("./routes/reports"));
@@ -190,12 +217,13 @@ app.get("/ready", async (req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     res.set("Cache-Control", "no-store").json({ status: "ready" });
   } catch (error) {
-    Sentry.captureException(error, { tags: { check: "database-readiness" } });
+    Sentry?.captureException(error, { tags: { check: "database-readiness" } });
+    console.error("Database readiness check failed:", error);
     res.status(503).set("Cache-Control", "no-store").json({ status: "unavailable" });
   }
 });
 
-app.use((req, res) => handleNextRequest(req, res));
+app.use((req, res) => nextHandler.handleRequest(req, res));
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
@@ -204,6 +232,8 @@ io.on("connection", (socket) => {
   socketIds.add(socket.id);
   userSockets.set(socket.userId, socketIds);
   socket.join(`user_${socket.userId}`);
+  presence.connect(socket)
+    .catch((error) => console.error("Unable to initialize user presence:", error));
 
   getPendingCalls(socket.userId)
     .then((calls) => calls.forEach((call) => socket.emit("call:incoming", call)))
@@ -242,7 +272,7 @@ io.on("connection", (socket) => {
     }
     socket.to(`conversation_${data.conversationId}`).emit("user_typing", {
       userId: socket.userId,
-      userName: typeof data.userName === "string" ? data.userName.slice(0, 100) : "",
+      userName: socket.userId,
     });
   });
 
@@ -284,10 +314,8 @@ io.on("connection", (socket) => {
 
   // User status
   socket.on("user_status", (data) => {
-    io.emit("user_status_changed", {
-      userId: socket.userId,
-      status: data.status,
-    });
+    presence.setActive(socket, data?.status)
+      .catch((error) => console.error("Unable to update user presence:", error));
   });
 
   // --- WebRTC call signaling ---
@@ -359,12 +387,16 @@ io.on("connection", (socket) => {
     }
     const otherIds = await getOtherParticipantIds(conversationId, socket.userId);
     if (!otherIds) return;
-    activeCalls.set(callId, { conversationId, otherIds });
+    activeCallsBySocket.set(socket.id, activeCalls);
+    activeCalls.set(callId, { ownerId: socket.userId, conversationId, otherIds });
     const caller = await prisma.user.findUnique({
       where: { id: socket.userId },
-      select: { id: true, username: true, displayName: true, profilePicture: true },
+      select: { id: true },
     });
-    const pendingCall = { callId, conversationId, callType, caller, sdp };
+    const pendingCall = {
+      callId, conversationId, callType, caller, sdp,
+      expiresAt: Date.now() + 45000,
+    };
     await savePendingCalls(otherIds, pendingCall);
     otherIds.forEach((userId) => {
       io.to(`user_${userId}`).emit("call:incoming", pendingCall);
@@ -384,7 +416,8 @@ io.on("connection", (socket) => {
     const otherIds = await getOtherParticipantIds(conversationId, socket.userId);
     if (!otherIds) return;
     await clearPendingCall([socket.userId, ...otherIds], callId);
-    activeCalls.set(callId, { conversationId, otherIds });
+    activeCallsBySocket.set(socket.id, activeCalls);
+    activeCalls.set(callId, { ownerId: socket.userId, conversationId, otherIds });
     socket.to(`user_${socket.userId}`).emit("call:ended", {
       callId,
       conversationId,
@@ -400,7 +433,8 @@ io.on("connection", (socket) => {
     if (!validateCallIds(conversationId, callId) || !isValidSdp(sdp, "offer")) return;
     const otherIds = await getOtherParticipantIds(conversationId, socket.userId);
     if (!otherIds) return;
-    activeCalls.set(callId, { conversationId, otherIds });
+    activeCallsBySocket.set(socket.id, activeCalls);
+    activeCalls.set(callId, { ownerId: socket.userId, conversationId, otherIds });
     otherIds.forEach((userId) => {
       io.to(`user_${userId}`).emit("call:offer", { callId, conversationId, sdp });
     });
@@ -417,6 +451,17 @@ io.on("connection", (socket) => {
         conversationId,
         candidate,
       });
+    });
+  });
+
+  onCallEvent("call:resume", async (data) => {
+    const { conversationId, callId } = data || {};
+    if (!validateCallIds(conversationId, callId)) return;
+    const otherIds = await getOtherParticipantIds(conversationId, socket.userId);
+    if (!otherIds) return;
+    resumeActiveCall({
+      activeCallsBySocket, callDisconnectTimers, socketId: socket.id,
+      userId: socket.userId, callId, conversationId, otherIds,
     });
   });
 
@@ -459,8 +504,9 @@ io.on("connection", (socket) => {
     connectedSockets?.delete(socket.id);
     if (!connectedSockets?.size) {
       userSockets.delete(socket.userId);
-      io.emit("user_offline", { userId: socket.userId });
     }
+    presence.disconnect(socket)
+      .catch((error) => console.error("Unable to clear user presence:", error));
 
     if (activeCalls.size > 0) {
       const timer = setTimeout(() => {
@@ -494,7 +540,7 @@ io.on("connection", (socket) => {
 
 // Global error handling
 app.use((err, req, res, next) => {
-  Sentry.captureException(err, {
+  Sentry?.captureException(err, {
     tags: { requestId: req.requestId },
     extra: { method: req.method, path: req.path },
   });
@@ -515,16 +561,70 @@ app.use((err, req, res, next) => {
 
 // Start server only after the distributed adapter is ready. This prevents an
 // instance from accepting sockets that other instances cannot yet reach.
+const listenOnPort = (port) => new Promise((resolve, reject) => {
+  const onError = (error) => {
+    server.off("listening", onListening);
+    reject(error);
+  };
+  const onListening = () => {
+    server.off("error", onError);
+    resolve(port);
+  };
+
+  server.once("error", onError);
+  server.once("listening", onListening);
+  server.listen(port, process.env.HOST || undefined);
+});
+
+const startHttpServer = async () => {
+  let port = BASE_PORT;
+  let attempts = 0;
+
+  while (true) {
+    try {
+      await listenOnPort(port);
+      if (port !== BASE_PORT) {
+        console.warn(
+          `Port ${BASE_PORT} was busy; LoopTalk started on port ${port} instead.`
+        );
+      }
+      return port;
+    } catch (error) {
+      const canTryNextPort =
+        isDevelopment &&
+        error?.code === "EADDRINUSE" &&
+        attempts < MAX_DEV_PORT_ATTEMPTS;
+      if (!canTryNextPort) {
+        throw error;
+      }
+      attempts += 1;
+      port += 1;
+    }
+  }
+};
+
 const startServer = async () => {
-  await nextApp.prepare();
+  // API and Socket.IO readiness do not depend on development page compilation.
+  if (!isDevelopment) await nextHandler.prepare();
+  await upgradeWelcomeConversations(prisma);
   await initializeCallInfrastructure(io);
-  server.listen(PORT, () => {
-    console.log(`🚀 LoopTalk server running on port ${PORT}`);
-  });
+  const port = await startHttpServer();
+  console.log(`🚀 LoopTalk server running on port ${port} (ready in ${(performance.now() / 1000).toFixed(2)}s)`);
+  if (isDevelopment) {
+    console.log(hasExpoWebBuild
+      ? "Exported messenger ready at /app/; Next.js website prepares on its first request."
+      : "API and Socket.IO ready; Next.js website and /app/ compile on their first request.");
+  }
 };
 
 startServer().catch((error) => {
-  Sentry.captureException(error);
+  Sentry?.captureException(error);
+  if (error?.code === "EADDRINUSE") {
+    console.error(
+      `Port ${BASE_PORT} is already in use. Another LoopTalk server may already be running.`
+    );
+    process.exit(0);
+  }
   console.error("Unable to start server:", error);
   process.exit(1);
 });
@@ -549,7 +649,10 @@ const shutdown = (signal) => {
       await closeCallInfrastructure();
       await prisma.$disconnect();
     } finally {
-      process.exit(error ? 1 : 0);
+      if (error) {
+        console.error("Error during server close:", error);
+      }
+      process.exit(0);
     }
   });
 };

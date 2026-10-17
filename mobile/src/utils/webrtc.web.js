@@ -7,7 +7,7 @@ export const MediaStream = browser.MediaStream;
 export const RTCView = null;
 
 export const isCallingSupported = Boolean(
-  RTCPeerConnection && browser.navigator?.mediaDevices?.getUserMedia
+	RTCPeerConnection && browser.navigator?.mediaDevices?.getUserMedia
 );
 export const isVideoCallingSupported = isCallingSupported;
 

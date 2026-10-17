@@ -54,7 +54,7 @@ const translationKeys = new Set([
 const translationContext = { window: {} };
 require("node:vm").runInNewContext(translationSource, translationContext);
 const translations = translationContext.window.LoopTalkSiteI18n;
-["en", "ko", "ja"].forEach((language) => {
+["ko"].forEach((language) => {
   const missingKeys = [...translationKeys].filter((key) => !translations[language]?.[key]);
   if (missingKeys.length) {
     throw new Error(`${language} site translations missing: ${missingKeys.join(", ")}`);
@@ -77,7 +77,7 @@ run(process.execPath, ["--test"]);
 const prismaCli = require.resolve("prisma/build/index.js");
 run(process.execPath, [prismaCli, "validate", "--schema", "prisma/schema.prisma"], {
   ...process.env,
-  DATABASE_URL: "mysql://user:password@localhost:3306/looptalk",
+  DATABASE_URL: "file:./check.db",
 });
 
 console.log(

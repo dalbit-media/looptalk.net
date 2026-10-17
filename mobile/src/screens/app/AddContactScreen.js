@@ -1,13 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, View } from "react-native";
+import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as InvitationsAPI from "../../api/invitations";
 import * as MessageAPI from "../../api/messages";
@@ -22,7 +15,7 @@ import { usePreferencesStore } from "../../store/preferencesStore";
 import { copyText } from "../../utils/clipboard";
 import { showAlert } from "../../utils/showAlert";
 
-export const AddContactScreen = ({ navigation }) => {
+export const AddContactScreen = ({ navigation, route }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
@@ -31,7 +24,7 @@ export const AddContactScreen = ({ navigation }) => {
   const addContact = useContactStore((state) => state.addContact);
   const upsertConversation = useMessageStore((state) => state.upsertConversation);
   const language = usePreferencesStore((state) => state.language);
-  const [mode, setMode] = useState("invite");
+  const [mode, setMode] = useState(route.params?.mode === "search" ? "search" : "invite");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -45,7 +38,25 @@ export const AddContactScreen = ({ navigation }) => {
     recentConnections: 0,
   });
   const [copyStatus, setCopyStatus] = useState("idle");
+  const scrollViewRef = useRef(null);
   const copyStatusTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    setMode(route.params?.mode === "search" ? "search" : "invite");
+    setQuery("");
+  }, [route.params?.mode]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      title: mode === "search"
+        ? t("contacts.searchForUser")
+        : t("navigation.createInvitationLink"),
+    });
+  }, [mode, navigation, t]);
+
+  useEffect(() => {
+    if (invitation) scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  }, [invitation]);
 
   useEffect(() => {
     let active = true;
@@ -176,6 +187,7 @@ export const AddContactScreen = ({ navigation }) => {
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.container}
       contentContainerStyle={[styles.content, mode === "search" && styles.searchContent]}
       showsVerticalScrollIndicator={false}
@@ -204,7 +216,60 @@ export const AddContactScreen = ({ navigation }) => {
             <Ionicons name="link" size={34} color={colors.primary} />
           </View>
           <Text style={styles.title}>{t("contacts.createInvitationLink")}</Text>
-          <Text style={styles.description}>{t("contacts.invitationLinkDescription")}</Text>
+          <Text style={styles.description}>{t("contacts.invitationNameDisclosure")}</Text>
+          <Text style={styles.description}>{t("contacts.invitationWelcomeDisclosure")}</Text>
+
+          {invitation && (
+            <>
+              <View style={styles.linkPanel}>
+                <Text style={styles.resultTitle}>{t("contacts.invitationReady")}</Text>
+                <Text style={styles.code}>{invitation.code}</Text>
+                <Text style={styles.link} numberOfLines={2} selectable>
+                  {invitation.invitationUrl}
+                </Text>
+                <Text style={styles.expiry}>{t("contacts.invitationExpires")}</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.copyButton,
+                    copyStatus === "copied" && styles.copyButtonCopied,
+                    copyStatus === "error" && styles.copyButtonError,
+                  ]}
+                  onPress={() => copyInvitation(invitation)}
+                >
+                  <Ionicons
+                    name={copyStatus === "copied"
+                      ? "checkmark-circle"
+                      : copyStatus === "error" ? "alert-circle" : "copy-outline"}
+                    size={18}
+                    color={copyStatus === "copied"
+                      ? "#247A3E"
+                      : copyStatus === "error" ? colors.danger : colors.primary}
+                  />
+                  <Text style={[
+                    styles.copyButtonText,
+                    copyStatus === "copied" && styles.copyButtonTextCopied,
+                    copyStatus === "error" && styles.copyButtonTextError,
+                  ]}>
+                    {t(copyStatus === "copied"
+                      ? "contacts.copied"
+                      : copyStatus === "error"
+                        ? "contacts.copyFailed"
+                        : "contacts.copyInvitationLink")}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => {
+                  setInvitation(null);
+                  setCopyStatus("idle");
+                }}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+                <Text style={styles.secondaryButtonText}>{t("contacts.createAnotherLink")}</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
       <View style={styles.statsSection}>
         <Text style={styles.statsTitle}>{t("contacts.invitationStatsDescription")}</Text>
@@ -249,58 +314,6 @@ export const AddContactScreen = ({ navigation }) => {
         )}
       </TouchableOpacity>
 
-      {invitation && (
-        <View style={styles.linkPanel}>
-          <Text style={styles.resultTitle}>{t("contacts.invitationReady")}</Text>
-          <Text style={styles.code}>{invitation.code}</Text>
-          <Text style={styles.link} numberOfLines={2} selectable>
-            {invitation.invitationUrl}
-          </Text>
-          <Text style={styles.expiry}>{t("contacts.invitationExpires")}</Text>
-          <TouchableOpacity
-            style={[
-              styles.copyButton,
-              copyStatus === "copied" && styles.copyButtonCopied,
-              copyStatus === "error" && styles.copyButtonError,
-            ]}
-            onPress={() => copyInvitation(invitation)}
-          >
-            <Ionicons
-              name={copyStatus === "copied"
-                ? "checkmark-circle"
-                : copyStatus === "error" ? "alert-circle" : "copy-outline"}
-              size={18}
-              color={copyStatus === "copied"
-                ? "#247A3E"
-                : copyStatus === "error" ? colors.danger : colors.primary}
-            />
-            <Text style={[
-              styles.copyButtonText,
-              copyStatus === "copied" && styles.copyButtonTextCopied,
-              copyStatus === "error" && styles.copyButtonTextError,
-            ]}>
-              {t(copyStatus === "copied"
-                ? "contacts.copied"
-                : copyStatus === "error"
-                  ? "contacts.copyFailed"
-                  : "contacts.copyInvitationLink")}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {invitation && (
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => {
-            setInvitation(null);
-            setCopyStatus("idle");
-          }}
-        >
-          <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
-          <Text style={styles.secondaryButtonText}>{t("contacts.createAnotherLink")}</Text>
-        </TouchableOpacity>
-      )}
         </>
       ) : (
         <View style={styles.searchSection}>
@@ -309,7 +322,7 @@ export const AddContactScreen = ({ navigation }) => {
           <SearchBar
             value={query}
             onChangeText={setQuery}
-            placeholder={t("contacts.searchPlaceholder")}
+            placeholder={t("contacts.publicSearchPlaceholder")}
             colors={colors}
             autoFocus
             rightAccessory={searching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
@@ -324,7 +337,7 @@ export const AddContactScreen = ({ navigation }) => {
                 <View key={user.id} style={styles.userRow}>
                   <TouchableOpacity
                     style={styles.userIdentity}
-                    onPress={() => navigation.navigate("Profile", { userId: user.id })}
+                    onPress={() => navigation.navigate("Profile", { userId: user.id, name: user.displayName })}
                   >
                     <View style={styles.userAvatar}>
                       <Text style={styles.userAvatarText}>{user.displayName?.[0]?.toUpperCase() || "?"}</Text>
@@ -363,9 +376,10 @@ const createStyles = (colors) => StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    padding: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 20,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   searchContent: { justifyContent: "flex-start", alignItems: "stretch" },
   modeControl: {

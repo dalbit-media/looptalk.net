@@ -10,6 +10,30 @@ const { uploadDirectory } = require("../utils/uploadStorage");
 
 const router = express.Router();
 
+// Retain history and the special support thread, but never accept private
+// plaintext writes (including disk-backed multipart uploads) from old clients.
+router.use("/:conversationId", authMiddleware, async (req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: req.params.conversationId },
+      select: {
+        kind: true,
+        participants: { where: { user: { authPublicKey: { not: null } } }, select: { id: true } },
+      },
+    });
+    const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
+    if (conversation?.kind === "WELCOME" && !owner?.authPublicKey && !conversation.participants.length) return next();
+    return res.status(426).json({
+      error: "Private messages require end-to-end encryption. Upgrade your client and use /api/secure.",
+      code: "E2EE_REQUIRED",
+    });
+  } catch (error) {
+    console.error("legacy_message_write_guard_failed", { requestId: req.requestId, code: error.code || "INTERNAL_ERROR" });
+    res.status(500).json({ error: "Failed to authorize message write" });
+  }
+});
+
 const MEDIA_TYPES = new Set(["IMAGE", "VIDEO", "VOICE", "DRAWING", "FILE"]);
 const MAX_DURATION_MS = 60 * 60 * 1000;
 const DEFAULT_PAGE_SIZE = 50;
@@ -18,8 +42,8 @@ const MAX_PAGE_SIZE = 100;
 const SENDER_SELECT = {
   id: true,
   username: true,
-  displayName: true,
-  profilePicture: true,
+  publicUsername: true,
+  publicDisplayName: true,
 };
 
 const MESSAGE_INCLUDE = {
@@ -127,6 +151,7 @@ const serializeMessage = (message) => ({
   sender: message.sender,
   content: message.content,
   messageType: message.messageType,
+  automaticWelcome: message.automaticWelcome,
   mediaUrl: message.mediaUrl,
   thumbnailUrl: message.thumbnailUrl,
   duration: message.duration,
@@ -195,15 +220,27 @@ router.get("/:conversationId", authMiddleware, async (req, res) => {
 router.post("/:conversationId/text", authMiddleware, async (req, res) => {
   try {
     const { conversationId } = req.params;
+    const startedAt = Date.now();
+    const clientMessageId = req.body.clientMessageId?.trim() || null;
+    const reject = (status, error, reason) => {
+      console.warn("Message send rejected:", {
+        requestId: req.requestId,
+        userId: req.userId,
+        conversationId,
+        clientMessageId,
+        status,
+        reason,
+      });
+      return res.status(status).json({ error });
+    };
     if (
       typeof req.body.content !== "string" ||
       (req.body.replyToId != null && typeof req.body.replyToId !== "string") ||
       (req.body.clientMessageId != null && typeof req.body.clientMessageId !== "string")
     ) {
-      return res.status(400).json({ error: "Invalid message content" });
+      return reject(400, "Invalid message content", "invalid_payload_type");
     }
     const content = req.body.content.trim();
-    const clientMessageId = req.body.clientMessageId?.trim() || null;
 
     if (
       !content ||
@@ -211,15 +248,19 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
       req.body.replyToId?.length > 100 ||
       (clientMessageId && !/^[a-zA-Z0-9_-]{16,100}$/.test(clientMessageId))
     ) {
-      return res.status(400).json({ error: "Invalid message content" });
+      return reject(400, "Invalid message content", "invalid_payload_value");
     }
 
     const participantIds = await getParticipantIds(conversationId, req.userId);
     if (!participantIds) {
-      return res.status(403).json({ error: "Not authorized" });
+      return reject(403, "Not authorized", "not_participant");
     }
     if (await isDirectConversationBlocked(conversationId, req.userId, participantIds)) {
-      return res.status(403).json({ error: "Direct communication is unavailable" });
+      return reject(
+        403,
+        "Direct communication is unavailable",
+        "direct_conversation_blocked"
+      );
     }
 
     if (clientMessageId) {
@@ -235,8 +276,16 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
           existing.content !== content ||
           existing.replyToId !== (req.body.replyToId || null)
         ) {
-          return res.status(409).json({ error: "Message identifier conflict" });
+          return reject(409, "Message identifier conflict", "client_message_id_conflict");
         }
+        console.info("Message send deduplicated:", {
+          requestId: req.requestId,
+          userId: req.userId,
+          conversationId,
+          clientMessageId,
+          messageId: existing.id,
+          durationMs: Date.now() - startedAt,
+        });
         return res.json(serializeMessage(existing));
       }
     }
@@ -247,7 +296,7 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
         select: { id: true },
       });
       if (!replyTarget) {
-        return res.status(400).json({ error: "Reply target not found" });
+        return reject(400, "Reply target not found", "reply_target_not_found");
       }
     }
 
@@ -278,13 +327,21 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
         existing.content !== content ||
         existing.replyToId !== (req.body.replyToId || null)
       ) {
-        return res.status(409).json({ error: "Message identifier conflict" });
+        return reject(409, "Message identifier conflict", "client_message_id_conflict");
       }
+      console.info("Message send deduplicated after conflict:", {
+        requestId: req.requestId,
+        userId: req.userId,
+        conversationId,
+        clientMessageId,
+        messageId: existing.id,
+        durationMs: Date.now() - startedAt,
+      });
       return res.json(serializeMessage(existing));
     }
 
     if (!created.sender) {
-      return res.status(401).json({ error: "User no longer exists" });
+      return reject(401, "User no longer exists", "sender_missing");
     }
 
     await touchConversation(conversationId, created.createdAt);
@@ -294,6 +351,14 @@ router.post("/:conversationId/text", authMiddleware, async (req, res) => {
     notifyInactiveParticipants(req, participantIds, message).catch((error) =>
       console.error("Unable to send message push:", error)
     );
+    console.info("Message send accepted:", {
+      requestId: req.requestId,
+      userId: req.userId,
+      conversationId,
+      clientMessageId,
+      messageId: message.id,
+      durationMs: Date.now() - startedAt,
+    });
     res.status(201).json(message);
   } catch (error) {
     console.error("Error sending message:", error);
@@ -545,13 +610,16 @@ router.delete("/:conversationId/:messageId", authMiddleware, async (req, res) =>
 
     const existing = await prisma.message.findFirst({
       where: { id: messageId, conversationId },
-      select: { id: true, senderId: true, deletedAt: true, mediaUrl: true, thumbnailUrl: true },
+      select: { id: true, senderId: true, messageType: true, deletedAt: true, mediaUrl: true, thumbnailUrl: true },
     });
     if (!existing) {
       return res.status(404).json({ error: "Message not found" });
     }
     if (existing.senderId !== req.userId) {
       return res.status(403).json({ error: "You can only delete your own messages" });
+    }
+    if (existing.messageType === "SYSTEM") {
+      return res.status(400).json({ error: "System messages cannot be deleted" });
     }
     if (existing.deletedAt) {
       return res.json({ success: true });

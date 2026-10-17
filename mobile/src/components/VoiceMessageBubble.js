@@ -1,5 +1,6 @@
 import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, StyleSheet, TouchableOpacity } from "react-native";
+import { AppText as Text } from "./AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useAppTheme } from "../hooks/useAppTheme";
@@ -39,7 +40,7 @@ export const VoiceMessageBubble = ({ uri, duration, isOwn }) => {
         <Ionicons
           name={status.playing ? "pause" : "play"}
           size={18}
-          color={isOwn ? "#fff" : colors.primary}
+          color={isOwn ? colors.onSentBubble : colors.primary}
         />
       </TouchableOpacity>
       <View style={styles.track}>
@@ -75,11 +76,11 @@ const createStyles = (colors, isOwn) =>
     },
     trackFill: {
       height: "100%",
-      backgroundColor: isOwn ? "#fff" : colors.primary,
+      backgroundColor: isOwn ? colors.onSentBubble : colors.primary,
     },
     durationText: {
       fontSize: 11,
-      color: isOwn ? "#fff" : colors.secondaryText,
+      color: isOwn ? colors.onSentBubble : colors.secondaryText,
       minWidth: 34,
     },
   });

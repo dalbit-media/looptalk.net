@@ -1,29 +1,31 @@
 import Script from "next/script";
-import { headers } from "next/headers";
 import "./site.css";
 
-const themeScript = `try{const t=localStorage.getItem("themeMode");document.documentElement.dataset.theme=t==="light"||t==="dark"?t:(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{}`;
-
 export const metadata = {
-  icons: { icon: "/site/app-icon.svg" },
+  icons: {
+    icon: [
+      { url: "/site/app-icon.svg", type: "image/svg+xml" },
+      { url: "/site/app-icon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+    ],
+    apple: "/site/app-icon-180.png",
+  },
   metadataBase: new URL(process.env.PUBLIC_URL || "http://localhost:3000"),
 };
 
 export const viewport = { themeColor: "#f4f1e8" };
 export const dynamic = "force-dynamic";
 
-export default async function RootLayout({ children }) {
-  const nonce = (await headers()).get("x-nonce") || undefined;
-
+export default function RootLayout({ children }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ko" suppressHydrationWarning>
+      <head>
+        <script src="/site/theme.js" />
+      </head>
       <body>
-        <Script id="looptalk-theme" nonce={nonce} strategy="beforeInteractive">
-          {themeScript}
-        </Script>
-        <Script src="/site/site-i18n.js" nonce={nonce} strategy="beforeInteractive" />
+        <Script src="/site/site-i18n.js" strategy="afterInteractive" />
         {children}
-        <Script src="/site/site.js" nonce={nonce} strategy="afterInteractive" />
+        <Script src="/site/site.js" strategy="afterInteractive" />
       </body>
     </html>
   );

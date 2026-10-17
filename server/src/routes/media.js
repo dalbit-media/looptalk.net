@@ -8,6 +8,7 @@ const fs = require("fs").promises;
 const { uploadDirectory } = require("../utils/uploadStorage");
 
 const router = express.Router();
+router.use(authMiddleware, (req, res) => require("../utils/privateAccounts").upgradeRequired(res));
 
 const IMAGE_MIMETYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
@@ -62,4 +63,3 @@ router.post(
 );
 
 module.exports = router;
-

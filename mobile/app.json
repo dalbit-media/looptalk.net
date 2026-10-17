@@ -10,6 +10,9 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.looptalk.app",
@@ -23,7 +26,6 @@
           "audio",
           "remote-notification"
         ],
-        "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "LoopTalk needs camera access to take photos, record videos, and make video calls.",
         "NSMicrophoneUsageDescription": "LoopTalk needs microphone access to record voice messages and make calls.",
         "NSPhotoLibraryUsageDescription": "LoopTalk needs photo library access to share photos and videos.",
@@ -32,6 +34,7 @@
     },
     "android": {
       "package": "com.looptalk.app",
+      "allowBackup": false,
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -47,7 +50,8 @@
         "WAKE_LOCK",
         "READ_PHONE_STATE",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_MICROPHONE"
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "FOREGROUND_SERVICE_MEDIA_PROJECTION"
       ],
       "intentFilters": [
         {
@@ -82,8 +86,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/adaptive-icon.png",
-          "color": "#087BEF",
+          "icon": "./assets/notification-icon.png",
+          "color": "#49CBA6",
           "defaultChannel": "incoming-calls",
           "enableBackgroundRemoteNotifications": true
         }
@@ -113,6 +117,7 @@
           "microphonePermission": "LoopTalk needs microphone access to make calls."
         }
       ],
+      "./plugins/withScreenSharing",
       "expo-secure-store",
       "@sentry/react-native/expo"
     ],

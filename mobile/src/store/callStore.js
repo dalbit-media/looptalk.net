@@ -6,12 +6,15 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
   RTCIceCandidate,
+  MediaStream,
   mediaDevices,
   isCallingSupported,
   isVideoCallingSupported,
   isScreenSharingSupported,
 } from "../utils/webrtc";
 import InCallManager from "../utils/inCallManager";
+import { requestCallPermissions } from "../utils/requestCallPermissions";
+import { summarizeCallStats, videoEncodingProfile } from "../utils/callQuality";
 import {
   answerNativeCall,
   displayNativeIncomingCall,
@@ -23,20 +26,34 @@ import {
 } from "../utils/nativeCalling";
 
 const FALLBACK_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const PEER_CONNECTION_OPTIONS = {
+  bundlePolicy: "max-bundle",
+  rtcpMuxPolicy: "require",
+  iceCandidatePoolSize: 0,
+};
+const copyIceServers = (servers) => servers.map((server) => ({
+  ...server,
+  urls: Array.isArray(server.urls) ? [...server.urls] : server.urls,
+}));
 let cachedIceConfiguration = null;
+let callEpoch = 0;
+const senderParameterChains = new WeakMap();
 
 const getIceServers = async () => {
   const now = Math.floor(Date.now() / 1000);
-  if (cachedIceConfiguration?.expiresAt > now + 60) {
-    return cachedIceConfiguration.iceServers;
-  }
   const token = useAuthStore.getState().token;
   if (!token) return FALLBACK_ICE_SERVERS;
+  if (cachedIceConfiguration?.token === token && cachedIceConfiguration.expiresAt > now + 60) {
+    return cachedIceConfiguration.iceServers;
+  }
   try {
     const { data } = await api.get("/calls/ice-servers", {
       headers: { Authorization: `Bearer ${token}` },
     });
-    cachedIceConfiguration = data;
+    if (!Array.isArray(data.iceServers) || !data.iceServers.length) {
+      throw new Error("The ICE configuration contains no servers");
+    }
+    cachedIceConfiguration = { ...data, token };
     return data.iceServers;
   } catch (error) {
     console.error("Unable to load TURN credentials:", error);
@@ -53,9 +70,6 @@ const CALL_EVENTS = [
   "call:ended",
 ];
 
-// Real (not just "on/off") audio processing and a real target resolution/
-// frame rate are what separate a call that merely works from one that
-// sounds and looks like FaceTime.
 const AUDIO_CONSTRAINTS = {
   echoCancellation: { ideal: true },
   noiseSuppression: { ideal: true },
@@ -70,8 +84,8 @@ const buildMediaConstraints = (callType, facingMode = "user") => ({
     callType === "video"
       ? {
           facingMode,
-          width: { min: 640, ideal: 1280, max: 1920 },
-          height: { min: 480, ideal: 720, max: 1080 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
           frameRate: { ideal: 30, max: 30 },
         }
       : false,
@@ -79,117 +93,69 @@ const buildMediaConstraints = (callType, facingMode = "user") => ({
 
 const captureLocalMedia = async (callType, facingMode = "user") => {
   try {
-    return await mediaDevices.getUserMedia(buildMediaConstraints(callType, facingMode));
+    await requestCallPermissions(callType);
+    try {
+      return await mediaDevices.getUserMedia(buildMediaConstraints(callType, facingMode));
+    } catch (error) {
+      if (!["OverconstrainedError", "ConstraintNotSatisfiedError", "TypeError"].includes(error?.name)) {
+        throw error;
+      }
+      return await mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: callType === "video" ? { facingMode } : false });
+    }
   } catch (error) {
-    const constraintFailure = [
-      "OverconstrainedError",
-      "ConstraintNotSatisfiedError",
-      "TypeError",
-    ].includes(error?.name);
-    if (!constraintFailure) throw error;
-    return mediaDevices.getUserMedia({
-      audio: true,
-      video: callType === "video" ? { facingMode } : false,
+    if (callType !== "video") throw error;
+    console.warn("Camera capture unavailable; joining with audio only:", error);
+    await requestCallPermissions("audio");
+    return mediaDevices.getUserMedia(buildMediaConstraints("audio"));
+  }
+};
+
+const replaceVideoTrack = async (sender, track) => {
+  await sender.replaceTrack(track);
+  // Native WebRTC can resolve a failed replacement without changing track.
+  if (sender.track !== track) throw new Error("Unable to replace outgoing video");
+};
+
+const candidateMatchesDescription = (candidate, description) => {
+  const fragment = candidate.usernameFragment || candidate.candidate?.match(/\bufrag (\S+)/)?.[1];
+  return !fragment || !description?.sdp || description.sdp.split(/\r?\n/).includes(`a=ice-ufrag:${fragment}`);
+};
+
+const waitForCallSignaling = async (getSocket, timeoutMs = 15000) => {
+  const deadline = Date.now() + timeoutMs;
+  let socket = getSocket();
+
+  while (!socket && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    socket = getSocket();
+  }
+
+  if (socket?.connected) return;
+  if (socket) {
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        socket.off("connect", finish);
+        resolve();
+      };
+      const timeout = setTimeout(finish, Math.max(0, deadline - Date.now()));
+      socket.on("connect", finish);
+      if (socket.connected) finish();
     });
   }
-};
 
-// --- SDP tuning applied to every locally-created offer/answer -------------
-// Each peer's own local description controls how *it* encodes, so this is
-// applied on both the caller's offer and the callee's answer (and again on
-// ICE-restart renegotiation) to keep both directions optimized.
-
-// H.264 has hardware encode/decode on effectively all iOS and modern Android
-// devices, keeping CPU/battery use down and framerate stable — the same
-// tradeoff FaceTime makes over a software VP8 fallback.
-const preferCodecInSdp = (sdp, kind, codecName) => {
-  const lines = sdp.split("\r\n");
-  const mLineIndex = lines.findIndex((line) => line.startsWith(`m=${kind}`));
-  if (mLineIndex === -1) return sdp;
-
-  const codecRegex = new RegExp(`^a=rtpmap:(\\d+) ${codecName}/`, "i");
-  const preferredPayloads = lines
-    .filter((line) => codecRegex.test(line))
-    .map((line) => line.match(codecRegex)[1]);
-  if (!preferredPayloads.length) return sdp;
-
-  const mLineTokens = lines[mLineIndex].split(" ");
-  const header = mLineTokens.slice(0, 3);
-  const payloads = mLineTokens.slice(3);
-  const reordered = [
-    ...preferredPayloads.filter((pt) => payloads.includes(pt)),
-    ...payloads.filter((pt) => !preferredPayloads.includes(pt)),
-  ];
-  lines[mLineIndex] = [...header, ...reordered].join(" ");
-  return lines.join("\r\n");
-};
-
-// Opus in-band FEC (packet-loss resilience without retransmission) and DTX
-// (near-zero bandwidth while silent) keep calls clear on lossy Wi-Fi/cellular
-// instead of just capping a bitrate.
-const tuneOpusInSdp = (sdp) => {
-  const lines = sdp.split("\r\n");
-  const rtpmapIndex = lines.findIndex((line) => /^a=rtpmap:\d+ opus\/48000/i.test(line));
-  if (rtpmapIndex === -1) return sdp;
-
-  const payload = lines[rtpmapIndex].match(/^a=rtpmap:(\d+)/)[1];
-  const desiredParams = {
-    maxaveragebitrate: "48000",
-    maxplaybackrate: "48000",
-    useinbandfec: "1",
-    usedtx: "1",
-    stereo: "0",
-    "sprop-stereo": "0",
-  };
-  const fmtpIndex = lines.findIndex((line) => line.startsWith(`a=fmtp:${payload}`));
-  const prefix = `a=fmtp:${payload}`;
-  const params = new Map();
-  if (fmtpIndex !== -1) {
-    lines[fmtpIndex]
-      .slice(prefix.length)
-      .trim()
-      .split(";")
-      .filter(Boolean)
-      .forEach((entry) => {
-        const [key, value = ""] = entry.split("=");
-        params.set(key.toLowerCase(), value);
-      });
+  if (!getSocket()?.connected) {
+    const error = new Error("Call signaling is unavailable");
+    error.code = "CALL_SIGNALING_UNAVAILABLE";
+    throw error;
   }
-  Object.entries(desiredParams).forEach(([key, value]) => params.set(key, value));
-  const serialized = [...params.entries()]
-    .map(([key, value]) => `${key}=${value}`)
-    .join(";");
-  const fmtpLine = `${prefix} ${serialized}`;
-  if (fmtpIndex !== -1) lines[fmtpIndex] = fmtpLine;
-  else lines.splice(rtpmapIndex + 1, 0, fmtpLine);
-  return lines.join("\r\n");
 };
-
-const optimizeSdp = (sdp, callType) => {
-  let optimized = tuneOpusInSdp(sdp);
-  if (callType === "video") {
-    optimized = preferCodecInSdp(optimized, "video", "H264");
-  }
-  return optimized;
-};
-
-// Available-bandwidth-driven ladder for the outgoing video encoding — steps
-// resolution/bitrate down under a weak network and back up once it recovers,
-// instead of a fixed cap that either stutters or wastes bandwidth.
-const VIDEO_BITRATE_TIERS = [
-  { minAvailableBps: 1200000, maxBitrate: 1500000, scaleResolutionDownBy: 1 },
-  { minAvailableBps: 600000, maxBitrate: 800000, scaleResolutionDownBy: 1 },
-  { minAvailableBps: 250000, maxBitrate: 400000, scaleResolutionDownBy: 1.5 },
-  { minAvailableBps: 0, maxBitrate: 150000, scaleResolutionDownBy: 2 },
-];
-
-const pickVideoTier = (availableBps) =>
-  VIDEO_BITRATE_TIERS.find((tier) => availableBps >= tier.minAvailableBps) ||
-  VIDEO_BITRATE_TIERS[VIDEO_BITRATE_TIERS.length - 1];
 
 const QUALITY_MONITOR_INTERVAL_MS = 4000;
 let qualityMonitorTimer = null;
-let previousAudioStats = null;
 const clearQualityMonitor = () => {
   if (qualityMonitorTimer) {
     clearInterval(qualityMonitorTimer);
@@ -203,14 +169,13 @@ const clearQualityMonitor = () => {
 let appStateSubscription = null;
 let wasAutoPaused = false;
 
-// Grace period before a dropped connection is treated as a real hangup
-// rather than a transient network blip (matches how FaceTime keeps a call
-// alive through brief Wi-Fi/cellular handoffs instead of ending instantly).
-const RECONNECT_TIMEOUT_MS = 15000;
+const RECONNECT_TIMEOUT_MS = 30000;
 
 let reconnectTimer = null;
+let iceRestartTimer = null;
+let iceRestartAttempts = 0;
+let iceRestartInFlight = false;
 let negotiationChain = Promise.resolve();
-let lastIceRestartAt = 0;
 const earlyIceCandidates = new Map();
 const queueEarlyIceCandidate = (callId, candidate) => {
   if (!earlyIceCandidates.has(callId) && earlyIceCandidates.size >= 8) {
@@ -224,6 +189,9 @@ const clearReconnectTimer = () => {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  if (iceRestartTimer) clearTimeout(iceRestartTimer);
+  iceRestartTimer = null;
+  iceRestartAttempts = 0;
 };
 
 const RING_TIMEOUT_MS = 45000;
@@ -258,9 +226,16 @@ export const useCallStore = create((set, get) => ({
   remoteStream: null,
   screenStream: null,
   isMuted: false,
-  isCameraOff: false,
+  isCameraOff: true,
   isScreenSharing: false,
+  isChangingMedia: false,
+  isRestoringMicrophone: false,
+  microphoneUnavailable: false,
+  remoteVideoActive: false,
+  remoteMediaState: null,
+  mediaStateChannel: null,
   isSpeakerOn: false,
+  isStartingCall: false,
   networkQuality: "good",
   minimized: false,
   audioSender: null,
@@ -284,11 +259,19 @@ export const useCallStore = create((set, get) => ({
 
   _handleSocketConnect: () => {
     const { call: current, pc } = get();
+    if (current && !["ended", "declined"].includes(current.status)) {
+      get()._emitSignal("call:resume", {
+        callId: current.callId,
+        conversationId: current.conversationId,
+      });
+    }
     if (
       current?.status === "reconnecting" &&
       current.direction === "outgoing" &&
       pc?.connectionState !== "connected"
     ) {
+      if (iceRestartTimer) clearTimeout(iceRestartTimer);
+      iceRestartTimer = null;
       get()._attemptIceRestart(current.callId);
     }
   },
@@ -331,10 +314,8 @@ export const useCallStore = create((set, get) => ({
   _createPeerConnection: async (conversationId, callId) => {
     const iceServers = await getIceServers();
     const pc = new RTCPeerConnection({
-      iceServers,
-      bundlePolicy: "max-bundle",
-      rtcpMuxPolicy: "require",
-      iceCandidatePoolSize: 4,
+      ...PEER_CONNECTION_OPTIONS,
+      iceServers: copyIceServers(iceServers),
     });
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -347,158 +328,223 @@ export const useCallStore = create((set, get) => ({
     };
     pc.onconnectionstatechange = () => {
       const current = get().call;
-      if (!current || current.callId !== callId) return;
+      if (!current || current.callId !== callId || get().pc !== pc) return;
 
       if (pc.connectionState === "connected") {
         clearReconnectTimer();
         clearSetupTimers();
-        set({ call: { ...current, status: "connected" } });
+        set({ call: { ...current, status: "connected", connectedAt: current.connectedAt || Date.now() } });
         markNativeCallActive(callId);
+        const { audioSender, videoSender } = get();
+        if (audioSender) get()._applyInitialAudioParameters(audioSender);
+        if (videoSender?.track) get()._applyInitialVideoParameters(videoSender);
         get()._startQualityMonitor(callId);
+        get()._publishMediaState();
         return;
       }
 
-      // Transient drops (Wi-Fi <-> cellular handoff, brief signal loss) get a
-      // grace period with an ICE restart attempt instead of an instant hangup.
       if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        if (current.status !== "reconnecting") {
-          set({ call: { ...current, status: "reconnecting" } });
-        }
-        if (current.direction === "outgoing" && pc.connectionState === "failed") {
-          get()._attemptIceRestart(callId);
-        }
-        if (!reconnectTimer) {
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            if (get().call?.callId === callId) get().endCall();
-          }, RECONNECT_TIMEOUT_MS);
-        }
+        get()._beginRecovery(callId, pc.connectionState === "failed");
       }
     };
     pc.oniceconnectionstatechange = () => {
       const current = get().call;
-      if (!current || current.callId !== callId) return;
+      if (!current || current.callId !== callId || get().pc !== pc) return;
       if (pc.iceConnectionState === "failed") {
-        if (current.status !== "reconnecting") {
-          set({ call: { ...current, status: "reconnecting" } });
-        }
-        if (current.direction === "outgoing") get()._attemptIceRestart(callId);
-        if (!reconnectTimer) {
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            if (get().call?.callId === callId) get().endCall();
-          }, RECONNECT_TIMEOUT_MS);
-        }
+        get()._beginRecovery(callId, true);
       }
     };
     pc.ontrack = (event) => {
-      set({ remoteStream: event.streams[0] });
+      if (get().pc !== pc) return;
+      const remoteStream = get().remoteStream || event.streams?.[0] || new MediaStream();
+      if (!remoteStream.getTracks().some((track) => track.id === event.track.id)) {
+        remoteStream.addTrack(event.track);
+      }
+      const updateVideo = () => {
+        if (get().pc !== pc) return;
+        set({
+          remoteVideoActive: remoteStream.getVideoTracks().some(
+            (track) => track.readyState === "live" && !track.muted
+          ),
+        });
+        get()._updateKeepAwake();
+      };
+      if (event.track.kind === "video") {
+        event.track.onmute = updateVideo;
+        event.track.onunmute = updateVideo;
+        event.track.onended = updateVideo;
+      }
+      set({ remoteStream });
+      updateVideo();
     };
+    pc.ondatachannel = (event) => get()._attachMediaStateChannel(pc, event.channel);
     return pc;
   },
 
-  // Bitrate cap + degradation preference so a weak link drops resolution/
-  // bitrate smoothly ("balanced") instead of stalling framerate.
+  _attachMediaStateChannel: (pc, channel) => {
+    if (get().pc !== pc || channel.label !== "looptalk-media-v1") {
+      channel.close();
+      return;
+    }
+    set({ mediaStateChannel: channel });
+    channel.onopen = () => {
+      if (get().pc === pc) get()._publishMediaState();
+    };
+    channel.onmessage = (event) => {
+      if (get().pc !== pc) return;
+      try {
+        if (typeof event.data !== "string" || event.data.length > 1024) {
+          throw new Error("Invalid media status payload");
+        }
+        const state = JSON.parse(event.data);
+        if (state?.version !== 1 || typeof state.muted !== "boolean" || !["none", "camera", "screen"].includes(state.video)) {
+          throw new Error("Invalid media status");
+        }
+        set({ remoteMediaState: { muted: state.muted, video: state.video } });
+        get()._updateKeepAwake();
+      } catch (error) {
+        console.warn("Unable to read peer media status:", error);
+      }
+    };
+    channel.onerror = (error) => console.warn("Call media status channel error:", error);
+    channel.onclose = () => {
+      if (get().mediaStateChannel === channel) set({ mediaStateChannel: null, remoteMediaState: null });
+    };
+    if (channel.readyState === "open") get()._publishMediaState();
+  },
+
+  _publishMediaState: () => {
+    get()._updateKeepAwake();
+    const { mediaStateChannel, isMuted, isCameraOff, isScreenSharing } = get();
+    if (mediaStateChannel?.readyState !== "open") return;
+    try {
+      mediaStateChannel.send(JSON.stringify({
+        version: 1,
+        muted: isMuted,
+        video: isScreenSharing ? "screen" : isCameraOff || wasAutoPaused ? "none" : "camera",
+      }));
+    } catch (error) {
+      console.warn("Unable to send call media status:", error);
+    }
+  },
+
+  _updateKeepAwake: () => {
+    const state = get();
+    const active = AppState.currentState == null || AppState.currentState === "active";
+    const remoteVideo = state.remoteVideoActive && state.remoteMediaState?.video !== "none";
+    InCallManager.setKeepScreenOn(Boolean(
+      state.call && active && (state.isScreenSharing || (!state.isCameraOff && !wasAutoPaused) || remoteVideo)
+    ));
+  },
+
+  _watchLocalTrack: (pc, stream, track) => {
+    track.onended = () => {
+      if (get().pc !== pc || get().localStream !== stream) return;
+      stream.removeTrack(track);
+      if (track.kind === "audio") {
+        set({ microphoneUnavailable: true, isMuted: true });
+        if (get().call) setNativeCallMuted(get().call.callId, true);
+        console.warn("The call microphone disconnected");
+      } else {
+        set({ isCameraOff: true });
+        console.warn("The call camera disconnected");
+      }
+      get()._publishMediaState();
+    };
+  },
+
+  _attachLocalTracks: (pc, localStream) => {
+    localStream.getTracks().forEach((track) => {
+      if (track.kind === "audio") track.enabled = !get().isMuted;
+      if (track.kind === "video" && "contentHint" in track) track.contentHint = "motion";
+      pc.addTrack(track, localStream);
+      get()._watchLocalTrack(pc, localStream, track);
+    });
+    // Negotiate video even for voice-only peers so replaceTrack can later
+    // enable a camera or screen without another offer (or offer collisions).
+    const videoTransceiver = pc.getTransceivers().find(
+      (transceiver) => transceiver.receiver.track?.kind === "video"
+    ) || pc.addTransceiver("video", { direction: "sendrecv", streams: [localStream] });
+    videoTransceiver.direction = "sendrecv";
+    videoTransceiver.sender.setStreams?.(localStream);
+    const audioSender = pc.getSenders().find((sender) => sender.track?.kind === "audio");
+    const videoSender = videoTransceiver.sender;
+    set({ audioSender, videoSender });
+    if (get().call?.direction === "outgoing") {
+      get()._attachMediaStateChannel(pc, pc.createDataChannel("looptalk-media-v1", { ordered: true }));
+    }
+  },
+
+  _updateSenderParameters: (sender, encoding, degradationPreference) => {
+    const pc = get().pc;
+    const track = sender.track;
+    const previous = senderParameterChains.get(sender) || Promise.resolve();
+    const result = previous.then(async () => {
+      if (get().pc !== pc || sender.track !== track || !track) return;
+      const params = sender.getParameters();
+      if (!params.encodings?.length) {
+        console.warn("Sender encodings are not negotiated yet");
+        return;
+      }
+      Object.assign(params.encodings[0], encoding);
+      if (track.kind === "audio") {
+        if ("priority" in params.encodings[0]) params.encodings[0].priority = "high";
+        if ("networkPriority" in params.encodings[0]) params.encodings[0].networkPriority = "high";
+      }
+      if (degradationPreference) params.degradationPreference = degradationPreference;
+      await sender.setParameters(params);
+    });
+    senderParameterChains.set(sender, result.catch(() => {}));
+    return result;
+  },
+
+  // These are ceilings, not bandwidth targets; WebRTC owns congestion control.
   _applyInitialVideoParameters: async (sender) => {
     try {
-      const params = sender.getParameters();
-      params.encodings = params.encodings?.length ? params.encodings : [{}];
-      params.encodings[0].maxBitrate = VIDEO_BITRATE_TIERS[0].maxBitrate;
-      params.encodings[0].maxFramerate = 30;
-      params.degradationPreference = "balanced";
-      await sender.setParameters(params);
+      const { degradationPreference, ...encoding } = videoEncodingProfile(get().isScreenSharing);
+      await get()._updateSenderParameters(sender, encoding, degradationPreference);
     } catch (error) {
-      console.warn("Unable to apply initial video parameters:", error);
+      console.warn("Unable to apply video parameters:", error);
     }
   },
 
   _applyInitialAudioParameters: async (sender) => {
     try {
-      const params = sender.getParameters();
-      params.encodings = params.encodings?.length ? params.encodings : [{}];
-      params.encodings[0].maxBitrate = 48000;
-      await sender.setParameters(params);
+      await get()._updateSenderParameters(sender, { maxBitrate: 48000 });
     } catch (error) {
       console.warn("Unable to apply initial audio parameters:", error);
     }
   },
 
-  // Samples the real available bandwidth from getStats() and steps the
-  // outgoing video encoding up/down accordingly, instead of a fixed cap.
   _startQualityMonitor: (callId) => {
     clearQualityMonitor();
+    let sampling = false;
+    let previousAudioStats = new Map();
+    let recoveryTarget = null;
+    let recoverySamples = 0;
+    const ranks = { good: 0, fair: 1, poor: 2 };
     qualityMonitorTimer = setInterval(async () => {
-      const { call, pc, audioSender, videoSender } = get();
-      if (!call || call.callId !== callId || !pc || call.status !== "connected") return;
+      const { call, pc } = get();
+      if (sampling || !call || call.callId !== callId || !pc || call.status !== "connected") return;
+      sampling = true;
       try {
         const stats = await pc.getStats();
-        let availableBps = null;
-        let roundTripTime = null;
-        let inboundAudio = null;
-        stats.forEach((report) => {
-          if (report.type === "candidate-pair" && report.state === "succeeded") {
-            if (report.availableOutgoingBitrate) {
-              availableBps = report.availableOutgoingBitrate;
-            }
-            if (Number.isFinite(report.currentRoundTripTime)) {
-              roundTripTime = report.currentRoundTripTime;
-            }
-          }
-          if (
-            report.type === "inbound-rtp" &&
-            (report.kind === "audio" || report.mediaType === "audio")
-          ) {
-            inboundAudio = report;
-          }
-        });
-
-        let lossRate = 0;
-        if (inboundAudio && previousAudioStats) {
-          const received = inboundAudio.packetsReceived - previousAudioStats.packetsReceived;
-          const lost = inboundAudio.packetsLost - previousAudioStats.packetsLost;
-          if (received + lost > 0) lossRate = Math.max(0, lost / (received + lost));
-        }
-        if (inboundAudio) {
-          previousAudioStats = {
-            packetsReceived: inboundAudio.packetsReceived || 0,
-            packetsLost: inboundAudio.packetsLost || 0,
-          };
-        }
-
-        const jitter = inboundAudio?.jitter || 0;
-        const networkQuality =
-          lossRate > 0.08 || roundTripTime > 0.5 || jitter > 0.05
-            ? "poor"
-            : lossRate > 0.03 || roundTripTime > 0.25 || jitter > 0.03
-              ? "fair"
-              : "good";
-        if (get().networkQuality !== networkQuality) set({ networkQuality });
-
-        if (audioSender) {
-          const targetBitrate =
-            networkQuality === "poor" || (availableBps && availableBps < 45000)
-              ? 20000
-              : networkQuality === "fair" || (availableBps && availableBps < 90000)
-                ? 32000
-                : 48000;
-          const params = audioSender.getParameters();
-          params.encodings = params.encodings?.length ? params.encodings : [{}];
-          if (params.encodings[0].maxBitrate !== targetBitrate) {
-            params.encodings[0].maxBitrate = targetBitrate;
-            await audioSender.setParameters(params);
-          }
-        }
-
-        if (videoSender && availableBps != null) {
-          const tier = pickVideoTier(availableBps);
-          const params = videoSender.getParameters();
-          params.encodings = params.encodings?.length ? params.encodings : [{}];
-          params.encodings[0].maxBitrate = tier.maxBitrate;
-          params.encodings[0].scaleResolutionDownBy = tier.scaleResolutionDownBy;
-          await videoSender.setParameters(params);
+        if (get().pc !== pc) return;
+        const { audio, quality } = summarizeCallStats(stats, previousAudioStats);
+        previousAudioStats = audio;
+        if (ranks[quality] >= ranks[get().networkQuality]) {
+          recoverySamples = 0;
+          recoveryTarget = null;
+          if (get().networkQuality !== quality) set({ networkQuality: quality });
+        } else {
+          recoverySamples = recoveryTarget === quality ? recoverySamples + 1 : 1;
+          recoveryTarget = quality;
+          if (recoverySamples >= 3) set({ networkQuality: quality });
         }
       } catch (error) {
         console.warn("Quality monitor error:", error);
+      } finally {
+        sampling = false;
       }
     }, QUALITY_MONITOR_INTERVAL_MS);
   },
@@ -508,8 +554,9 @@ export const useCallStore = create((set, get) => ({
   _attachAppStateHandling: () => {
     appStateSubscription?.remove();
     appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      get()._updateKeepAwake();
       const { call, localStream, isCameraOff } = get();
-      if (!call || call.callType !== "video" || !localStream) return;
+      if (!call || !localStream) return;
       const videoTracks = localStream.getVideoTracks();
       if (!videoTracks.length) return;
 
@@ -526,6 +573,7 @@ export const useCallStore = create((set, get) => ({
         });
         wasAutoPaused = true;
       }
+      get()._publishMediaState();
     });
   },
 
@@ -536,76 +584,106 @@ export const useCallStore = create((set, get) => ({
     if (callType === "video" && !isVideoCallingSupported) {
       throw new Error("Video calling is not supported on this platform");
     }
-    if (get().call) return;
-    if (!get().socket?.connected) {
-      throw new Error("Call signaling is offline");
-    }
-
-    const callId = generateCallId();
-    set({
-      call: {
-        callId,
-        conversationId,
-        callType,
-        direction: "outgoing",
-        status: "ringing",
-        peerUser,
-      },
-      pendingIceCandidates: [],
-    });
-    startNativeOutgoingCall(get().call);
-    ringTimer = setTimeout(() => {
-      ringTimer = null;
-      if (get().call?.callId === callId && get().call?.status === "ringing") {
-        get().endCall();
-      }
-    }, RING_TIMEOUT_MS);
-
+    if (get().call || get().isStartingCall) return;
+    const epoch = callEpoch;
+    set({ isStartingCall: true });
+    let localStream;
+    let callId;
     try {
-      const localStream = await captureLocalMedia(callType);
-      if (get().call?.callId !== callId) {
+      localStream = await captureLocalMedia(callType);
+      if (epoch !== callEpoch || get().call) {
         localStream.getTracks().forEach((track) => track.stop());
         return;
       }
-      set({ localStream });
+
+      const resolvedConversationId = typeof conversationId === "function"
+        ? await conversationId()
+        : conversationId;
+      if (epoch !== callEpoch) {
+        localStream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+      await waitForCallSignaling(() => get().socket);
+      if (epoch !== callEpoch || get().call) {
+        localStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      callId = generateCallId();
+      set({
+        call: {
+          callId,
+          conversationId: resolvedConversationId,
+          callType,
+          direction: "outgoing",
+          status: "ringing",
+          peerUser,
+        },
+        pendingIceCandidates: [],
+      });
+      set({ localStream, isCameraOff: !localStream.getVideoTracks().length });
+      try {
+        await startNativeOutgoingCall(get().call);
+      } catch (error) {
+        console.error("Unable to start the native call UI:", error);
+      }
+      if (epoch !== callEpoch) return false;
+      ringTimer = setTimeout(() => {
+        ringTimer = null;
+        if (get().call?.callId === callId && get().call?.status === "ringing") {
+          get().endCall("unanswered");
+        }
+      }, RING_TIMEOUT_MS);
       get()._startAudioRoute(callType);
 
-      const pc = await get()._createPeerConnection(conversationId, callId);
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      const pc = await get()._createPeerConnection(resolvedConversationId, callId);
+      if (get().call?.callId !== callId) {
+        pc.close();
+        return;
+      }
       set({ pc });
-
-      const audioSender = pc.getSenders().find((sender) => sender.track?.kind === "audio");
-      if (audioSender) {
-        set({ audioSender });
-        await get()._applyInitialAudioParameters(audioSender);
-      }
-      const videoSender = pc.getSenders().find((sender) => sender.track?.kind === "video");
-      if (videoSender) {
-        set({ videoSender });
-        await get()._applyInitialVideoParameters(videoSender);
-      }
+      get()._attachLocalTracks(pc, localStream);
 
       const offer = await pc.createOffer();
-      const optimizedOffer = new RTCSessionDescription({
-        type: offer.type,
-        sdp: optimizeSdp(offer.sdp, callType),
-      });
-      await pc.setLocalDescription(optimizedOffer);
+      if (get().pc !== pc) return false;
+      const description = new RTCSessionDescription(offer);
+      await pc.setLocalDescription(description);
+      if (get().pc !== pc) return false;
 
       get()._emitSignal(
         "call:invite",
-        { conversationId, callId, callType, sdp: optimizedOffer },
+        { conversationId: resolvedConversationId, callId, callType, sdp: description },
         true
       );
     } catch (error) {
+      if (epoch !== callEpoch) {
+        localStream?.getTracks().forEach((track) => track.stop());
+        return false;
+      }
       console.error("Error starting call:", error);
-      get()._teardown();
-      set({ call: null });
+      if (epoch === callEpoch && get().call?.callId === callId) {
+        get()._teardown();
+        set({ call: null });
+      } else if (localStream) {
+        localStream.getTracks().forEach((track) => track.stop());
+      }
+      if (error?.name === "NotFoundError") return "device-unavailable";
       throw error;
+    } finally {
+      if (epoch === callEpoch) set({ isStartingCall: false });
     }
   },
 
   _handleIncoming: (data) => {
+    if (get().call?.callId === data.callId) {
+      if (get().call.status === "ringing") set({ pendingOffer: data.sdp });
+      return;
+    }
+    if (Number.isFinite(data.expiresAt) && data.expiresAt <= Date.now()) {
+      earlyIceCandidates.delete(data.callId);
+      console.warn("Ignoring an expired incoming call");
+      return;
+    }
     if (data.callType === "video" && !isVideoCallingSupported) {
       earlyIceCandidates.delete(data.callId);
       get()._emitSignal("call:decline", {
@@ -615,11 +693,7 @@ export const useCallStore = create((set, get) => ({
       });
       return;
     }
-    if (get().call?.callId === data.callId) {
-      set({ pendingOffer: data.sdp });
-      return;
-    }
-    if (get().call) {
+    if (get().call || get().isStartingCall) {
       earlyIceCandidates.delete(data.callId);
       get()._emitSignal("call:decline", {
         conversationId: data.conversationId,
@@ -647,7 +721,7 @@ export const useCallStore = create((set, get) => ({
       if (get().call?.callId === data.callId && get().call?.status === "ringing") {
         get().declineCall("missed");
       }
-    }, RING_TIMEOUT_MS);
+    }, Math.min(RING_TIMEOUT_MS, Number.isFinite(data.expiresAt) ? data.expiresAt - Date.now() : RING_TIMEOUT_MS));
     const nativeAction = pendingNativeActions.get(data.callId);
     pendingNativeActions.delete(data.callId);
     if (nativeAction === "answer") Promise.resolve().then(() => get().acceptCall());
@@ -671,10 +745,15 @@ export const useCallStore = create((set, get) => ({
   handleNativeMute: (callId, muted) => {
     const { call, isMuted } = get();
     if (call?.callId !== callId || isMuted === muted) return;
+    if (get().microphoneUnavailable && !muted) {
+      get().toggleMute().catch((error) => console.error("Unable to restore the call microphone:", error));
+      return;
+    }
     get().localStream?.getAudioTracks().forEach((track) => {
       track.enabled = !muted;
     });
     set({ isMuted: muted });
+    get()._publishMediaState();
   },
 
   acceptCall: async () => {
@@ -684,61 +763,62 @@ export const useCallStore = create((set, get) => ({
       call.direction !== "incoming" ||
       call.status !== "ringing" ||
       !pendingOffer
-    ) return;
-    if (!get().socket?.connected) return;
+    ) return "CALL_CANCELLED";
+    if (!get().socket?.connected) return "CALL_SIGNALING_UNAVAILABLE";
 
     try {
       if (ringTimer) clearTimeout(ringTimer);
       ringTimer = null;
       set({ call: { ...call, status: "connecting" } });
+      connectTimer = setTimeout(() => {
+        connectTimer = null;
+        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
+          get().endCall("connection-failed");
+        }
+      }, CONNECT_TIMEOUT_MS);
       answerNativeCall(call.callId);
       const localStream = await captureLocalMedia(call.callType);
       if (get().call?.callId !== call.callId) {
         localStream.getTracks().forEach((track) => track.stop());
-        return;
+        return "CALL_CANCELLED";
       }
-      set({ localStream });
+      set({ localStream, isCameraOff: !localStream.getVideoTracks().length });
       get()._startAudioRoute(call.callType);
 
       const pc = await get()._createPeerConnection(call.conversationId, call.callId);
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      if (get().call?.callId !== call.callId) {
+        pc.close();
+        return "CALL_CANCELLED";
+      }
       set({ pc });
-
-      const audioSender = pc.getSenders().find((sender) => sender.track?.kind === "audio");
-      if (audioSender) {
-        set({ audioSender });
-        await get()._applyInitialAudioParameters(audioSender);
-      }
-      const videoSender = pc.getSenders().find((sender) => sender.track?.kind === "video");
-      if (videoSender) {
-        set({ videoSender });
-        await get()._applyInitialVideoParameters(videoSender);
-      }
-
-      await pc.setRemoteDescription(new RTCSessionDescription(pendingOffer));
-      await get()._flushRemoteIceCandidates(pc, call.callId);
-      const answer = await pc.createAnswer();
-      const optimizedAnswer = new RTCSessionDescription({
-        type: answer.type,
-        sdp: optimizeSdp(answer.sdp, call.callType),
+      await get()._runNegotiation(async () => {
+        await pc.setRemoteDescription(new RTCSessionDescription(pendingOffer));
+        if (get().pc !== pc) return;
+        get()._attachLocalTracks(pc, localStream);
+        await get()._flushRemoteIceCandidates(pc, call.callId);
+        if (get().pc !== pc) return;
+        const answer = await pc.createAnswer();
+        if (get().pc !== pc) return;
+        const description = new RTCSessionDescription(answer);
+        await pc.setLocalDescription(description);
+        if (get().pc !== pc) return;
+        get()._emitSignal("call:answer", {
+          conversationId: call.conversationId,
+          callId: call.callId,
+          sdp: description,
+        }, true);
       });
-      await pc.setLocalDescription(optimizedAnswer);
-
-      get()._emitSignal("call:answer", {
-        conversationId: call.conversationId,
-        callId: call.callId,
-        sdp: optimizedAnswer,
-      }, true);
+      if (get().pc !== pc) return "CALL_CANCELLED";
       set({ pendingOffer: null });
-      connectTimer = setTimeout(() => {
-        connectTimer = null;
-        if (get().call?.callId === call.callId && get().call?.status === "connecting") {
-          get().endCall();
-        }
-      }, CONNECT_TIMEOUT_MS);
+      return true;
     } catch (error) {
+      if (get().call?.callId !== call.callId) return "CALL_CANCELLED";
       console.error("Error accepting call:", error);
-      get().declineCall();
+      if (get().call?.callId === call.callId) get().declineCall();
+      if (error?.code === "CALL_PERMISSION_DENIED" || ["NotAllowedError", "SecurityError"].includes(error?.name)) {
+        return "CALL_PERMISSION_DENIED";
+      }
+      return error?.name === "NotFoundError" ? "CALL_DEVICE_UNAVAILABLE" : false;
     }
   },
 
@@ -762,17 +842,19 @@ export const useCallStore = create((set, get) => ({
     if (!call || call.callId !== data.callId || !pc) return;
     try {
       await get()._runNegotiation(async () => {
-        if (get().pc !== pc || pc.signalingState === "closed") return;
+        if (get().pc !== pc || pc.signalingState !== "have-local-offer") return;
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
         await get()._flushRemoteIceCandidates(pc, call.callId);
       });
-      set({ call: { ...call, status: "connecting" } });
+      if (get().pc !== pc) return;
+      if (get().call?.status !== "ringing") return;
+      set({ call: { ...get().call, status: "connecting" } });
       if (ringTimer) clearTimeout(ringTimer);
       ringTimer = null;
       connectTimer = setTimeout(() => {
         connectTimer = null;
         if (get().call?.callId === call.callId && get().call?.status === "connecting") {
-          get().endCall();
+          get().endCall("connection-failed");
         }
       }, CONNECT_TIMEOUT_MS);
     } catch (error) {
@@ -784,22 +866,26 @@ export const useCallStore = create((set, get) => ({
   // the callee: the original caller drives the restart, see _attemptIceRestart.
   _handleRemoteOffer: async (data) => {
     const { call, pc } = get();
-    if (!call || call.callId !== data.callId || !pc) return;
+    if (!call || call.callId !== data.callId || call.direction !== "incoming" || !pc) return;
     try {
       await get()._runNegotiation(async () => {
-        if (get().pc !== pc || pc.signalingState === "closed") return;
+        if (get().pc !== pc || pc.signalingState !== "stable") return;
+        const iceServers = await getIceServers();
+        if (get().pc !== pc) return;
+        pc.setConfiguration({ ...PEER_CONNECTION_OPTIONS, iceServers: copyIceServers(iceServers) });
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        if (get().pc !== pc) return;
         await get()._flushRemoteIceCandidates(pc, call.callId);
+        if (get().pc !== pc) return;
         const answer = await pc.createAnswer();
-        const optimizedAnswer = new RTCSessionDescription({
-          type: answer.type,
-          sdp: optimizeSdp(answer.sdp, call.callType),
-        });
-        await pc.setLocalDescription(optimizedAnswer);
+        if (get().pc !== pc) return;
+        const description = new RTCSessionDescription(answer);
+        await pc.setLocalDescription(description);
+        if (get().pc !== pc) return;
         get()._emitSignal("call:answer", {
           conversationId: call.conversationId,
           callId: call.callId,
-          sdp: optimizedAnswer,
+          sdp: description,
         }, true);
       });
     } catch (error) {
@@ -807,28 +893,54 @@ export const useCallStore = create((set, get) => ({
     }
   },
 
+  _beginRecovery: (callId, immediate = false) => {
+    const { call } = get();
+    if (!call || call.callId !== callId) return;
+    if (call.status !== "reconnecting") set({ call: { ...call, status: "reconnecting" } });
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (get().call?.callId === callId) get().endCall("connection-lost");
+      }, RECONNECT_TIMEOUT_MS);
+    }
+    if (call.direction === "outgoing" && !iceRestartTimer && !iceRestartInFlight) {
+      const delay = immediate ? 0 : Math.min(8000, 2000 * 2 ** iceRestartAttempts);
+      iceRestartTimer = setTimeout(() => {
+        iceRestartTimer = null;
+        get()._attemptIceRestart(callId);
+      }, delay);
+    }
+  },
+
   _attemptIceRestart: async (callId) => {
     const { call, pc } = get();
-    if (!call || call.callId !== callId || !pc || !get().socket?.connected) return;
-    if (Date.now() - lastIceRestartAt < 3000) return;
-    lastIceRestartAt = Date.now();
+    if (!call || call.callId !== callId || call.direction !== "outgoing" || !pc || iceRestartInFlight) return;
+    iceRestartInFlight = true;
     try {
       await get()._runNegotiation(async () => {
-        if (get().pc !== pc || pc.signalingState !== "stable") return;
+        if (get().pc !== pc || pc.signalingState !== "stable" || !get().socket?.connected) return;
+        const iceServers = await getIceServers();
+        if (get().pc !== pc) return;
+        pc.setConfiguration({ ...PEER_CONNECTION_OPTIONS, iceServers: copyIceServers(iceServers) });
         const offer = await pc.createOffer({ iceRestart: true });
-        const optimizedOffer = new RTCSessionDescription({
-          type: offer.type,
-          sdp: optimizeSdp(offer.sdp, call.callType),
-        });
-        await pc.setLocalDescription(optimizedOffer);
+        if (get().pc !== pc) return;
+        const description = new RTCSessionDescription(offer);
+        await pc.setLocalDescription(description);
+        if (get().pc !== pc) return;
         get()._emitSignal("call:offer", {
           conversationId: call.conversationId,
           callId: call.callId,
-          sdp: optimizedOffer,
+          sdp: description,
         }, true);
+        iceRestartAttempts += 1;
       });
     } catch (error) {
       console.error("Error attempting ICE restart:", error);
+    } finally {
+      if (get().pc === pc) {
+        iceRestartInFlight = false;
+        if (get().call?.status === "reconnecting") get()._beginRecovery(callId);
+      }
     }
   },
 
@@ -846,8 +958,16 @@ export const useCallStore = create((set, get) => ({
       return;
     }
     try {
-      if (get().pc !== pc) return;
-      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      await get()._runNegotiation(async () => {
+        if (get().pc !== pc) return;
+        if (!candidateMatchesDescription(data.candidate, pc.remoteDescription)) {
+          set((state) => ({
+            pendingIceCandidates: [...state.pendingIceCandidates, data.candidate].slice(-256),
+          }));
+          return;
+        }
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      });
     } catch (error) {
       if (get().pc === pc && pc.connectionState !== "closed") {
         console.error("Error adding ICE candidate:", error);
@@ -856,8 +976,10 @@ export const useCallStore = create((set, get) => ({
   },
 
   _flushRemoteIceCandidates: async (pc, callId) => {
-    const candidates = get().pendingIceCandidates;
-    set({ pendingIceCandidates: [] });
+    const candidates = get().pendingIceCandidates.filter((candidate) => candidateMatchesDescription(candidate, pc.remoteDescription));
+    set((state) => ({
+      pendingIceCandidates: state.pendingIceCandidates.filter((candidate) => !candidateMatchesDescription(candidate, pc.remoteDescription)),
+    }));
     for (const candidate of candidates) {
       if (get().pc !== pc || get().call?.callId !== callId) return;
       try {
@@ -892,7 +1014,8 @@ export const useCallStore = create((set, get) => ({
     }, 1500);
   },
 
-  endCall: () => {
+  endCall: (reason = "local") => {
+    if (typeof reason !== "string") reason = "local";
     const { call } = get();
     if (call) {
       endNativeCall(call.callId);
@@ -902,25 +1025,105 @@ export const useCallStore = create((set, get) => ({
       });
     }
     get()._teardown();
-    set({ call: null, pendingOffer: null });
+    set({
+      call: call && reason !== "local" ? { ...call, status: "ended", endReason: reason } : null,
+      pendingOffer: null,
+    });
+    if (call && reason !== "local") {
+      setTimeout(() => {
+        if (get().call?.callId === call.callId) set({ call: null });
+      }, 2500);
+    }
   },
 
-  toggleMute: () => {
-    const { call, localStream, isMuted } = get();
+  toggleMute: async () => {
+    const { call, pc, audioSender, localStream, isMuted, microphoneUnavailable, isRestoringMicrophone } = get();
+    if (isRestoringMicrophone) return false;
+    if (microphoneUnavailable) {
+      if (!pc || !audioSender || !localStream) return false;
+      set({ isRestoringMicrophone: true });
+      let replacement;
+      try {
+        replacement = await captureLocalMedia("audio");
+        const track = replacement.getAudioTracks()[0];
+        if (!track) throw new Error("Microphone capture returned no audio track");
+        if (get().pc !== pc) return false;
+        await audioSender.replaceTrack(track);
+        if (audioSender.track !== track) throw new Error("Unable to replace the microphone");
+        if (get().pc !== pc) return false;
+        localStream.getAudioTracks().forEach((old) => {
+          old.onended = null;
+          old.stop();
+          localStream.removeTrack(old);
+        });
+        localStream.addTrack(track);
+        get()._watchLocalTrack(pc, localStream, track);
+        set({ isMuted: false, microphoneUnavailable: false });
+        replacement = null;
+        setNativeCallMuted(call.callId, false);
+        get()._publishMediaState();
+        get()._applyInitialAudioParameters(audioSender);
+        return true;
+      } catch (error) {
+        if (get().pc !== pc) return false;
+        throw error;
+      } finally {
+        replacement?.getTracks().forEach((track) => track.stop());
+        if (get().pc === pc) set({ isRestoringMicrophone: false });
+      }
+    }
     localStream?.getAudioTracks().forEach((track) => {
       track.enabled = isMuted;
     });
     const muted = !isMuted;
     set({ isMuted: muted });
     if (call) setNativeCallMuted(call.callId, muted);
+    get()._publishMediaState();
   },
 
-  toggleCamera: () => {
-    const { localStream, isCameraOff } = get();
-    localStream?.getVideoTracks().forEach((track) => {
-      track.enabled = isCameraOff;
-    });
-    set({ isCameraOff: !isCameraOff });
+  toggleCamera: async () => {
+    const { call, pc, localStream, videoSender, isCameraOff, isChangingMedia, isScreenSharing } = get();
+    if (!call || call.status !== "connected" || !videoSender || !localStream || isChangingMedia || isScreenSharing) return false;
+    set({ isChangingMedia: true });
+    let cameraStream;
+    try {
+      if (!isCameraOff) {
+        await replaceVideoTrack(videoSender, null);
+        localStream.getVideoTracks().forEach((track) => {
+          track.onended = null;
+          localStream.removeTrack(track);
+          track.stop();
+        });
+        if (get().pc === pc) {
+          set({ isCameraOff: true });
+          get()._publishMediaState();
+        }
+        return;
+      }
+      await requestCallPermissions("camera");
+      cameraStream = await mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+      });
+      const cameraTrack = cameraStream.getVideoTracks()[0];
+      if (!cameraTrack) throw new Error("Camera capture returned no video track");
+      if (get().pc !== pc) return;
+      if ("contentHint" in cameraTrack) cameraTrack.contentHint = "motion";
+      await replaceVideoTrack(videoSender, cameraTrack);
+      if (get().pc !== pc) return;
+      localStream.addTrack(cameraTrack);
+      get()._watchLocalTrack(pc, localStream, cameraTrack);
+      set({ isCameraOff: false });
+      get()._publishMediaState();
+      cameraStream = null;
+      get()._applyInitialVideoParameters(videoSender);
+    } catch (error) {
+      if (get().pc !== pc) return false;
+      throw error;
+    } finally {
+      cameraStream?.getTracks().forEach((track) => track.stop());
+      if (get().pc === pc) set({ isChangingMedia: false });
+    }
   },
 
   switchCamera: () => {
@@ -928,60 +1131,93 @@ export const useCallStore = create((set, get) => ({
   },
 
   startScreenShare: async () => {
-    const { call, videoSender, localStream, isScreenSharing } = get();
+    const { call, pc, videoSender, isScreenSharing, isChangingMedia } = get();
     if (
       !isScreenSharingSupported ||
       isScreenSharing ||
-      call?.callType !== "video" ||
-      call.status !== "connected" ||
+      call?.status !== "connected" ||
       !videoSender ||
-      !localStream
+      isChangingMedia
     ) {
       return false;
     }
 
-    const screenStream = await mediaDevices.getDisplayMedia({
-      video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 15, max: 30 },
-      },
-      audio: false,
-    });
-    const screenTrack = screenStream.getVideoTracks()[0];
-    if (!screenTrack) {
-      screenStream.getTracks().forEach((track) => track.stop());
-      return false;
+    set({ isChangingMedia: true });
+    let screenStream;
+    try {
+      screenStream = await mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 15, max: 15 },
+        },
+        audio: false,
+      });
+      const screenTrack = screenStream.getVideoTracks()[0];
+      if (!screenTrack) throw new Error("Screen capture returned no video track");
+      if (get().pc !== pc) return false;
+      if ("contentHint" in screenTrack) screenTrack.contentHint = "detail";
+      await replaceVideoTrack(videoSender, screenTrack);
+      if (get().pc !== pc) return false;
+      const activeStream = screenStream;
+      screenTrack.onended = () => {
+        if (get().screenStream === activeStream) {
+          get().stopScreenShare().catch((error) => console.error("Unable to stop screen sharing:", error));
+        }
+      };
+      set({ screenStream, isScreenSharing: true });
+      get()._publishMediaState();
+      if (screenTrack.readyState === "ended") {
+        set({ isChangingMedia: false });
+        await get().stopScreenShare();
+      }
+      screenStream = null;
+      get()._applyInitialVideoParameters(videoSender);
+      return true;
+    } catch (error) {
+      if (get().pc !== pc) return false;
+      throw error;
+    } finally {
+      screenStream?.getTracks().forEach((track) => track.stop());
+      if (get().pc === pc) set({ isChangingMedia: false });
     }
-
-    const cameraTrack = localStream.getVideoTracks()[0] || null;
-    await videoSender.replaceTrack(screenTrack);
-    screenTrack.onended = () => {
-      if (get().screenStream === screenStream) get().stopScreenShare();
-    };
-    set({
-      screenStream,
-      isScreenSharing: true,
-      screenShareCameraTrack: cameraTrack,
-    });
-    return true;
   },
 
   stopScreenShare: async () => {
-    const { videoSender, screenStream, screenShareCameraTrack, localStream } = get();
+    const { pc, videoSender, screenStream, localStream, isCameraOff, isChangingMedia } = get();
+    if (isChangingMedia) return false;
     if (!screenStream) return;
-    const cameraTrack =
-      screenShareCameraTrack?.readyState === "live"
-        ? screenShareCameraTrack
-        : localStream?.getVideoTracks().find((track) => track.readyState === "live") || null;
+    set({ isChangingMedia: true });
+    const cameraTrack = !isCameraOff
+      ? localStream?.getVideoTracks().find((track) => track.readyState === "live") || null
+      : null;
+    let restored = false;
     try {
-      if (videoSender && cameraTrack) await videoSender.replaceTrack(cameraTrack);
+      await replaceVideoTrack(videoSender, cameraTrack);
+      restored = true;
+    } catch (error) {
+      if (get().pc !== pc) return false;
+      throw error;
     } finally {
       screenStream.getTracks().forEach((track) => {
         track.onended = null;
         track.stop();
       });
-      set({ screenStream: null, isScreenSharing: false, screenShareCameraTrack: null });
+      if (get().pc === pc) {
+        if (!restored) {
+          localStream?.getVideoTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+            localStream.removeTrack(track);
+          });
+        }
+        set({
+          screenStream: null, isScreenSharing: false, isChangingMedia: false,
+          isCameraOff: !restored || !cameraTrack,
+        });
+        get()._publishMediaState();
+        if (cameraTrack && videoSender.track === cameraTrack) get()._applyInitialVideoParameters(videoSender);
+      }
     }
   },
 
@@ -991,8 +1227,8 @@ export const useCallStore = create((set, get) => ({
   _startAudioRoute: (callType) => {
     const speakerOn = callType === "video";
     InCallManager.start({ media: callType === "video" ? "video" : "audio" });
-    InCallManager.setKeepScreenOn(true);
-    InCallManager.setForceSpeakerphoneOn(speakerOn);
+    InCallManager.setKeepScreenOn(callType === "video");
+    InCallManager.setForceSpeakerphoneOn(null);
     set({ isSpeakerOn: speakerOn });
     get()._attachAppStateHandling();
   },
@@ -1007,27 +1243,43 @@ export const useCallStore = create((set, get) => ({
   setMinimized: (minimized) => set({ minimized }),
 
   _teardown: () => {
-    const { call, pc, localStream, screenStream } = get();
+    const { call, pc, localStream, remoteStream, screenStream, mediaStateChannel } = get();
+    callEpoch += 1;
     if (call?.callId) earlyIceCandidates.delete(call.callId);
     clearReconnectTimer();
     clearSetupTimers();
     clearQualityMonitor();
-    previousAudioStats = null;
     negotiationChain = Promise.resolve();
-    lastIceRestartAt = 0;
+    iceRestartInFlight = false;
     appStateSubscription?.remove();
     appStateSubscription = null;
     wasAutoPaused = false;
-    localStream?.getTracks().forEach((track) => track.stop());
+    localStream?.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
+    remoteStream?.getTracks().forEach((track) => {
+      track.onmute = null;
+      track.onunmute = null;
+      track.onended = null;
+    });
     screenStream?.getTracks().forEach((track) => {
       track.onended = null;
       track.stop();
     });
+    if (mediaStateChannel) {
+      mediaStateChannel.onopen = null;
+      mediaStateChannel.onmessage = null;
+      mediaStateChannel.onerror = null;
+      mediaStateChannel.onclose = null;
+      mediaStateChannel.close();
+    }
     if (pc) {
       pc.onicecandidate = null;
       pc.ontrack = null;
       pc.onconnectionstatechange = null;
       pc.oniceconnectionstatechange = null;
+      pc.ondatachannel = null;
       pc.close();
     }
     InCallManager.setKeepScreenOn(false);
@@ -1038,9 +1290,15 @@ export const useCallStore = create((set, get) => ({
       remoteStream: null,
       screenStream: null,
       isMuted: false,
-      isCameraOff: false,
+      isCameraOff: true,
       isScreenSharing: false,
-      screenShareCameraTrack: null,
+      isChangingMedia: false,
+      isRestoringMicrophone: false,
+      microphoneUnavailable: false,
+      isStartingCall: false,
+      remoteVideoActive: false,
+      remoteMediaState: null,
+      mediaStateChannel: null,
       isSpeakerOn: false,
       networkQuality: "good",
       minimized: false,

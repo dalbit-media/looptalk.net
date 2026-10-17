@@ -1,4 +1,6 @@
-const REQUIRED_VARIABLES = ["DATABASE_URL", "JWT_SECRET"];
+const { applyEnvironmentDefaults } = require("./load-environment");
+
+const REQUIRED_VARIABLES = ["JWT_SECRET", "USER_DATA_ENCRYPTION_KEY"];
 
 const parseUrl = (value, variableName) => {
   try {
@@ -8,7 +10,15 @@ const parseUrl = (value, variableName) => {
   }
 };
 
+const requireHttpUrl = (value, variableName) => {
+  const url = parseUrl(value, variableName);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`${variableName} must use HTTP or HTTPS`);
+  }
+};
+
 const validateEnvironment = (environment = process.env) => {
+  applyEnvironmentDefaults(environment);
   const missingVariables = REQUIRED_VARIABLES.filter(
     (name) => !environment[name]?.trim()
   );
@@ -19,9 +29,10 @@ const validateEnvironment = (environment = process.env) => {
     );
   }
 
-  if (!environment.DATABASE_URL.startsWith("mysql://")) {
-    throw new Error("DATABASE_URL must be a MySQL connection string");
+  if (!environment.DATABASE_URL.startsWith("file:")) {
+    throw new Error("DATABASE_URL must be a SQLite file URL");
   }
+  require("../utils/privateAccounts").userDataKey(environment);
 
   if (
     environment.JWT_SECRET.length < 32 ||
@@ -31,21 +42,15 @@ const validateEnvironment = (environment = process.env) => {
   }
 
   if (environment.PUBLIC_URL?.trim()) {
-    const publicUrl = parseUrl(environment.PUBLIC_URL, "PUBLIC_URL");
-    if (!["http:", "https:"].includes(publicUrl.protocol)) {
-      throw new Error("PUBLIC_URL must use HTTP or HTTPS");
-    }
+    requireHttpUrl(environment.PUBLIC_URL, "PUBLIC_URL");
   }
 
-  const corsOrigins = environment.CORS_ORIGIN?.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean) || [];
-  corsOrigins.forEach((origin) => {
-    const url = parseUrl(origin, "CORS_ORIGIN");
-    if (!["http:", "https:"].includes(url.protocol)) {
-      throw new Error("CORS_ORIGIN entries must use HTTP or HTTPS");
-    }
-  });
+  if (environment.CORS_ORIGIN?.trim()) {
+    environment.CORS_ORIGIN.split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+      .forEach((origin) => requireHttpUrl(origin, "CORS_ORIGIN entries"));
+  }
 
   const instanceCount = Number.parseInt(environment.INSTANCE_COUNT || "1", 10);
   if (instanceCount > 1 && !environment.REDIS_URL?.trim()) {

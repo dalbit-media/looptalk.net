@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, StyleSheet, View } from "react-native";
+import { AppText as Text } from "./AppText";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
 import { BrandMark } from "./BrandMark";
@@ -31,9 +32,7 @@ export const AppSplash = () => {
       <Animated.View style={[styles.content, { opacity, transform: [{ scale }] }]}>
         <BrandMark size={88} />
         <Text style={[styles.brand, { color: colors.text }]}>{t("brand.name")}</Text>
-        <Text style={[styles.status, { color: colors.mutedText }]}>
-          {t("onboarding.preparing")}
-        </Text>
+        <Text style={[styles.subtitle, { color: colors.mutedText }]}>{t("brand.subtitle")}</Text>
       </Animated.View>
     </View>
   );
@@ -53,8 +52,8 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: "800",
   },
-  status: {
-    marginTop: 8,
-    fontSize: 14,
+  subtitle: {
+    marginTop: 4,
+    fontSize: 13,
   },
 });

@@ -1,0 +1,89 @@
+@layer base {
+  :root {
+    color-scheme: light;
+    background: var(--paper);
+    --ink: #17201d;
+    --paper: #f4f1e8;
+    --white: #fffef9;
+    --coral: #ef6a4c;
+    --mint: #b7dfc7;
+    --yellow: #f1c85b;
+    --line: rgba(23, 32, 29, 0.18);
+    --muted: #64706b;
+    --on-ink: #ffffff;
+    --on-accent: #ffffff;
+    --admin-bg: #f1f3ef;
+    --drawer: #f2f2f2;
+    --drawer-overlay: rgba(242, 242, 242, 0.94);
+    --received: #e7e8e4;
+    --code-bg: #e5e4de;
+    --metric-muted: #89938e;
+    --grid-line: rgba(23, 32, 29, 0.055);
+    --header-height: 76px;
+  }
+
+  .site-page {
+    --paper: #fafaf7;
+    --white: #ffffff;
+    --ink: #2b2d31;
+    --muted: #626b70;
+    --line: #dde2de;
+    --on-ink: #ffffff;
+    --loop-accent: #186661;
+    --loop-on-accent: #ffffff;
+    --loop-soft: #eaf2ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .site-page {
+      --paper: #1c1f26; --white: #252c34; --ink: #f0f2f5;
+      --muted: #b4bec8; --line: #3a444e; --on-ink: #1c1f26;
+      --loop-accent: #76d7b7; --loop-on-accent: #182c2b; --loop-soft: #303c43;
+    }
+  }
+  :root[data-theme="dark"] .site-page {
+    --paper: #1c1f26; --white: #252c34; --ink: #f0f2f5;
+    --muted: #b4bec8; --line: #3a444e; --on-ink: #1c1f26;
+    --loop-accent: #76d7b7; --loop-on-accent: #182c2b; --loop-soft: #303c43;
+  }
+  /* Follow the system preference when JavaScript is unavailable. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ink: #f3f5f3;
+      --paper: #181a19;
+      --white: #232624;
+      --coral: #ff8068;
+      --mint: #315f49;
+      --yellow: #d1ab48;
+      --line: rgba(243, 245, 243, 0.2);
+      --muted: #abb2ae;
+      --on-ink: #171918;
+      --admin-bg: #151716;
+      --drawer: #202321;
+      --drawer-overlay: rgba(32, 35, 33, 0.94);
+      --received: #343835;
+      --code-bg: #343835;
+      --metric-muted: #abb2ae;
+      --grid-line: rgba(243, 245, 243, 0.06);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #f3f5f3;
+    --paper: #181a19;
+    --white: #232624;
+    --coral: #ff8068;
+    --mint: #315f49;
+    --yellow: #d1ab48;
+    --line: rgba(243, 245, 243, 0.2);
+    --muted: #abb2ae;
+    --on-ink: #171918;
+    --admin-bg: #151716;
+    --drawer: #202321;
+    --drawer-overlay: rgba(32, 35, 33, 0.94);
+    --received: #343835;
+    --code-bg: #343835;
+    --metric-muted: #abb2ae;
+    --grid-line: rgba(243, 245, 243, 0.06);
+  }
+}

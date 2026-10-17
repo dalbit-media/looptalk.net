@@ -1,10 +1,11 @@
 import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from "react-native";
+import { View, StyleSheet, TouchableOpacity, Modal, Pressable } from "react-native";
+import { AppText as Text } from "./AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
 
-export const AttachmentSheet = ({ visible, onClose, onSelect }) => {
+export const AttachmentSheet = ({ visible, onClose, onSelect, onDismiss }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
@@ -18,7 +19,13 @@ export const AttachmentSheet = ({ visible, onClose, onSelect }) => {
   ];
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      onDismiss={onDismiss}
+    >
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.sheet} onPress={(event) => event.stopPropagation()}>
           <View style={styles.handle} />

@@ -59,6 +59,10 @@ uploads/
 *.png
 !mobile/assets/
 !mobile/assets/*.png
+!public/site/app-icon-32.png
+!public/site/app-icon-180.png
+!public/site/app-icon-192.png
+!public/site/app-icon-512.png
 *.gif
 *.mov
 *.mp4
@@ -82,6 +86,7 @@ out/
 *.db
 *.sqlite
 *.sqlite3
+*.app-state.json
 
 # Crash dumps
 dump.rdb

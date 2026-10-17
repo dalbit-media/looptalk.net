@@ -1,6 +1,3 @@
-const { createAdapter } = require("@socket.io/redis-streams-adapter");
-const { createClient } = require("redis");
-
 const PENDING_CALL_TTL_SECONDS = 50;
 const localPendingCalls = new Map();
 let redisClient = null;
@@ -9,6 +6,8 @@ const pendingCallKey = (userId, callId) => `looptalk:pending-call:${userId}:${ca
 
 const initializeCallInfrastructure = async (io) => {
   if (!process.env.REDIS_URL) return;
+  const { createAdapter } = require("@socket.io/redis-streams-adapter");
+  const { createClient } = require("redis");
   redisClient = createClient({ url: process.env.REDIS_URL });
   redisClient.on("error", (error) => console.error("Redis error:", error));
   await redisClient.connect();
@@ -17,11 +16,13 @@ const initializeCallInfrastructure = async (io) => {
 };
 
 const savePendingCalls = async (recipientIds, call) => {
-  const expiresAt = Date.now() + PENDING_CALL_TTL_SECONDS * 1000;
+  const maximumExpiry = Date.now() + PENDING_CALL_TTL_SECONDS * 1000;
+  const expiresAt = Math.min(call.expiresAt ?? maximumExpiry, maximumExpiry);
+  const pendingCall = { ...call, expiresAt };
   if (redisClient) {
     await Promise.all(
       recipientIds.map((userId) =>
-        redisClient.set(pendingCallKey(userId, call.callId), JSON.stringify(call), {
+        redisClient.set(pendingCallKey(userId, call.callId), JSON.stringify(pendingCall), {
           EX: PENDING_CALL_TTL_SECONDS,
         })
       )
@@ -30,7 +31,7 @@ const savePendingCalls = async (recipientIds, call) => {
   }
   recipientIds.forEach((userId) => {
     const calls = localPendingCalls.get(userId) || new Map();
-    calls.set(call.callId, { ...call, expiresAt });
+    calls.set(call.callId, pendingCall);
     localPendingCalls.set(userId, calls);
   });
 };
@@ -38,12 +39,18 @@ const savePendingCalls = async (recipientIds, call) => {
 const getPendingCalls = async (userId) => {
   if (redisClient) {
     const calls = [];
-    for await (const key of redisClient.scanIterator({
+    for await (const keys of redisClient.scanIterator({
       MATCH: pendingCallKey(userId, "*"),
       COUNT: 20,
     })) {
-      const value = await redisClient.get(key);
-      if (value) calls.push(JSON.parse(value));
+      if (!keys.length) continue;
+      const values = await redisClient.mGet(keys);
+      for (const value of values) {
+        if (value) {
+          const call = JSON.parse(value);
+          if (call.expiresAt > Date.now()) calls.push(call);
+        }
+      }
     }
     return calls;
   }
@@ -73,8 +80,35 @@ const clearPendingCall = async (recipientIds, callId) => {
   });
 };
 
+const resumeActiveCall = ({
+  activeCallsBySocket, callDisconnectTimers, socketId, userId,
+  callId, conversationId, otherIds,
+}) => {
+  const current = activeCallsBySocket.get(socketId) || new Map();
+  let owned = false;
+  for (const [previousId, calls] of activeCallsBySocket) {
+    const call = calls.get(callId);
+    if (call?.conversationId !== conversationId || call.ownerId !== userId) continue;
+    owned = true;
+    if (previousId === socketId) continue;
+    calls.delete(callId);
+    if (calls.size === 0) {
+      activeCallsBySocket.delete(previousId);
+      const timer = callDisconnectTimers.get(previousId);
+      if (timer) clearTimeout(timer);
+      callDisconnectTimers.delete(previousId);
+    }
+  }
+  if (owned) {
+    current.set(callId, { ownerId: userId, conversationId, otherIds });
+    activeCallsBySocket.set(socketId, current);
+  }
+  return owned;
+};
+
 const closeCallInfrastructure = async () => {
   if (redisClient?.isOpen) await redisClient.close();
+  redisClient = null;
 };
 
 module.exports = {
@@ -82,5 +116,6 @@ module.exports = {
   closeCallInfrastructure,
   getPendingCalls,
   initializeCallInfrastructure,
+  resumeActiveCall,
   savePendingCalls,
 };

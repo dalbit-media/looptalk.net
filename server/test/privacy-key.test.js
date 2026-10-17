@@ -1,0 +1,32 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const dotenv = require("dotenv");
+const { configurePrivacyKey } = require("../scripts/privacy-key");
+
+test("local privacy key setup is persistent, append-only and never replaces invalid secrets", (t) => {
+  const directory = fs.mkdtempSync(path.join(__dirname, ".privacy-key-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const envFile = path.join(directory, ".env");
+  const environment = {};
+  const original = '# retained comment\r\nDATABASE_URL="file:./retained.db"\r\nJWT_SECRET="unchanged"';
+  fs.writeFileSync(envFile, original);
+  assert.equal(configurePrivacyKey({ envFile, environment }), envFile);
+  const configured = fs.readFileSync(envFile, "utf8");
+  assert.ok(configured.startsWith(original));
+  assert.equal(Buffer.from(dotenv.parse(configured).USER_DATA_ENCRYPTION_KEY, "base64").length, 32);
+  configurePrivacyKey({ envFile, environment });
+  assert.equal(fs.readFileSync(envFile, "utf8"), configured);
+  const external = crypto.randomBytes(32).toString("base64");
+  assert.throws(() => configurePrivacyKey({ envFile, environment: { USER_DATA_ENCRYPTION_KEY: external } }), /differs/);
+  assert.equal(fs.readFileSync(envFile, "utf8"), configured);
+  fs.writeFileSync(envFile, 'USER_DATA_ENCRYPTION_KEY=""\n');
+  assert.throws(() => configurePrivacyKey({ envFile, environment }), /32 bytes/);
+  assert.equal(fs.readFileSync(envFile, "utf8"), 'USER_DATA_ENCRYPTION_KEY=""\n');
+  fs.writeFileSync(envFile, original);
+  configurePrivacyKey({ envFile, environment: { USER_DATA_ENCRYPTION_KEY: external } });
+  assert.equal(fs.readFileSync(envFile, "utf8"), original);
+  assert.throws(() => configurePrivacyKey({ envFile, environment: { USER_DATA_ENCRYPTION_KEY: "invalid" } }), /32 bytes/);
+});

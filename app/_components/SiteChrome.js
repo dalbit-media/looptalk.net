@@ -1,21 +1,15 @@
-export function BrandMark({ id }) {
+export function BrandMark() {
   return (
-    <svg className="brand-mark" aria-hidden="true" viewBox="0 0 64 64">
-      <defs>
-        <linearGradient id={`${id}-a`} x1="10" y1="10" x2="52" y2="48" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#087bef" />
-          <stop offset=".5" stopColor="#3758e8" />
-          <stop offset="1" stopColor="#7847d6" />
-        </linearGradient>
-        <linearGradient id={`${id}-b`} x1="54" y1="18" x2="18" y2="56" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#d92d78" />
-          <stop offset=".5" stopColor="#ef4444" />
-          <stop offset="1" stopColor="#c2410c" />
-        </linearGradient>
-      </defs>
-      <path d="M11 28v-6c0-7 5-12 12-12h16c7 0 12 5 12 12v5c0 7-5 12-12 12H28L17 48l3-10c-5-1-9-5-9-10Z" fill="none" stroke={`url(#${id}-a)`} strokeWidth="5.5" strokeDasharray="10 2" strokeLinejoin="round" />
-      <path d="M18 36v-6c0-7 5-12 12-12h13c7 0 12 5 12 12v8c0 6-5 11-11 11h-3l8 7-13-7h-6c-7 0-12-5-12-13Z" fill="none" stroke={`url(#${id}-b)`} strokeWidth="5.5" strokeDasharray="10 2" strokeDashoffset="5" strokeLinejoin="round" />
-    </svg>
+    <img className="brand-mark" src="/site/app-icon.svg" width="64" height="64" alt="" aria-hidden="true" />
+  );
+}
+
+function BrandTitle() {
+  return (
+    <span className="wordmark-text">
+      <b data-i18n="common.brandName">{t("common.brandName")}</b>
+      <small data-i18n="common.brandSubtitle">{t("common.brandSubtitle")}</small>
+    </span>
   );
 }
 
@@ -30,21 +24,22 @@ export function PulseIcon() {
 export function SiteHeader() {
   return (
     <>
-      <a className="skip-link" href="#main-content" data-i18n="common.skipContent">Skip to content</a>
-      <header className="site-header">
-        <a className="wordmark" href="/" aria-label="LoopTalk home" data-i18n-aria-label="common.homeLabel">
+      <a className="skip-link" href="#main-content" data-i18n="common.skipContent">{t("common.skipContent")}</a>
+      <header className="site-header site-container">
+        <a className="wordmark" href="/" aria-label={t("common.homeLabel")} data-i18n-aria-label="common.homeLabel">
           <BrandMark id="header" />
-          <b data-i18n="common.brandName">LoopTalk</b>
+          <BrandTitle />
         </a>
-        <nav aria-label="Primary navigation" data-i18n-aria-label="common.primaryNavigation">
-          <a href="/#principles" data-i18n="common.whyLoopTalk">Why LoopTalk</a>
-          <a href="/admin" data-i18n="common.admin">Admin</a>
+        <nav aria-label={t("common.primaryNavigation")} data-i18n-aria-label="common.primaryNavigation">
+          <a href="/#data-ownership" data-i18n="common.whyLoopTalk">{t("common.whyLoopTalk")}</a>
+          <a href="/statistics" data-i18n="common.admin">{t("common.admin")}</a>
+          <a href="/invitations" data-i18n="common.invitations">{t("common.invitations")}</a>
           <button className="nav-client" type="button" data-open-client="" data-call-button="">
-            <span data-i18n="common.openApp">Open web app</span>
+            <span data-i18n="common.openApp">{t("common.openApp")}</span>
             <span className="call-badge" data-call-badge="" aria-hidden="true" hidden>1</span>
           </button>
         </nav>
-        <button className="icon-button mobile-menu" type="button" aria-label="Toggle navigation" data-i18n-aria-label="common.toggleNavigation" data-toggle-menu="">
+        <button className="icon-button mobile-menu" type="button" aria-label={t("common.toggleNavigation")} data-i18n-aria-label="common.toggleNavigation" data-toggle-menu="">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
         </button>
       </header>
@@ -52,17 +47,29 @@ export function SiteHeader() {
   );
 }
 
-export function SiteFooter() {
+export function SiteFooter({ showAdminAccess = false }) {
   return (
-    <footer className="site-footer">
-      <a className="wordmark" href="/"><BrandMark id="footer" /><b data-i18n="common.brandName">LoopTalk</b></a>
-      <div className="footer-links">
-        <a href="/privacy">Privacy</a>
-        <a href="/terms">Terms</a>
-        <a href="/support">Support</a>
-        <a href="/account-deletion">Delete account</a>
-      </div>
-      <p data-i18n="common.copyright">© {new Date().getFullYear()} LoopTalk</p>
+    <footer className="site-footer site-container">
+      <a className="wordmark footer-brand" href="/"><BrandMark id="footer" /><BrandTitle /></a>
+      <nav className="footer-links" aria-label={t("common.footerNavigation")} data-i18n-aria-label="common.footerNavigation">
+        <a href="/privacy" data-i18n="common.privacy">{t("common.privacy")}</a>
+        <a href="/terms" data-i18n="common.terms">{t("common.terms")}</a>
+        <a href="/support" data-i18n="common.support">{t("common.support")}</a>
+        <a href="/account-deletion" data-i18n="common.deleteAccount">{t("common.deleteAccount")}</a>
+        {showAdminAccess && (
+          <a href="/app/?returnTo=/admin" data-i18n="common.adminAccess">{t("common.adminAccess")}</a>
+        )}
+      </nav>
+      <p className="footer-copyright" data-i18n="common.copyright">{t("common.copyright", { year: String(new Date().getFullYear()) })}</p>
+      <details className="footer-data-notice" id="principles">
+        <summary data-i18n="home.securityDetails">{t("home.securityDetails")}</summary>
+        <p data-i18n="home.securityBody">{t("home.securityBody")}</p>
+        <a className="text-link" href="/privacy"><span data-i18n="home.privacyLink">{t("home.privacyLink")}</span><ArrowIcon /></a>
+      </details>
+      <button className="scroll-top" type="button" aria-label={t("common.scrollToTop")} title={t("common.scrollToTop")} data-i18n-aria-label="common.scrollToTop" data-i18n-title="common.scrollToTop" data-scroll-top="" hidden>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" /><path d="M12 8v12" /></svg>
+      </button>
     </footer>
   );
 }
+import { t } from "../../public/site/site-i18n";

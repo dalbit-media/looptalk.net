@@ -1,10 +1,15 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
-const { v4: uuidv4 } = require("uuid");
+const { normalizeInvitationCode, validInvitationCode, createInvitationCode } = require("../utils/invitationCode");
 const sharp = require("sharp");
+const { createInvitationMapHandler } = require("../utils/invitationMap");
+const { opaqueUser } = require("../utils/privateAccounts");
 
 const router = express.Router();
+const invitationMap = createInvitationMapHandler(prisma);
+router.get("/map", invitationMap);
+router.get("/map/traffic", invitationMap.traffic);
 
 // Global cap on invitations created platform-wide in a rolling 24h window,
 // configurable via env since it depends on deployment scale/abuse tolerance.
@@ -13,8 +18,29 @@ const DAILY_INVITATION_LIMIT = parseInt(process.env.DAILY_INVITATION_LIMIT, 10) 
 // mass-generating codes.
 const PER_USER_INVITATION_LIMIT = 5;
 const INVITATION_THROTTLE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const privateIssuance = new Map();
+const inviterSelect = { id: true, publicUsername: true, publicDisplayName: true };
+const lookupInvitation = async (code) => {
+  const privateInvitation = await prisma.privateInvitation.findUnique({ where: { code } });
+  if (privateInvitation) {
+    const owner = privateInvitation.inviterId
+      ? await prisma.user.findUnique({ where: { id: privateInvitation.inviterId }, select: inviterSelect })
+      : null;
+    const inviter = owner ? opaqueUser(owner) : null;
+    return {
+      ...privateInvitation,
+      inviter: inviter ? { username: inviter.username, displayName: privateInvitation.inviterDisplayName || inviter.displayName } : null,
+    };
+  }
+  const invitation = await prisma.invitation.findUnique({
+    where: { code }, include: { inviter: { select: inviterSelect } },
+  });
+  if (!invitation) return null;
+  const inviter = opaqueUser(invitation.inviter);
+  return { ...invitation, inviter: { username: inviter.username, displayName: inviter.displayName } };
+};
+const inviterLabel = (inviter) => inviter ? `${inviter.displayName} (${inviter.username})` : "LoopTalk";
 
-const SUPPORTED_LANGUAGES = new Set(["ko", "ja", "en"]);
 const PREVIEW_COPY = {
   ko: {
     brand: "루프톡",
@@ -83,26 +109,20 @@ const LANDING_COPY = {
   },
 };
 
-const normalizeLanguage = (language) => (
-  SUPPORTED_LANGUAGES.has(language) ? language : "ko"
-);
-const getRequestLanguage = (req) => normalizeLanguage(
-  req.query.lang || req.body?.language || req.get("accept-language")?.slice(0, 2)
-);
-const getPublicUrl = (req) => (
-  process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`
-).replace(/\/$/, "");
+const normalizeLanguage = () => "ko";
+const getRequestLanguage = () => "ko";
+const getRequestOrigin = (req) => `${req.protocol}://${req.get("host")}`.replace(/\/$/, "");
 const getInvitationUrl = (code, language = "ko", req) => (
-  `${getPublicUrl(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
+  `${getRequestOrigin(req)}/api/invitations/open/${encodeURIComponent(code)}?lang=${normalizeLanguage(language)}`
 );
 const getPreviewUrl = (code, language = "ko", req) => (
-  `${getPublicUrl(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
+  `${getRequestOrigin(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
 );
 const getAppUrl = (code) => `looptalk://register?code=${encodeURIComponent(code)}`;
 const getWebRegistrationUrl = (code, req) => {
   const clientUrl = new URL(
     process.env.WEB_CLIENT_URL || "/app/",
-    `${getPublicUrl(req)}/`
+    `${getRequestOrigin(req)}/`
   );
   clientUrl.pathname = `${clientUrl.pathname.replace(/\/?$/, "/")}register`;
   clientUrl.searchParams.set("code", code);
@@ -122,6 +142,14 @@ const getInvitationStatus = (invitation) => {
 };
 
 const getInvitationStats = async (inviterId) => {
+  const owner = await prisma.user.findUnique({ where: { id: inviterId }, select: { authPublicKey: true } });
+  if (owner?.authPublicKey) {
+    const [linksShared, acceptedUsers] = await Promise.all([
+      prisma.privateInvitation.count({ where: { inviterId } }),
+      prisma.privateInvitation.count({ where: { inviterId, status: "ACCEPTED" } }),
+    ]);
+    return { linksShared, acceptedUsers, connections: 0, recentConnections: 0 };
+  }
   const recentThreshold = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const [linksShared, acceptedUsers, contactEdges] = await Promise.all([
     prisma.invitation.count({ where: { inviterId } }),
@@ -161,6 +189,48 @@ router.get("/stats", authMiddleware, async (req, res) => {
 // Create invitation
 router.post("/create", authMiddleware, async (req, res) => {
   try {
+    if (req.body && Object.keys(req.body).some((key) => !["language", "inviterDisplayName"].includes(key))) {
+      return require("../utils/privateAccounts").upgradeRequired(res);
+    }
+    const displayName = req.body?.inviterDisplayName;
+    if (displayName !== undefined && (typeof displayName !== "string" ||
+        !displayName.trim() || displayName.trim().length > 100 || /[\u0000-\u001f\u007f]/.test(displayName))) {
+      return res.status(400).json({ error: "Inviter display name must contain 1–100 characters without control characters" });
+    }
+    const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
+    if (owner?.authPublicKey) {
+      const now = Date.now();
+      for (const [id, record] of privateIssuance) {
+        if (record.start <= now - INVITATION_THROTTLE_WINDOW_MS) privateIssuance.delete(id);
+      }
+      const issued = privateIssuance.get(req.userId) || { start: now, count: 0 };
+      if (issued.count >= PER_USER_INVITATION_LIMIT || privateIssuance.size >= 10000) {
+        return res.status(429).json({ error: "Invitation rate limit reached" });
+      }
+      // Reserve synchronously before any database await so concurrent requests
+      // cannot each observe an unused per-owner allowance.
+      issued.count += 1;
+      privateIssuance.set(req.userId, issued);
+      const counts = await Promise.all([prisma.privateInvitation, prisma.invitation].map((model) => model.count({
+        where: { createdAt: { gte: new Date(now - INVITATION_THROTTLE_WINDOW_MS) } },
+      })));
+      const recent = counts.reduce((sum, count) => sum + count, 0);
+      if (recent >= DAILY_INVITATION_LIMIT) return res.status(429).json({ error: "Daily invitation limit reached" });
+      const code = await createInvitationCode(prisma);
+      const invitation = await prisma.privateInvitation.create({
+        data: {
+          code, inviterId: req.userId, inviterDisplayName: displayName?.trim() || null,
+          expiresAt: new Date(now + 7 * 24 * 60 * 60 * 1000),
+        },
+      });
+      const language = getRequestLanguage(req);
+      return res.status(201).json({
+        id: code, code, status: "CREATED", createdAt: invitation.createdAt, expiresAt: invitation.expiresAt,
+        invitationUrl: getInvitationUrl(code, language, req),
+        previewImageUrl: getPreviewUrl(code, language, req),
+        stats: await getInvitationStats(req.userId),
+      });
+    }
     const windowStart = new Date(Date.now() - INVITATION_THROTTLE_WINDOW_MS);
     const [userRecentCount, totalRecentCount] = await Promise.all([
       prisma.invitation.count({
@@ -183,7 +253,7 @@ router.post("/create", authMiddleware, async (req, res) => {
     }
 
     const language = getRequestLanguage(req);
-    const code = uuidv4().substring(0, 8).toUpperCase();
+    const code = await createInvitationCode(prisma);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const invitation = await prisma.invitation.create({
@@ -209,18 +279,15 @@ router.post("/create", authMiddleware, async (req, res) => {
 });
 
 router.get("/:code/preview.png", async (req, res) => {
-  const code = req.params.code.trim().toUpperCase();
-  if (!/^[A-Z0-9]{8}$/.test(code)) {
+  const code = normalizeInvitationCode(req.params.code);
+  if (!validInvitationCode(code)) {
     return res.status(400).json({ error: "Invalid invitation code" });
   }
 
   const language = getRequestLanguage(req);
   const copy = PREVIEW_COPY[language];
 
-  const invitation = await prisma.invitation.findUnique({
-    where: { code },
-    select: { inviterId: true },
-  });
+  const invitation = await lookupInvitation(code);
   if (!invitation) return res.status(404).json({ error: "Invitation not found" });
 
   const safeCode = escapeHtml(code);
@@ -263,17 +330,12 @@ router.get("/:code/preview.png", async (req, res) => {
 });
 
 router.get("/open/:code", async (req, res) => {
-  const code = req.params.code.trim().toUpperCase();
-  if (!/^[A-Z0-9]{8}$/.test(code)) {
+  const code = normalizeInvitationCode(req.params.code);
+  if (!validInvitationCode(code)) {
     return res.status(400).send("Invalid invitation code");
   }
 
-  const invitation = await prisma.invitation.findUnique({
-    where: { code },
-    include: {
-      inviter: { select: { displayName: true, username: true } },
-    },
-  });
+  const invitation = await lookupInvitation(code);
   if (!invitation) return res.status(404).send("Invitation not found");
 
   const language = getRequestLanguage(req);
@@ -290,13 +352,18 @@ router.get("/open/:code", async (req, res) => {
 
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${res.locals.cspNonce}'; base-uri 'none'`
+    `default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'nonce-${res.locals.cspNonce}'; base-uri 'none'`
   );
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
   res.type("html").send(`<!doctype html>
 <html lang="${language}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f1e8">
+    <script nonce="${escapeHtml(res.locals.cspNonce)}" src="/site/theme.js"></script>
+    <link rel="stylesheet" href="/site/theme.css">
     <meta property="og:type" content="website">
     <meta property="og:title" content="${escapeHtml(title)}">
     <meta property="og:description" content="${escapeHtml(description)}">
@@ -306,29 +373,35 @@ router.get("/open/:code", async (req, res) => {
     <meta name="twitter:card" content="summary_large_image">
     <title>${escapeHtml(title)}</title>
     <style>
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7fafc; color: #111827; font-family: Arial, sans-serif; }
-      main { width: min(560px, calc(100% - 40px)); text-align: center; }
-      .envelope { position: relative; width: 104px; height: 76px; margin: 0 auto 24px; border-radius: 10px; background: #007aff; box-shadow: 0 12px 30px rgba(0, 122, 255, 0.2); }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink); font-family: "Trebuchet MS", "Segoe UI", sans-serif; }
+      main { width: min(560px, calc(100% - 48px)); margin: 32px auto; padding: clamp(24px, 5vw, 48px); border: 1px solid var(--line); border-radius: 20px; background: var(--white); text-align: center; overflow-wrap: anywhere; word-break: keep-all; }
+      .brand { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 32px; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 24px; font-weight: 700; text-decoration: none; }
+      .brand img { width: 40px; height: 40px; }
+      .envelope { position: relative; width: 104px; height: 76px; margin: 0 auto 24px; border-radius: 10px; background: var(--loop-accent); }
       .envelope::before { content: ""; position: absolute; inset: 0; background: linear-gradient(145deg, transparent 48%, white 49% 52%, transparent 53%), linear-gradient(215deg, transparent 48%, white 49% 52%, transparent 53%); }
-      .inviter { margin: 0 0 12px; color: #0066cc; font-weight: 700; }
-      h1 { margin: 28px 0 10px; font-size: 30px; }
-      p { color: #52606d; line-height: 1.5; }
-      a { display: inline-block; margin-top: 14px; padding: 14px 22px; border-radius: 8px; background: #007aff; color: white; font-weight: 700; text-decoration: none; }
+      .inviter { margin: 0 0 12px; color: var(--ink); font-weight: 700; }
+      h1 { margin: 28px 0 10px; font-size: 30px; font-weight: 700; letter-spacing: -.04em; }
+      p { color: var(--muted); line-height: 1.65; }
       .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; }
       .actions a, .actions button { margin: 0; min-width: 112px; border: 0; padding: 14px 22px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; }
-      .actions button { background: #eef2f6; color: #334155; }
-      #countdown { padding: 12px 14px; border: 1px solid #d8e2ec; border-radius: 8px; color: #52606d; font-variant-numeric: tabular-nums; }
+      .actions a { background: var(--loop-accent); color: var(--loop-on-accent); text-decoration: none; }
+      .actions button { background: var(--loop-soft); color: var(--ink); }
+      :focus-visible { outline: 3px solid var(--coral); outline-offset: 4px; }
+      #countdown { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
     </style>
   </head>
-  <body>
+  <body class="site-page">
     <main>
+      <a class="brand" href="/"><img src="/site/app-icon.svg" alt="" width="40" height="40">${escapeHtml(PREVIEW_COPY[language].brand)}</a>
       <div class="envelope" role="img" aria-label="${escapeHtml(copy.imageAlt)}"></div>
-      <p class="inviter">${escapeHtml(invitation.inviter.displayName)}${language === "en" ? " " : ""}${escapeHtml(copy.invitedBy)}</p>
+      <p class="inviter">${escapeHtml(inviterLabel(invitation.inviter))}${language === "en" ? " " : ""}${escapeHtml(copy.invitedBy)}</p>
       <h1>${escapeHtml(title)}</h1>
       <p id="description">${escapeHtml(description)}</p>
       ${isAvailable ? `<div class="actions"><a id="accept" href="${escapeHtml(webRegistrationUrl)}">${escapeHtml(copy.accept)}</a><button id="decline" type="button">${escapeHtml(copy.decline)}</button><span id="countdown">${escapeHtml(copy.expiresIn)}</span></div>` : ""}
     </main>
-    ${isAvailable ? `<script nonce="${escapeHtml(res.locals.cspNonce)}">
+    ${isAvailable ? `<script nonce="${escapeHtml(res.locals.cspNonce)}" src="/site/site.js"></script>
+    <script nonce="${escapeHtml(res.locals.cspNonce)}">
       const expiresAt = ${JSON.stringify(invitation.expiresAt.toISOString())};
       const countdown = document.getElementById("countdown");
       const accept = document.getElementById("accept");
@@ -337,8 +410,12 @@ router.get("/open/:code", async (req, res) => {
       const nativeAppUrl = ${JSON.stringify(appUrl)};
       const webRegistrationUrl = ${JSON.stringify(webRegistrationUrl)};
       accept.addEventListener("click", function (event) {
-        if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
         event.preventDefault();
+        if (!accept.hasAttribute("href")) return;
+        if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+          window.openLoopTalkClient(webRegistrationUrl);
+          return;
+        }
         const fallback = setTimeout(function () {
           window.location.href = webRegistrationUrl;
         }, 900);
@@ -378,41 +455,24 @@ router.get("/open/:code", async (req, res) => {
 // Get invitation info
 router.get("/:code", async (req, res) => {
   try {
-    const code = req.params.code.trim().toUpperCase();
-    if (!/^[A-Z0-9]{8}$/.test(code)) {
+    const code = normalizeInvitationCode(req.params.code);
+    if (!validInvitationCode(code)) {
       return res.status(400).json({ error: "Invalid invitation code" });
     }
 
-    const invitation = await prisma.invitation.findUnique({
-      where: { code },
-      include: {
-        inviter: {
-          select: {
-            id: true,
-            username: true,
-            displayName: true,
-            profilePicture: true,
-          },
-        },
-      },
-    });
+    const invitation = await lookupInvitation(code);
 
     if (!invitation) {
       return res.status(404).json({ error: "Invitation not found" });
     }
 
-    if (invitation.status !== "PENDING") {
-      return res.status(400).json({ error: "Invitation already used or expired" });
-    }
-
-    if (new Date() > invitation.expiresAt) {
-      return res.status(400).json({ error: "Invitation expired" });
-    }
-
+    res.set("Cache-Control", "no-store");
     res.json({
-      inviteeEmail: invitation.inviteeEmail,
-      inviter: invitation.inviter,
+      code,
+      status: invitation.status !== "PENDING" ? "ACCEPTED" :
+        new Date() > invitation.expiresAt ? "EXPIRED" : "PENDING",
       expiresAt: invitation.expiresAt,
+      inviter: invitation.inviter,
     });
   } catch (error) {
     console.error("Error fetching invitation:", error);
@@ -423,10 +483,19 @@ router.get("/:code", async (req, res) => {
 // List invitations sent by user
 router.get("/", authMiddleware, async (req, res) => {
   try {
+    const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
+    if (owner?.authPublicKey) return res.json([]);
     const language = getRequestLanguage(req);
     const invitations = await prisma.invitation.findMany({
       where: { inviterId: req.userId },
       orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        expiresAt: true,
+        createdAt: true,
+      },
     });
 
     res.json(invitations.map((invitation) => ({

@@ -1,20 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from "react-native";
+import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
+import { AppText as Text } from "../../components/AppText";
 import * as Invitations from "../../api/invitations";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { LanguageFooter } from "../../components/LanguageFooter";
 import { showAlert } from "../../utils/showAlert";
+import { normalizeInvitationCode, validInvitationCode } from "../../utils/invitationCode";
 
 export const InvitationScreen = ({ route, navigation }) => {
   const t = useTranslation();
@@ -25,8 +17,8 @@ export const InvitationScreen = ({ route, navigation }) => {
   const [loading, setLoading] = useState(false);
   const requestIdRef = useRef(0);
 
-  const normalizedCode = code.trim().toUpperCase();
-  const isValidCode = /^[A-Z0-9]{8}$/.test(normalizedCode);
+  const normalizedCode = normalizeInvitationCode(code);
+  const isValidCode = validInvitationCode(normalizedCode);
 
   useEffect(() => {
     if (isValidCode) {
@@ -41,11 +33,11 @@ export const InvitationScreen = ({ route, navigation }) => {
     try {
       const info = await Invitations.getInvitationInfo(invitationCode);
       if (requestId !== requestIdRef.current) return;
+      if (info.status !== "PENDING") throw new Error("Invitation unavailable");
       setInviterInfo(info);
       if (proceed) {
         navigation.navigate("Register", {
           invitationCode,
-          inviteeEmail: info.inviteeEmail,
         });
       }
     } catch (error) {
@@ -70,7 +62,6 @@ export const InvitationScreen = ({ route, navigation }) => {
     }
     navigation.navigate("Register", {
       invitationCode: normalizedCode,
-      inviteeEmail: inviterInfo.inviteeEmail,
     });
   };
 
@@ -104,13 +95,13 @@ export const InvitationScreen = ({ route, navigation }) => {
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect={false}
-            maxLength={8}
+            maxLength={64}
             returnKeyType="go"
             onSubmitEditing={handleProceed}
             editable={!loading}
           />
 
-          {inviterInfo && (
+          {inviterInfo?.inviter && (
             <View style={styles.inviterCard}>
               <View style={styles.inviterAvatar}>
                 <Text style={styles.avatarText}>
@@ -120,11 +111,8 @@ export const InvitationScreen = ({ route, navigation }) => {
               <View style={styles.inviterInfo}>
                 <Text style={styles.inviterName}>
                   {inviterInfo.inviter.displayName}
+                  {" ("}{inviterInfo.inviter.username}{")"}
                 </Text>
-                <Text style={styles.inviterUsername}>
-                  @{inviterInfo.inviter.username}
-                </Text>
-                <Text style={styles.inviteeEmail}>{inviterInfo.inviteeEmail}</Text>
               </View>
             </View>
           )}
@@ -141,11 +129,11 @@ export const InvitationScreen = ({ route, navigation }) => {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => navigation.navigate("Login")}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
           </TouchableOpacity>
+          <Text style={styles.invitationHelp}>{t("auth.noInvitationHelp")}</Text>
         </View>
-        <LanguageFooter />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -160,6 +148,7 @@ const createStyles = (colors) => StyleSheet.create({
     flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   header: {
     marginBottom: 40,
@@ -174,6 +163,14 @@ const createStyles = (colors) => StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: colors.secondaryText,
+  },
+  invitationHelp: {
+    color: colors.secondaryText,
+    fontSize: 14,
+    lineHeight: 22,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
   form: {
     gap: 16,

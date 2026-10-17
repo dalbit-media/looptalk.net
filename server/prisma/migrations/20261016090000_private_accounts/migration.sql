@@ -1,0 +1,10 @@
+ALTER TABLE "User" ADD COLUMN "authPublicKey" TEXT;
+ALTER TABLE "User" ADD COLUMN "encryptedVault" TEXT;
+ALTER TABLE "User" ADD COLUMN "vaultRevision" INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX "User_authPublicKey_key" ON "User"("authPublicKey");
+CREATE TABLE "PrivateInvitation" (
+  "code" TEXT NOT NULL PRIMARY KEY,
+  "status" TEXT NOT NULL DEFAULT 'PENDING',
+  "expiresAt" DATETIME NOT NULL,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -1,20 +1,9 @@
 import React, { useState } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Modal,
-  Platform,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  ScrollView,
-} from "react-native";
+import { ActivityIndicator, Linking, Platform, StyleSheet, Switch, TouchableOpacity, View, ScrollView } from "react-native";
+import { UserProfileHeader } from "../../components/UserProfileHeader";
+import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as AuthAPI from "../../api/auth";
-import * as UserAPI from "../../api/users";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
@@ -22,39 +11,32 @@ import { usePreferencesStore } from "../../store/preferencesStore";
 import { t } from "../../i18n/i18n";
 import { showAlert } from "../../utils/showAlert";
 import { getCallPushToken } from "../../utils/callNotifications";
+import { getChatMessageFontSize } from "../../utils/chatTextSize";
 import { API_URL } from "../../config/environment";
 
-const LANGUAGE_OPTIONS = [
-  { value: "ko", label: "한국어" },
-  { value: "en", label: "English" },
-  { value: "ja", label: "日本語" },
-];
-
 const THEME_OPTIONS = ["system", "light", "dark"];
+const CHAT_TEXT_SIZE_OPTIONS = ["standard", "large", "extraLarge"];
 
 export const SettingsScreen = ({ navigation }) => {
   const logout = useAuthStore((state) => state.logout);
-  const updateUser = useAuthStore((state) => state.updateUser);
   const cleanup = useMessageStore((state) => state.cleanup);
   const user = useAuthStore((state) => state.user);
   const token = useAuthStore((state) => state.token);
-  const language = usePreferencesStore((state) => state.language);
   const themeMode = usePreferencesStore((state) => state.themeMode);
+  const chatTextSize = usePreferencesStore((state) => state.chatTextSize);
   const notificationsEnabled = usePreferencesStore(
     (state) => state.notificationsEnabled
   );
-  const updateLanguage = usePreferencesStore((state) => state.setLanguage);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
+  const setChatTextSize = usePreferencesStore((state) => state.setChatTextSize);
   const setNotificationsEnabled = usePreferencesStore(
     (state) => state.setNotificationsEnabled
   );
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
 
-  const [usernameVisible, setUsernameVisible] = useState(false);
-  const [username, setUsername] = useState(user?.username || "");
-  const [savingUsername, setSavingUsername] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [externalLinksExpanded, setExternalLinksExpanded] = useState(false);
 
   const handleNotificationsChange = async (enabled) => {
     if (!enabled) {
@@ -152,83 +134,23 @@ export const SettingsScreen = ({ navigation }) => {
     });
   };
 
-  const handleUsernameUpdate = async () => {
-    if (savingUsername) return;
-    const normalizedUsername = username.trim();
-    if (!/^[a-zA-Z0-9_]{3,24}$/.test(normalizedUsername)) {
-      showAlert(t("common.error"), t("settings.usernameInvalid"));
-      return;
-    }
-
-    setSavingUsername(true);
-    try {
-      const updatedUser = await UserAPI.updateProfile(
-        { username: normalizedUsername },
-        token
-      );
-      updateUser(updatedUser);
-      setUsernameVisible(false);
-      showAlert(t("common.success"), t("settings.usernameUpdated"));
-    } catch (error) {
-      showAlert(
-        t("common.error"),
-        error.response?.status === 409
-          ? t("settings.usernameTaken")
-          : t("common.error")
-      );
-    } finally {
-      setSavingUsername(false);
-    }
-  };
-
   if (!user) return null;
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <UserProfileHeader user={user} editable />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.account")}</Text>
 
         <TouchableOpacity
           style={styles.settingItem}
-          onPress={() =>
-            navigation.navigate("Contacts", {
-              screen: "Profile",
-              params: { userId: user.id, name: user.displayName },
-            })
-          }
+          onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
         >
-          <Ionicons name="person" size={20} color={colors.primary} />
+          <Ionicons name="link" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.profile")}</Text>
-            <Text style={styles.settingValue}>{user.displayName}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => {
-            setUsername(user.username);
-            setUsernameVisible(true);
-          }}
-        >
-          <Ionicons name="at" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.username")}</Text>
-            <Text style={styles.settingValue}>@{user.username}</Text>
-          </View>
-          <Ionicons name="create-outline" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => openPublicPage("/privacy")}
-        >
-          <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.privacy")}</Text>
+            <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
             <Text style={styles.settingValue}>
-              {t("settings.privacyPolicyDescription")}
+              {t("settings.myInvitationsDescription")}
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
@@ -248,34 +170,6 @@ export const SettingsScreen = ({ navigation }) => {
         <Text style={styles.sectionTitle}>{t("settings.preferences")}</Text>
 
         <View style={styles.settingItem}>
-          <Ionicons name="language" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.language")}</Text>
-          </View>
-          <View style={styles.segmentedControl}>
-            {LANGUAGE_OPTIONS.map((option) => (
-              <TouchableOpacity
-                key={option.value}
-                style={[
-                  styles.segment,
-                  language === option.value && styles.segmentSelected,
-                ]}
-                onPress={() => updateLanguage(option.value)}
-              >
-                <Text
-                  style={[
-                    styles.segmentText,
-                    language === option.value && styles.segmentTextSelected,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.settingItem}>
           <Ionicons name="notifications" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
             <Text style={styles.settingLabel}>{t("settings.notifications")}</Text>
@@ -288,6 +182,50 @@ export const SettingsScreen = ({ navigation }) => {
             onValueChange={handleNotificationsChange}
             trackColor={{ false: colors.border, true: colors.primary }}
           />
+        </View>
+
+        <View style={styles.modeItem}>
+          <View style={styles.modeHeading}>
+            <Ionicons name="text" size={20} color={colors.primary} />
+            <View style={styles.settingContent}>
+              <Text style={styles.settingLabel}>{t("settings.chatTextSize")}</Text>
+              <Text style={styles.settingValue}>
+                {t("settings.chatTextSizeDescription")}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.textSizeControl}>
+            {CHAT_TEXT_SIZE_OPTIONS.map((option) => {
+              const selected = chatTextSize === option;
+              const sampleSize = getChatMessageFontSize(option);
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.textSizeOption, selected && styles.segmentSelected]}
+                  onPress={() => setChatTextSize(option)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={t(`settings.chatTextSize.${option}`)}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={[
+                      styles.textSizeSample,
+                      { fontSize: sampleSize, color: selected ? "#FFFFFF" : colors.text },
+                    ]}
+                    allowGlobalTextScale={false}
+                  >
+                    Aa
+                  </Text>
+                  <Text
+                    style={[styles.textSizeLabel, selected && styles.segmentTextSelected]}
+                  >
+                    {t(`settings.chatTextSize.${option}`)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.modeItem}>
@@ -333,38 +271,6 @@ export const SettingsScreen = ({ navigation }) => {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.helpSupport")}</Text>
 
-        <TouchableOpacity style={styles.settingItem} onPress={() => openPublicPage("/support")}>
-          <Ionicons name="help-buoy" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.support")}</Text>
-            <Text style={styles.settingValue}>{t("settings.supportDescription")}</Text>
-          </View>
-          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.settingItem} onPress={() => openPublicPage("/terms")}>
-          <Ionicons name="document-text" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.terms")}</Text>
-            <Text style={styles.settingValue}>{t("settings.termsDescription")}</Text>
-          </View>
-          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
-        >
-          <Ionicons name="link" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
-            <Text style={styles.settingValue}>
-              {t("settings.myInvitationsDescription")}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
-
         <TouchableOpacity style={styles.settingItem} onPress={handleAbout}>
           <Ionicons name="information-circle" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
@@ -373,6 +279,71 @@ export const SettingsScreen = ({ navigation }) => {
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => setExternalLinksExpanded((expanded) => !expanded)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: externalLinksExpanded }}
+        >
+          <Ionicons name="open-outline" size={20} color={colors.primary} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("settings.externalLinks")}</Text>
+          </View>
+          <Ionicons
+            name={externalLinksExpanded ? "chevron-up" : "chevron-down"}
+            size={20}
+            color={colors.mutedText}
+          />
+        </TouchableOpacity>
+        {externalLinksExpanded && (
+          <View style={styles.externalLinksContent}>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => openPublicPage("/privacy")}
+            >
+              <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
+              <View style={styles.settingContent}>
+                <Text style={styles.settingLabel}>{t("settings.privacy")}</Text>
+                <Text style={styles.settingValue}>
+                  {t("settings.privacyPolicyDescription")}
+                </Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => openPublicPage("/support")}
+            >
+              <Ionicons name="help-buoy" size={20} color={colors.primary} />
+              <View style={styles.settingContent}>
+                <Text style={styles.settingLabel}>{t("settings.support")}</Text>
+                <Text style={styles.settingValue}>{t("settings.supportDescription")}</Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => openPublicPage("/terms")}
+            >
+              <Ionicons name="document-text" size={20} color={colors.primary} />
+              <View style={styles.settingContent}>
+                <Text style={styles.settingLabel}>{t("settings.terms")}</Text>
+                <Text style={styles.settingValue}>{t("settings.termsDescription")}</Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => openPublicPage("/account-deletion")}
+            >
+              <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
+              <View style={styles.settingContent}>
+                <Text style={styles.settingLabel}>{t("settings.deletionHelp")}</Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={colors.mutedText} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -400,16 +371,6 @@ export const SettingsScreen = ({ navigation }) => {
             <Text style={styles.settingValue}>{t("settings.deleteAccountDescription")}</Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => openPublicPage("/account-deletion")}
-        >
-          <Ionicons name="information-circle-outline" size={20} color={colors.secondaryText} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.deletionHelp")}</Text>
-          </View>
-          <Ionicons name="open-outline" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
       </View>
 
       <View style={styles.footer}>
@@ -417,52 +378,6 @@ export const SettingsScreen = ({ navigation }) => {
         <Text style={styles.footerSubtext}>{t("settings.footer")}</Text>
       </View>
 
-      <Modal
-        visible={usernameVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setUsernameVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{t("settings.changeUsername")}</Text>
-            <TextInput
-              style={styles.input}
-              value={username}
-              onChangeText={setUsername}
-              placeholder={t("settings.usernameHint")}
-              placeholderTextColor={colors.mutedText}
-              autoCapitalize="none"
-              autoCorrect={false}
-              maxLength={24}
-              returnKeyType="done"
-              onSubmitEditing={handleUsernameUpdate}
-              editable={!savingUsername}
-            />
-            <Text style={styles.inputHint}>{t("settings.usernameHint")}</Text>
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.modalButton}
-                onPress={() => setUsernameVisible(false)}
-                disabled={savingUsername}
-              >
-                <Text style={styles.modalCancel}>{t("common.cancel")}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalPrimary]}
-                onPress={handleUsernameUpdate}
-                disabled={savingUsername || username.trim() === user.username}
-              >
-                {savingUsername ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalPrimaryText}>{t("common.save")}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 };
@@ -512,6 +427,11 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.mutedText,
     marginTop: 2,
   },
+  externalLinksContent: {
+    paddingLeft: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
   dangerItem: {
     backgroundColor: colors.dangerSoft,
   },
@@ -556,11 +476,37 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  themeOption: {
+  textSizeControl: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  textSizeOption: {
     flex: 1,
-    minHeight: 48,
+    minWidth: 0,
+    minHeight: 72,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: colors.input,
+    paddingHorizontal: 3,
+  },
+  textSizeSample: {
+    fontWeight: "700",
+  },
+  textSizeLabel: {
+    color: colors.secondaryText,
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 3,
+    textAlign: "center",
+  },
+  themeOption: {
+    flex: 1,
+    minHeight: 56,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: colors.input,
   },
@@ -569,6 +515,7 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     marginTop: 3,
+    textAlign: "center",
   },
   footer: {
     alignItems: "center",
@@ -584,62 +531,5 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 12,
     color: colors.mutedText,
     marginTop: 4,
-  },
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
-    backgroundColor: "rgba(0, 0, 0, 0.55)",
-  },
-  modalContent: {
-    backgroundColor: colors.surface,
-    borderRadius: 8,
-    padding: 20,
-  },
-  modalTitle: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 16,
-  },
-  input: {
-    color: colors.text,
-    backgroundColor: colors.input,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 16,
-  },
-  inputHint: {
-    color: colors.mutedText,
-    fontSize: 12,
-    marginTop: 8,
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 20,
-  },
-  modalButton: {
-    minHeight: 44,
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  modalPrimary: {
-    minWidth: 130,
-    alignItems: "center",
-    backgroundColor: colors.primary,
-  },
-  modalCancel: {
-    color: colors.secondaryText,
-    fontWeight: "600",
-  },
-  modalPrimaryText: {
-    color: "#FFFFFF",
-    fontWeight: "600",
   },
 });

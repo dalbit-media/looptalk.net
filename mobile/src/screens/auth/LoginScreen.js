@@ -1,22 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
+import { AppText as Text } from "../../components/AppText";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuthStore } from "../../store/authStore";
 import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { SocialAuthButtons } from "../../components/SocialAuthButtons";
-import { LanguageFooter } from "../../components/LanguageFooter";
 import { BrandMark } from "../../components/BrandMark";
+import { normalizeIdentifier } from "../../utils/accountPrivacy";
 
 export const LoginScreen = ({ navigation }) => {
   const t = useTranslation();
@@ -24,12 +16,15 @@ export const LoginScreen = ({ navigation }) => {
   const styles = createStyles(colors);
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [legacyMigration, setLegacyMigration] = useState(false);
+  const prepareLegacyMigration = useAuthStore((state) => state.prepareLegacyMigration);
+  const completeLegacyMigration = useAuthStore((state) => state.completeLegacyMigration);
+  const cancelLegacyMigration = useAuthStore((state) => state.cancelLegacyMigration);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
-  const passwordInputRef = useRef(null);
-
   const login = useAuthStore((state) => state.login);
+  const initializationError = useAuthStore((state) => state.initializationError);
 
   useEffect(() => {
     AuthAPI.getBootstrapStatus()
@@ -48,15 +43,34 @@ export const LoginScreen = ({ navigation }) => {
     setErrorMessage("");
     setLoading(true);
     try {
-      await login(identifier.trim(), password);
+      const normalized = normalizeIdentifier(identifier);
+      await login(normalized, password);
+      setPassword("");
     } catch (error) {
-      if (!error.response) {
+      if (error.request && !error.response) {
         setErrorMessage(t("auth.serverUnavailable"));
-      } else if (error.response.status === 401) {
-        setErrorMessage(t("auth.invalidCredentials"));
+      } else if (error.response?.status === 426) {
+        setLegacyMigration(true);
+        setErrorMessage(t("auth.legacyMigrationNotice"));
       } else {
-        setErrorMessage(error.response.data?.error || t("common.error"));
+        setErrorMessage(t("auth.invalidCredentials"));
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMigration = async () => {
+    if (loading) return;
+    setLoading(true);
+    setErrorMessage("");
+    try {
+      await prepareLegacyMigration(normalizeIdentifier(identifier), password);
+      await completeLegacyMigration();
+      setPassword("");
+    } catch {
+      await cancelLegacyMigration();
+      setErrorMessage(t("auth.legacyMigrationFailed"));
     } finally {
       setLoading(false);
     }
@@ -67,6 +81,16 @@ export const LoginScreen = ({ navigation }) => {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      {navigation.canGoBack() && (
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.back")}
+        >
+          <Ionicons name="chevron-back" size={28} color={colors.primary} />
+        </TouchableOpacity>
+      )}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -75,44 +99,52 @@ export const LoginScreen = ({ navigation }) => {
           <BrandMark size={72} />
           <Text style={styles.title}>{t("brand.name")}</Text>
           <Text style={styles.subtitle}>{t("auth.loginSubtitle")}</Text>
+          <Text style={styles.sessionNotice}>{t("auth.persistentSessionNotice")}</Text>
         </View>
 
         <View style={styles.form}>
+          {initializationError && !errorMessage && (
+            <Text style={styles.errorText} accessibilityRole="alert">
+              {t("auth.sessionExpired")}
+            </Text>
+          )}
           <TextInput
             style={styles.input}
+            accessibilityLabel={t("auth.identifier")}
             placeholder={t("auth.identifier")}
             placeholderTextColor={colors.mutedText}
             value={identifier}
             onChangeText={(value) => {
               setIdentifier(value);
+              setLegacyMigration(false);
               setErrorMessage("");
             }}
-            keyboardType="default"
             autoCapitalize="none"
-            autoComplete="username"
+            autoCorrect={false}
+            autoComplete="off"
+            textContentType="none"
+            importantForAutofill="no"
             maxLength={254}
-            returnKeyType="next"
-            onSubmitEditing={() => passwordInputRef.current?.focus()}
-            blurOnSubmit={false}
-            editable={!loading}
-          />
-
-          <TextInput
-            ref={passwordInputRef}
-            style={styles.input}
-            placeholder={t("auth.password")}
-            placeholderTextColor={colors.mutedText}
-            value={password}
-            onChangeText={(value) => {
-              setPassword(value);
-              setErrorMessage("");
-            }}
-            secureTextEntry
-            autoComplete="current-password"
-            maxLength={128}
             returnKeyType="go"
             onSubmitEditing={handleLogin}
             editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            accessibilityLabel={t("auth.password")}
+            placeholder={t("auth.password")}
+            placeholderTextColor={colors.mutedText}
+            value={password}
+            onChangeText={(value) => { setPassword(value); setErrorMessage(""); setLegacyMigration(false); }}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="current-password"
+            textContentType="password"
+            maxLength={128}
+            editable={!loading}
+            returnKeyType="go"
+            onSubmitEditing={handleLogin}
           />
 
           {errorMessage ? (
@@ -137,7 +169,11 @@ export const LoginScreen = ({ navigation }) => {
             )}
           </TouchableOpacity>
 
-          <SocialAuthButtons disabled={loading} />
+          {legacyMigration && (
+            <TouchableOpacity onPress={handleMigration} disabled={loading}>
+              <Text style={styles.link}>{t("auth.migrateAccount")}</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             onPress={() => navigation.navigate(
@@ -153,7 +189,6 @@ export const LoginScreen = ({ navigation }) => {
             </Text>
           </TouchableOpacity>
         </View>
-        <LanguageFooter />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -183,6 +218,13 @@ const createStyles = (colors) => StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: colors.secondaryText,
+  },
+  sessionNotice: {
+    marginTop: 12,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+    color: colors.mutedText,
   },
   form: {
     gap: 16,
@@ -221,5 +263,15 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.primary,
     fontSize: 14,
     marginTop: 16,
+  },
+  backButton: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 56 : 16,
+    left: 12,
+    zIndex: 1,
+    padding: 8,
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: "center",
   },
 });

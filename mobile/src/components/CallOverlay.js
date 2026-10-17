@@ -1,16 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  Vibration,
-  Platform,
-  Animated,
-  PanResponder,
-  Dimensions,
-} from "react-native";
+import { View, StyleSheet, TouchableOpacity, Modal, Vibration, Platform, Animated, PanResponder, Dimensions } from "react-native";
+import { AppText as Text } from "./AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useCallStore } from "../store/callStore";
 import { useAppTheme } from "../hooks/useAppTheme";
@@ -52,6 +42,12 @@ export const CallOverlay = () => {
   const isMuted = useCallStore((state) => state.isMuted);
   const isCameraOff = useCallStore((state) => state.isCameraOff);
   const isScreenSharing = useCallStore((state) => state.isScreenSharing);
+  const isChangingMedia = useCallStore((state) => state.isChangingMedia);
+  const remoteVideoActive = useCallStore((state) => state.remoteVideoActive);
+  const remoteMediaState = useCallStore((state) => state.remoteMediaState);
+  const microphoneUnavailable = useCallStore((state) => state.microphoneUnavailable);
+  const isRestoringMicrophone = useCallStore((state) => state.isRestoringMicrophone);
+  const isVideoCallingSupported = useCallStore((state) => state.isVideoCallingSupported);
   const isScreenSharingSupported = useCallStore((state) => state.isScreenSharingSupported);
   const isSpeakerOn = useCallStore((state) => state.isSpeakerOn);
   const networkQuality = useCallStore((state) => state.networkQuality);
@@ -68,6 +64,8 @@ export const CallOverlay = () => {
   const setMinimized = useCallStore((state) => state.setMinimized);
 
   const [elapsed, setElapsed] = useState(0);
+  const [audioPlaybackBlocked, setAudioPlaybackBlocked] = useState(false);
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const timerRef = useRef(null);
 
   useEffect(() => prepareIncomingRingtone(), []);
@@ -125,14 +123,16 @@ export const CallOverlay = () => {
   ).current;
 
   useEffect(() => {
-    if (call?.status === "connected") {
-      setElapsed(0);
-      timerRef.current = setInterval(() => setElapsed((seconds) => seconds + 1), 1000);
+    if (call?.connectedAt) {
+      const update = () => setElapsed(Math.max(0, Math.floor((Date.now() - call.connectedAt) / 1000)));
+      update();
+      timerRef.current = setInterval(update, 1000);
       return () => clearInterval(timerRef.current);
     }
     if (timerRef.current) clearInterval(timerRef.current);
+    setElapsed(0);
     return undefined;
-  }, [call?.status]);
+  }, [call?.callId, call?.connectedAt]);
 
   useEffect(() => {
     if (call?.status === "ringing" && call.direction === "incoming") {
@@ -157,7 +157,6 @@ export const CallOverlay = () => {
   const isReconnecting = call.status === "reconnecting";
   const canMinimize = call.status === "connected" || isReconnecting;
   const showVideo =
-    call.callType === "video" &&
     (call.status === "connecting" || call.status === "connected" || isReconnecting);
   const localPreviewStream = isScreenSharing ? screenStream : localStream;
 
@@ -166,15 +165,56 @@ export const CallOverlay = () => {
       if (isScreenSharing) await stopScreenShare();
       else await startScreenShare();
     } catch (error) {
+      console.error("Unable to change screen sharing:", error);
       if (error?.name !== "NotAllowedError") {
         showAlert(t("common.error"), t("calls.screenShareFailed"));
       }
     }
   };
 
+  const handleMute = async () => {
+    try {
+      await toggleMute();
+    } catch (error) {
+      console.error("Unable to restore microphone:", error);
+      showAlert(t("common.error"), t("calls.microphoneUnavailable"));
+    }
+  };
+
+  const handleCamera = async () => {
+    try {
+      if (isScreenSharing) {
+        const stopped = await stopScreenShare();
+        if (stopped === false || useCallStore.getState().call?.callId !== call.callId) return;
+        if (!isCameraOff) return;
+      }
+      await toggleCamera();
+    } catch (error) {
+      console.error("Unable to enable camera:", error);
+      showAlert(t("common.error"), t("calls.cameraUnavailable"));
+    }
+  };
+
+  const handleAcceptCall = async () => {
+    const accepted = await acceptCall();
+    if (accepted === "CALL_CANCELLED") return;
+    if (accepted !== true) {
+      showAlert(t("common.error"), t(
+        accepted === "CALL_PERMISSION_DENIED"
+          ? "calls.mediaPermissionDenied"
+          : accepted === "CALL_DEVICE_UNAVAILABLE" ? "calls.deviceNotFound"
+            : accepted === "CALL_SIGNALING_UNAVAILABLE" ? "calls.signalingUnavailable" : "calls.callFailed"
+      ));
+    }
+  };
+
   const statusLabel = () => {
     if (call.status === "declined") return t("calls.declined");
-    if (call.status === "ended") return t("calls.ended");
+    if (call.status === "ended") {
+      if (call.endReason === "unanswered") return t("calls.unanswered");
+      if (call.endReason === "connection-lost" || call.endReason === "connection-failed") return t("calls.connectionFailed");
+      return t("calls.ended");
+    }
     if (isReconnecting) return t("calls.reconnecting");
     if (call.status === "connected") return formatElapsed(elapsed);
     if (call.status === "connecting") return t("calls.connecting");
@@ -186,9 +226,14 @@ export const CallOverlay = () => {
 
   if (minimized && canMinimize) {
     return (
+      <>
+        <RemoteAudio stream={remoteStream} onPlaybackBlocked={setAudioPlaybackBlocked} playbackAttempt={playbackAttempt} />
       <TouchableOpacity
         style={styles.minimizedPill}
-        onPress={() => setMinimized(false)}
+        onPress={() => {
+          setPlaybackAttempt((attempt) => attempt + 1);
+          setMinimized(false);
+        }}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={t("calls.returnToCall")}
@@ -198,10 +243,13 @@ export const CallOverlay = () => {
           {peerName} · {statusLabel()}
         </Text>
       </TouchableOpacity>
+      </>
     );
   }
 
   return (
+    <>
+      <RemoteAudio stream={remoteStream} onPlaybackBlocked={setAudioPlaybackBlocked} playbackAttempt={playbackAttempt} />
     <Modal
       visible
       transparent
@@ -210,12 +258,11 @@ export const CallOverlay = () => {
       onRequestClose={() => {}}
     >
       <View style={styles.container}>
-        <RemoteAudio stream={remoteStream} />
-        {showVideo && remoteStream ? (
+        {showVideo && remoteStream && remoteVideoActive && remoteMediaState?.video !== "none" ? (
           <VideoStream
             stream={remoteStream}
             style={StyleSheet.absoluteFill}
-            objectFit="cover"
+            objectFit={remoteMediaState?.video === "camera" ? "cover" : "contain"}
           />
         ) : (
           <View style={styles.avatarWrap}>
@@ -233,7 +280,7 @@ export const CallOverlay = () => {
             <VideoStream
               stream={localPreviewStream}
               style={StyleSheet.absoluteFill}
-              objectFit="cover"
+              objectFit={isScreenSharing ? "contain" : "cover"}
               mirror={!isScreenSharing}
             />
           </Animated.View>
@@ -244,6 +291,10 @@ export const CallOverlay = () => {
           <Text style={[styles.statusText, isReconnecting && styles.statusTextWarning]}>
             {statusLabel()}
           </Text>
+          {remoteMediaState?.muted && <Text style={styles.statusText}>{t("calls.peerMuted")}</Text>}
+          {remoteMediaState?.video === "screen" && <Text style={styles.statusText}>{t("calls.peerSharing")}</Text>}
+          {isScreenSharing && <Text style={styles.statusText}>{t("calls.sharingScreen")}</Text>}
+          {microphoneUnavailable && <Text style={styles.qualityText}>{t("calls.microphoneUnavailable")}</Text>}
           {call.status === "connected" && networkQuality !== "good" && (
             <Text style={styles.qualityText}>
               {t(`calls.connection${networkQuality === "poor" ? "Poor" : "Fair"}`)}
@@ -268,23 +319,44 @@ export const CallOverlay = () => {
               <View style={styles.incomingRow}>
                 <TouchableOpacity
                   style={[styles.circleButton, styles.declineButton]}
-                  onPress={declineCall}
+                  onPress={() => declineCall()}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("calls.decline")}
                 >
                   <Ionicons name="call" size={28} color="#fff" style={styles.hangupIcon} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.circleButton, styles.acceptButton]}
-                  onPress={acceptCall}
+                  onPress={handleAcceptCall}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("calls.accept")}
                 >
                   <Ionicons name="call" size={28} color="#fff" />
                 </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.activeRow}>
-                <TouchableOpacity style={styles.controlButton} onPress={toggleMute}>
+                {audioPlaybackBlocked && (
+                  <TouchableOpacity
+                    style={styles.audioRetryButton}
+                    onPress={() => setPlaybackAttempt((attempt) => attempt + 1)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("calls.enableAudio")}
+                  >
+                    <Text style={styles.audioRetryText}>{t("calls.enableAudio")}</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={handleMute}
+                  disabled={isRestoringMicrophone}
+                  accessibilityRole="button"
+                  accessibilityLabel={t(microphoneUnavailable ? "calls.restoreMicrophone" : isMuted ? "calls.unmute" : "calls.mute")}
+                  accessibilityState={{ disabled: isRestoringMicrophone }}
+                >
                   <Ionicons name={isMuted ? "mic-off" : "mic"} size={22} color="#fff" />
                 </TouchableOpacity>
-                {call.callType === "audio" && (
+                {Platform.OS !== "web" && (
                   <TouchableOpacity
                     style={[styles.controlButton, isSpeakerOn && styles.controlButtonActive]}
                     onPress={toggleSpeaker}
@@ -297,15 +369,26 @@ export const CallOverlay = () => {
                     />
                   </TouchableOpacity>
                 )}
-                {call.callType === "video" && (
+                {isVideoCallingSupported && call.status === "connected" && (
                   <>
-                    {!isScreenSharing && (
-                      <TouchableOpacity style={styles.controlButton} onPress={toggleCamera} accessibilityLabel={t("calls.toggleCamera")}>
-                        <Ionicons name={isCameraOff ? "videocam-off" : "videocam"} size={22} color="#fff" />
+                      <TouchableOpacity
+                        style={[styles.controlButton, !isCameraOff && !isScreenSharing && styles.controlButtonActive]}
+                        onPress={handleCamera}
+                        disabled={isChangingMedia}
+                        accessibilityLabel={t("calls.toggleCamera")}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: isChangingMedia }}
+                      >
+                        <Ionicons name={isCameraOff || isScreenSharing ? "videocam-off" : "videocam"} size={22} color="#fff" />
                       </TouchableOpacity>
-                    )}
-                    {!isScreenSharing && (
-                      <TouchableOpacity style={styles.controlButton} onPress={switchCamera} accessibilityLabel={t("calls.switchCamera")}>
+                    {Platform.OS !== "web" && !isCameraOff && !isScreenSharing && (
+                      <TouchableOpacity
+                        style={styles.controlButton}
+                        onPress={switchCamera}
+                        disabled={isChangingMedia}
+                        accessibilityRole="button"
+                        accessibilityLabel={t("calls.switchCamera")}
+                      >
                         <Ionicons name="camera-reverse" size={22} color="#fff" />
                       </TouchableOpacity>
                     )}
@@ -313,6 +396,9 @@ export const CallOverlay = () => {
                       <TouchableOpacity
                         style={[styles.controlButton, isScreenSharing && styles.controlButtonActive]}
                         onPress={handleScreenShare}
+                        disabled={isChangingMedia}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: isChangingMedia }}
                         accessibilityLabel={t(isScreenSharing ? "calls.stopScreenShare" : "calls.startScreenShare")}
                       >
                         <Ionicons name={isScreenSharing ? "stop-circle" : "desktop-outline"} size={22} color="#fff" />
@@ -322,7 +408,9 @@ export const CallOverlay = () => {
                 )}
                 <TouchableOpacity
                   style={[styles.circleButton, styles.declineButton]}
-                  onPress={endCall}
+                  onPress={() => endCall()}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("calls.endCall")}
                 >
                   <Ionicons name="call" size={26} color="#fff" style={styles.hangupIcon} />
                 </TouchableOpacity>
@@ -332,6 +420,7 @@ export const CallOverlay = () => {
         )}
       </View>
     </Modal>
+    </>
   );
 };
 
@@ -450,7 +539,9 @@ const createStyles = (colors) =>
       flexDirection: "row",
       justifyContent: "center",
       alignItems: "center",
-      gap: 20,
+      flexWrap: "wrap",
+      paddingHorizontal: 12,
+      gap: 12,
     },
     circleButton: {
       width: 64,
@@ -478,5 +569,19 @@ const createStyles = (colors) =>
     },
     controlButtonActive: {
       backgroundColor: colors.primary,
+    },
+    audioRetryButton: {
+      minHeight: 44,
+      maxWidth: 160,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      backgroundColor: colors.primary,
+      justifyContent: "center",
+    },
+    audioRetryText: {
+      color: "#fff",
+      fontSize: 14,
+      textAlign: "center",
     },
   });

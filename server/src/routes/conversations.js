@@ -1,8 +1,16 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const { pruneSecureRecipient, secureTransaction } = require("../utils/secureRelay");
 
 const router = express.Router();
+router.use(authMiddleware, (req, res, next) => {
+  if (["POST", "PUT", "PATCH"].includes(req.method) &&
+      req.body && Object.hasOwn(req.body, "name")) {
+    return require("../utils/privateAccounts").upgradeRequired(res);
+  }
+  next();
+});
 const GROUP_MANAGERS = new Set(["OWNER", "ADMIN"]);
 
 const PARTICIPANT_INCLUDE = {
@@ -12,8 +20,8 @@ const PARTICIPANT_INCLUDE = {
         select: {
           id: true,
           username: true,
-          displayName: true,
-          profilePicture: true,
+          publicUsername: true,
+          publicDisplayName: true,
         },
       },
     },
@@ -26,13 +34,14 @@ const LAST_MESSAGE_INCLUDE = {
     orderBy: { createdAt: "desc" },
     include: {
       sender: {
-        select: { id: true, username: true, displayName: true, profilePicture: true },
+        select: { id: true, username: true, publicUsername: true, publicDisplayName: true },
       },
     },
   },
 };
 
 const relayConversationUpdate = (req, conversation) => {
+  conversation = require("../utils/privateAccounts").sanitizeIdentity(conversation);
   const io = req.app.get("io");
   conversation.participants.forEach((participant) => {
     io.to(`user_${participant.userId}`).emit("conversation_updated", conversation);
@@ -57,7 +66,9 @@ router.get("/", authMiddleware, async (req, res) => {
         const unreadCount = await prisma.message.count({
           where: {
             conversationId: cp.conversationId,
-            senderId: { not: req.userId },
+            ...(cp.conversation.kind === "WELCOME"
+              ? { OR: [{ senderId: { not: req.userId } }, { messageType: "SYSTEM" }] }
+              : { senderId: { not: req.userId } }),
             deletedAt: null,
             createdAt: { gt: cp.lastReadAt || new Date(0) },
           },
@@ -93,6 +104,9 @@ router.post("/direct/:userId", authMiddleware, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+    if (user.status === "SYSTEM") {
+      return res.status(400).json({ error: "Use the welcome conversation to contact LoopTalk" });
+    }
 
     const block = await prisma.block.findFirst({
       where: {
@@ -111,6 +125,7 @@ router.post("/direct/:userId", authMiddleware, async (req, res) => {
     let conversation = await prisma.conversation.findFirst({
       where: {
         isGroupChat: false,
+        kind: "CHAT",
         participants: {
           some: { userId: req.userId },
           every: { userId: { in: [req.userId, userId] } },
@@ -438,7 +453,10 @@ router.delete("/:id/members/:userId", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "You cannot remove this member" });
     }
 
-    await prisma.conversationParticipant.delete({ where: { id: target.id } });
+    await secureTransaction(prisma, async (transaction) => {
+      await transaction.conversationParticipant.delete({ where: { id: target.id } });
+      await pruneSecureRecipient(transaction, req.params.id, target.userId);
+    });
     const conversation = await prisma.conversation.findUnique({
       where: { id: req.params.id },
       include: PARTICIPANT_INCLUDE,
@@ -486,7 +504,7 @@ router.post("/:id/leave", authMiddleware, async (req, res) => {
     if (remaining.length === 0) {
       await prisma.conversation.delete({ where: { id: req.params.id } });
     } else {
-      await prisma.$transaction(async (transaction) => {
+      await secureTransaction(prisma, async (transaction) => {
         if (participant.role === "OWNER") {
           const successor = remaining.find((member) => member.role === "ADMIN") || remaining[0];
           await transaction.conversationParticipant.update({
@@ -495,6 +513,7 @@ router.post("/:id/leave", authMiddleware, async (req, res) => {
           });
         }
         await transaction.conversationParticipant.delete({ where: { id: participant.id } });
+        await pruneSecureRecipient(transaction, req.params.id, req.userId);
       });
       const conversation = await prisma.conversation.findUnique({
         where: { id: req.params.id },
@@ -511,4 +530,3 @@ router.post("/:id/leave", authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
-

@@ -3,6 +3,12 @@ const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
+router.use(authMiddleware, (req, res, next) => {
+  if (["POST", "PUT", "PATCH"].includes(req.method)) {
+    return require("../utils/privateAccounts").upgradeRequired(res);
+  }
+  next();
+});
 const CONTACT_GROUPS = new Set([
   "Family 1", "Family 2", "All Contacts 1", "All Contacts 2", "Work 1", "Work 2",
   "Project 1", "Project 2", "School 1", "School 2", "Class 1", "Class 2",
@@ -18,9 +24,12 @@ router.get("/", authMiddleware, async (req, res) => {
           select: {
             id: true,
             username: true,
+            publicUsername: true,
+            publicDisplayName: true,
             displayName: true,
             profilePicture: true,
             status: true,
+            lastActiveAt: true,
           },
         },
       },
@@ -56,10 +65,13 @@ router.get("/:id", authMiddleware, async (req, res) => {
           select: {
             id: true,
             username: true,
+            publicUsername: true,
+            publicDisplayName: true,
             displayName: true,
             profilePicture: true,
             bio: true,
             status: true,
+            lastActiveAt: true,
           },
         },
       },
@@ -128,8 +140,11 @@ router.post("/", authMiddleware, async (req, res) => {
           select: {
             id: true,
             username: true,
+            publicUsername: true,
+            publicDisplayName: true,
             displayName: true,
             profilePicture: true,
+            lastActiveAt: true,
           },
         },
       },

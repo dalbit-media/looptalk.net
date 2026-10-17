@@ -1,17 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-  Image,
-  Linking,
-} from "react-native";
+import { View, StyleSheet, FlatList, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking } from "react-native";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
+import { AppText as Text } from "../../components/AppText";
+import { UserPresence } from "../../components/UserPresence";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
@@ -28,10 +19,15 @@ import { HighlightText } from "../../components/HighlightText";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useCallStore } from "../../store/callStore";
+import { useContactStore } from "../../store/contactStore";
+import { contactDisplayNames, resolveDisplayName } from "../../utils/contactDisplayName";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { API_URL } from "../../config/environment";
 import { showAlert } from "../../utils/showAlert";
 import * as ReportAPI from "../../api/reports";
+import { getEncryptionSafetyCodes } from "../../utils/secureMessaging";
+import { openPrivateAttachment } from "../../utils/privateMedia";
 
 const formatFileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
@@ -40,6 +36,8 @@ const formatFileSize = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const ATTACHMENT_DISMISS_FALLBACK_MS = 500;
+
 export const ChatScreen = ({ route, navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
@@ -47,6 +45,12 @@ export const ChatScreen = ({ route, navigation }) => {
   const { conversationId } = route.params;
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const contacts = useContactStore((state) => state.contacts);
+  const names = useMemo(() => {
+    const result = contactDisplayNames(contacts);
+    if (user.displayName) result.set(user.id, { nickname: user.displayName });
+    return result;
+  }, [contacts, user.id, user.displayName]);
 
   const messages = useMessageStore((state) => state.messages);
   const conversations = useMessageStore((state) => state.conversations);
@@ -79,22 +83,44 @@ export const ChatScreen = ({ route, navigation }) => {
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [replyTarget, setReplyTarget] = useState(null);
+  const [quotedMessageId, setQuotedMessageId] = useState(null);
+  const [jumpingToReply, setJumpingToReply] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [searchActive, setSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFilter, setSearchFilter] = useState("all");
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
+  const [unreadBelowCount, setUnreadBelowCount] = useState(0);
+  const [loadedConversationId, setLoadedConversationId] = useState(null);
+  const [laidOutConversationId, setLaidOutConversationId] = useState(null);
+  const [contentConversationId, setContentConversationId] = useState(null);
+  const [positionedConversationId, setPositionedConversationId] = useState(null);
   const flatListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const isNearBottomRef = useRef(true);
+  const lastKeyboardSubmitAtRef = useRef(0);
+  const lastMessageIdRef = useRef(null);
+  const contentScrollTimerRef = useRef(null);
+  const initialScrollTimersRef = useRef([]);
+  const drawingLaunchTimerRef = useRef(null);
+  const quoteHighlightTimerRef = useRef(null);
+  const quoteJumpActiveRef = useRef(false);
+  const messagesRef = useRef(messages);
+  const isWeb = Platform.OS === "web";
+  messagesRef.current = messages;
 
   const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
   const conversation = conversations.find((item) => item.id === conversationId);
-  const peerUser =
+  const publicPeer =
     conversation && !conversation.isGroupChat
       ? conversation.participants?.find((participant) => participant.userId !== user.id)
           ?.user
       : null;
+  const peerUser = publicPeer
+    ? { ...publicPeer, displayName: resolveDisplayName(names, publicPeer) }
+    : null;
   const canCall = isCallingSupported && !!peerUser;
   const canVideoCall = canCall && isVideoCallingSupported;
 
@@ -107,7 +133,7 @@ export const ChatScreen = ({ route, navigation }) => {
       if (searchFilter === "media" && message.messageType === "TEXT") return false;
       const haystack = [
         message.content,
-        message.sender?.displayName,
+        resolveDisplayName(names, message.sender, message.senderId),
         message.sender?.username,
       ]
         .filter(Boolean)
@@ -115,7 +141,7 @@ export const ChatScreen = ({ route, navigation }) => {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [messages, searchQuery, searchFilter]);
+  }, [messages, searchQuery, searchFilter, names]);
 
   const requestScrollToIndex = (index, attempt = 0) => {
     if (!flatListRef.current || index < 0) return;
@@ -125,6 +151,48 @@ export const ChatScreen = ({ route, navigation }) => {
       if (attempt < 3) {
         setTimeout(() => requestScrollToIndex(index, attempt + 1), 150);
       }
+    }
+  };
+
+  const jumpToQuotedMessage = async (targetMessageId) => {
+    if (!targetMessageId || jumpingToReply) return;
+    setJumpingToReply(true);
+    try {
+      quoteJumpActiveRef.current = true;
+      clearTimeout(contentScrollTimerRef.current);
+      initialScrollTimersRef.current.forEach(clearTimeout);
+      initialScrollTimersRef.current = [];
+      let state = useMessageStore.getState();
+      let targetIndex = state.messages.findIndex((message) => message.id === targetMessageId);
+      while (
+        targetIndex < 0 &&
+        state.currentConversation?.id === conversationId &&
+        state.hasOlderMessages
+      ) {
+        const loadedOlderMessages = await loadOlderMessages(conversationId, token);
+        state = useMessageStore.getState();
+        targetIndex = state.messages.findIndex((message) => message.id === targetMessageId);
+        if (!loadedOlderMessages) break;
+      }
+
+      if (targetIndex < 0) {
+        showAlert(t("common.error"), t("messages.quotedMessageUnavailable"));
+        return;
+      }
+
+      setQuotedMessageId(targetMessageId);
+      isNearBottomRef.current = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => requestScrollToIndex(targetIndex)));
+      if (quoteHighlightTimerRef.current) clearTimeout(quoteHighlightTimerRef.current);
+      quoteHighlightTimerRef.current = setTimeout(() => {
+        setQuotedMessageId(null);
+        quoteHighlightTimerRef.current = null;
+      }, 2500);
+    } finally {
+      setTimeout(() => {
+        quoteJumpActiveRef.current = false;
+      }, 1200);
+      setJumpingToReply(false);
     }
   };
 
@@ -153,9 +221,51 @@ export const ChatScreen = ({ route, navigation }) => {
     setCurrentMatchIndex(0);
   };
 
+  const openUserProfile = (targetUserId) => {
+    if (targetUserId) {
+      if (targetUserId === user.id) {
+        navigation.navigate("Settings", { screen: "SettingsHome" });
+      } else {
+        navigation.navigate("Profile", {
+          userId: targetUserId,
+          name: resolveDisplayName(names,
+            conversation?.participants?.find((participant) => participant.userId === targetUserId)?.user,
+            targetUserId),
+        });
+      }
+    }
+  };
+
   useEffect(() => {
     navigation.setOptions({
-      title: conversation?.name || route.params?.name || t("messages.chat"),
+      headerTitle: () => peerUser ? (
+        <TouchableOpacity
+          style={styles.headerProfileTitle}
+          onPress={() => openUserProfile(peerUser.id)}
+          accessibilityRole="button"
+          accessibilityLabel={t("profile.viewProfile", { name: peerUser.displayName })}
+        >
+          <View style={styles.headerProfileAvatar}>
+            {peerUser.profilePicture ? (
+              <Image
+                source={{ uri: `${API_URL}${peerUser.profilePicture}` }}
+                style={styles.headerProfileAvatarImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={styles.headerProfileAvatarText}>
+                {(peerUser.displayName || peerUser.username || "?")[0]}
+              </Text>
+            )}
+          </View>
+          <View style={styles.headerProfileDetails}>
+            <Text style={styles.headerProfileName} numberOfLines={1}>
+              {conversation?.name || peerUser.displayName || route.params?.name || t("messages.chat")}
+            </Text>
+            <UserPresence user={peerUser} compact onHeader />
+          </View>
+        </TouchableOpacity>
+      ) : conversation?.name || route.params?.name || t("messages.chat"),
       headerRight: () => (
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -164,7 +274,7 @@ export const ChatScreen = ({ route, navigation }) => {
             accessibilityRole="button"
             accessibilityLabel={t("messages.searchInConversation")}
           >
-            <Ionicons name="search" size={22} color={colors.primary} />
+            <Ionicons name="search" size={22} color={colors.headerIcon} />
           </TouchableOpacity>
           {canCall && (
             <>
@@ -174,7 +284,7 @@ export const ChatScreen = ({ route, navigation }) => {
                 accessibilityRole="button"
                 accessibilityLabel={t("calls.startAudioCall")}
               >
-                <Ionicons name="call" size={22} color={colors.primary} />
+                <Ionicons name="call" size={22} color={colors.headerIcon} />
               </TouchableOpacity>
               {canVideoCall && (
                 <TouchableOpacity
@@ -183,7 +293,7 @@ export const ChatScreen = ({ route, navigation }) => {
                   accessibilityRole="button"
                   accessibilityLabel={t("calls.startVideoCall")}
                 >
-                  <Ionicons name="videocam" size={22} color={colors.primary} />
+                  <Ionicons name="videocam" size={22} color={colors.headerIcon} />
                 </TouchableOpacity>
               )}
             </>
@@ -195,43 +305,162 @@ export const ChatScreen = ({ route, navigation }) => {
               accessibilityRole="button"
               accessibilityLabel={t("groups.info")}
             >
-              <Ionicons name="information-circle-outline" size={24} color={colors.primary} />
+              <Ionicons name="information-circle-outline" size={24} color={colors.headerIcon} />
             </TouchableOpacity>
           )}
         </View>
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigation, canCall, canVideoCall, peerUser?.id, conversation?.isGroupChat]);
+  }, [navigation, colors, canCall, canVideoCall, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.isGroupChat, route.params?.name, names]);
 
   useEffect(() => {
-    loadMessages(conversationId, user.id, token);
+    let isActive = true;
+    // Layout/content events can precede this effect; their IDs already scope them to this chat.
+    setLoadedConversationId(null);
+    setPositionedConversationId(null);
+    isNearBottomRef.current = true;
+    loadMessages(conversationId, user.id, token).finally(() => {
+      if (isActive) setLoadedConversationId(conversationId);
+    });
     joinConversation(conversationId);
 
     return () => {
+      isActive = false;
       stopTyping(conversationId, user.id);
       leaveConversation(conversationId);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
   }, [conversationId, user.id, token, joinConversation, leaveConversation, loadMessages]);
 
-  useEffect(() => {
-    if (!searchActive) scrollToBottom();
-  }, [messages]);
-
-  const scrollToBottom = () => {
-    if (flatListRef.current && messages.length > 0 && !searchActive) {
-      flatListRef.current.scrollToEnd({ animated: true });
-    }
+  const scrollToBottom = (animated = true) => {
+    if (!flatListRef.current || messagesRef.current.length === 0 || searchActive) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const list = flatListRef.current;
+      list?.scrollToEnd({ animated });
+      if (Platform.OS === "web") {
+        list?.scrollToOffset({
+          offset: Number.MAX_SAFE_INTEGER,
+          animated,
+        });
+      }
+    }));
   };
+
+  useEffect(() => {
+    lastMessageIdRef.current = null;
+    isNearBottomRef.current = true;
+    setShowScrollToLatest(false);
+    setUnreadBelowCount(0);
+    return () => {
+      if (contentScrollTimerRef.current) {
+        clearTimeout(contentScrollTimerRef.current);
+      }
+    };
+  }, [conversationId]);
+
+  useEffect(
+    () => () => {
+      if (drawingLaunchTimerRef.current) {
+        clearTimeout(drawingLaunchTimerRef.current);
+      }
+      if (quoteHighlightTimerRef.current) {
+        clearTimeout(quoteHighlightTimerRef.current);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (
+      loadedConversationId !== conversationId ||
+      laidOutConversationId !== conversationId
+    ) {
+      return;
+    }
+    if (!messagesRef.current.length) {
+      setPositionedConversationId(conversationId);
+      return;
+    }
+    if (contentConversationId !== conversationId) return;
+    initialScrollTimersRef.current.forEach(clearTimeout);
+    initialScrollTimersRef.current = [];
+    [0, 80, 180, 320].forEach((delay) => {
+      const timer = setTimeout(() => {
+        scrollToBottom(false);
+      }, delay);
+      initialScrollTimersRef.current.push(timer);
+    });
+    const positionedTimer = setTimeout(() => {
+      isNearBottomRef.current = true;
+      setPositionedConversationId(conversationId);
+    }, 400);
+    initialScrollTimersRef.current.push(positionedTimer);
+    return () => {
+      initialScrollTimersRef.current.forEach(clearTimeout);
+      initialScrollTimersRef.current = [];
+    };
+  }, [
+    conversationId,
+    loadedConversationId,
+    laidOutConversationId,
+    contentConversationId,
+  ]);
+
+  useEffect(() => {
+    if (messages.length === 0) {
+      lastMessageIdRef.current = null;
+      return;
+    }
+    if (searchActive) return;
+    const latestMessage = messages[messages.length - 1];
+    const previousLatestMessageId = lastMessageIdRef.current;
+    lastMessageIdRef.current = latestMessage.id;
+    if (
+      previousLatestMessageId &&
+      latestMessage.id !== previousLatestMessageId &&
+      isNearBottomRef.current
+    ) {
+      scrollToBottom(true);
+      return;
+    }
+    if (
+      previousLatestMessageId &&
+      latestMessage.id !== previousLatestMessageId &&
+      latestMessage.senderId !== user.id &&
+      !isNearBottomRef.current
+    ) {
+      setUnreadBelowCount((count) => count + 1);
+    }
+  }, [messages, searchActive, user.id]);
+
+  useEffect(() => {
+    if (searchActive) setShowScrollToLatest(false);
+    if (!searchActive && isNearBottomRef.current) {
+      scrollToBottom(false);
+    }
+    // Keep last message visible when composer height changes.
+  }, [searchActive, recordingVoice, !!replyTarget, !!editTarget]);
 
   const handleStartCall = async (callType) => {
     if (!peerUser) return;
     try {
-      await startCall(conversationId, callType, peerUser);
+      const result = await startCall(conversationId, callType, peerUser);
+      if (result === "device-unavailable") {
+        showAlert(t("common.error"), t("calls.deviceNotFound"));
+      }
     } catch (error) {
       console.error("Error starting call:", error);
-      showAlert(t("common.error"), t("calls.callFailed"));
+      showAlert(
+        t("common.error"),
+        error?.code === "CALL_PERMISSION_DENIED" ||
+          error?.name === "NotAllowedError" ||
+          error?.name === "SecurityError"
+          ? t("calls.mediaPermissionDenied")
+          : error?.code === "CALL_SIGNALING_UNAVAILABLE"
+            ? t("calls.signalingUnavailable")
+            : t("calls.callFailed")
+      );
     }
   };
 
@@ -271,6 +500,7 @@ export const ChatScreen = ({ route, navigation }) => {
         setReplyTarget(null);
         await sendMessage(conversationId, text, token, replyToId);
         stopTyping(conversationId, user.id);
+        scrollToBottom(true);
       }
     } catch (error) {
       if (editTarget) setMessageText(text);
@@ -289,7 +519,10 @@ export const ChatScreen = ({ route, navigation }) => {
       await sendMediaMessage(conversationId, payload, token);
     } catch (error) {
       console.error("Error sending media message:", error);
-      showAlert(t("common.error"), t("messages.mediaUploadFailed"));
+      showAlert(
+        t("common.error"),
+        error.response?.data?.error || t("messages.mediaUploadFailed")
+      );
     } finally {
       setUploadingMedia(false);
     }
@@ -439,8 +672,21 @@ export const ChatScreen = ({ route, navigation }) => {
       setRecordingVoice(true);
     } else if (key === "drawing") {
       setAttachmentSheetVisible(false);
-      setDrawingVisible(true);
+      if (drawingLaunchTimerRef.current) {
+        clearTimeout(drawingLaunchTimerRef.current);
+      }
+      drawingLaunchTimerRef.current = setTimeout(() => {
+        drawingLaunchTimerRef.current = null;
+        setDrawingVisible(true);
+      }, ATTACHMENT_DISMISS_FALLBACK_MS);
     }
+  };
+
+  const handleAttachmentSheetDismiss = () => {
+    if (!drawingLaunchTimerRef.current) return;
+    clearTimeout(drawingLaunchTimerRef.current);
+    drawingLaunchTimerRef.current = null;
+    setDrawingVisible(true);
   };
 
   const handleOpenLink = (url) => {
@@ -504,7 +750,12 @@ export const ChatScreen = ({ route, navigation }) => {
         text: t(`reports.category.${category}`),
         onPress: async () => {
           try {
-            await ReportAPI.submitReport({ messageId: item.id, category }, token);
+            await ReportAPI.submitReport(
+              item.encrypted
+                ? { reportedUserId: item.senderId, category }
+                : { messageId: item.id, category },
+              token
+            );
             showAlert(t("reports.submittedTitle"), t("reports.submittedBody"));
           } catch (error) {
             showAlert(
@@ -523,7 +774,10 @@ export const ChatScreen = ({ route, navigation }) => {
   const handleMessageLongPress = (item) => {
     if (item.deletedAt || item.deliveryState) return;
     const isOwn = item.senderId === user.id;
-    const buttons = [{ text: t("messages.react"), onPress: () => handleReactPress(item) }];
+    const mutable = item.encrypted || conversation?.kind === "WELCOME";
+    const buttons = mutable
+      ? [{ text: t("messages.react"), onPress: () => handleReactPress(item) }]
+      : [];
     if (item.messageType === "TEXT") {
       buttons.push({
         text: t("messages.reply"),
@@ -533,16 +787,16 @@ export const ChatScreen = ({ route, navigation }) => {
         },
       });
     }
-    if (isOwn && item.messageType === "TEXT") {
+    if (isOwn && mutable && item.messageType === "TEXT") {
       buttons.push({ text: t("common.edit"), onPress: () => handleEditPress(item) });
     }
-    if (isOwn) {
+    if (isOwn && mutable) {
       buttons.push({
         text: t("common.delete"),
         style: "destructive",
         onPress: () => handleDeletePress(item),
       });
-    } else {
+    } else if (!isOwn) {
       buttons.push({
         text: t("reports.reportMessage"),
         style: "destructive",
@@ -554,7 +808,12 @@ export const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleRetryMessage = async (item) => {
-    if (item.deliveryState !== "failed" || !item.clientMessageId) return;
+    if (
+      !["queued", "failed"].includes(item.deliveryState) ||
+      !item.clientMessageId
+    ) {
+      return;
+    }
     try {
       await retryMessage(item.clientMessageId, token);
     } catch (error) {
@@ -562,11 +821,31 @@ export const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  const renderMessageItem = ({ item }) => {
+  const handleInputKeyPress = (event) => {
+    if (!isWeb) return;
+    const key = event?.nativeEvent?.key;
+    if (key !== "Enter" && key !== "NumpadEnter") return;
+    event?.preventDefault?.();
+    const now = Date.now();
+    if (now - lastKeyboardSubmitAtRef.current < 150) return;
+    lastKeyboardSubmitAtRef.current = now;
+    handleSendMessage();
+  };
+
+  const handleInputSubmitEditing = () => {
+    const now = Date.now();
+    if (now - lastKeyboardSubmitAtRef.current < 150) return;
+    lastKeyboardSubmitAtRef.current = now;
+    handleSendMessage();
+  };
+
+  const renderMessageItem = ({ item, index }) => {
     if (item.messageType === "SYSTEM") {
       return (
         <View style={styles.systemMessageRow}>
-          <Text style={styles.systemMessageText}>{item.content}</Text>
+          <Text style={styles.systemMessageText}>
+            {item.content}
+          </Text>
           <Text style={styles.systemMessageTime}>
             {new Date(item.createdAt).toLocaleTimeString([], {
               hour: "2-digit",
@@ -579,9 +858,25 @@ export const ChatScreen = ({ route, navigation }) => {
 
     const isOwn = item.senderId === user.id;
     const senderName =
-      item.sender?.displayName || item.sender?.username || "Unknown user";
+      resolveDisplayName(names, item.sender, item.senderId) || t("messages.unknownUser");
+    const senderAvatarUri = item.sender?.profilePicture
+      ? `${API_URL}${item.sender.profilePicture}`
+      : null;
+    const previousMessage = messages[index - 1];
+    const isSameSenderBurst =
+      previousMessage &&
+      previousMessage.messageType !== "SYSTEM" &&
+      previousMessage.senderId === item.senderId &&
+      new Date(item.createdAt) - new Date(previousMessage.createdAt) < 5 * 60 * 1000;
+    const isFirstInSenderGroup =
+      !isSameSenderBurst;
+    const showSenderName =
+      (conversation?.isGroupChat || conversation?.kind === "WELCOME" || item.automaticWelcome) &&
+      !isOwn && isFirstInSenderGroup;
+    const showSenderAvatar = conversation?.isGroupChat && !isOwn && isFirstInSenderGroup;
     const isCurrentMatch =
       searchActive && matches.length > 0 && matches[currentMatchIndex]?.id === item.id;
+    const isQuotedMessage = item.id === quotedMessageId;
     const isMatch = searchActive && matches.some((match) => match.id === item.id);
     const highlightQuery = searchActive ? searchQuery : "";
     const readRecipients = isOwn && !item.deliveryState
@@ -604,12 +899,25 @@ export const ChatScreen = ({ route, navigation }) => {
         style={[
           styles.messageRow,
           isOwn ? styles.ownMessageRow : styles.otherMessageRow,
+          !isFirstInSenderGroup && styles.continuedMessageRow,
         ]}
       >
-        {!isOwn && (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{senderName[0]}</Text>
-          </View>
+        {showSenderAvatar && (
+          <TouchableOpacity
+            style={styles.avatar}
+            onPress={() => openUserProfile(item.sender?.id || item.senderId)}
+            accessibilityRole="button"
+            accessibilityLabel={t("profile.viewProfile", { name: senderName })}
+          >
+            {senderAvatarUri ? (
+              <Image source={{ uri: senderAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
+            ) : (
+              <Text style={styles.avatarText}>{senderName[0]}</Text>
+            )}
+          </TouchableOpacity>
+        )}
+        {conversation?.isGroupChat && !isOwn && !showSenderAvatar && (
+          <View style={styles.avatarSpacer} />
         )}
 
         <TouchableOpacity
@@ -619,11 +927,14 @@ export const ChatScreen = ({ route, navigation }) => {
           style={[
             styles.messageBubble,
             isOwn ? styles.ownBubble : styles.otherBubble,
+            conversation?.isGroupChat && !isOwn && styles.groupOtherBubble,
+            !isFirstInSenderGroup && (isOwn ? styles.continuedOwnBubble : styles.continuedOtherBubble),
             isMatch && styles.matchedBubble,
             isCurrentMatch && styles.currentMatchBubble,
+            isQuotedMessage && styles.quotedMessageBubble,
           ]}
         >
-          {!isOwn && (
+          {showSenderName && (
             <HighlightText
               text={senderName}
               query={highlightQuery}
@@ -631,24 +942,49 @@ export const ChatScreen = ({ route, navigation }) => {
               style={styles.senderName}
             />
           )}
+          {item.automaticWelcome && (
+            <Text style={[styles.messageTime, isOwn && styles.ownMessageTime]}>
+              {t("messages.automaticWelcome")}
+            </Text>
+          )}
 
           {item.deletedAt ? (
-            <Text style={[styles.messageText, styles.deletedText, isOwn && styles.ownMessageText]}>
+            <Text
+              style={[
+                styles.messageText,
+                styles.deletedText,
+                isOwn && styles.ownMessageText,
+              ]}
+            >
               {t("messages.messageDeleted")}
             </Text>
           ) : (
             <>
               {item.replyTo && (
-                <View style={styles.replyPreview}>
-                  <Text style={styles.replyPreviewSender} numberOfLines={1}>
-                    {item.replyTo.sender?.displayName || item.replyTo.sender?.username}
+                <TouchableOpacity
+                  style={[styles.replyPreview, isOwn && styles.ownReplyPreview]}
+                  onPress={() => jumpToQuotedMessage(item.replyTo.id || item.replyToId)}
+                  disabled={jumpingToReply || !(item.replyTo.id || item.replyToId)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${resolveDisplayName(names, item.replyTo.sender, item.replyTo.senderId) || ""}: ${item.replyTo.isDeleted
+                    ? t("messages.messageDeleted")
+                    : item.replyTo.content || `[${item.replyTo.messageType}]`}`}
+                >
+                  <Text
+                    style={[styles.replyPreviewSender, isOwn && styles.ownReplyPreviewText]}
+                    numberOfLines={1}
+                  >
+                    {resolveDisplayName(names, item.replyTo.sender, item.replyTo.senderId)}
                   </Text>
-                  <Text style={styles.replyPreviewText} numberOfLines={1}>
+                  <Text
+                    style={[styles.replyPreviewText, isOwn && styles.ownReplyPreviewText]}
+                    numberOfLines={2}
+                  >
                     {item.replyTo.isDeleted
                       ? t("messages.messageDeleted")
                       : item.replyTo.content || `[${item.replyTo.messageType}]`}
                   </Text>
-                </View>
+                </TouchableOpacity>
               )}
 
               {item.messageType === "TEXT" && (
@@ -656,7 +992,10 @@ export const ChatScreen = ({ route, navigation }) => {
                   text={item.content}
                   query={highlightQuery}
                   active={isCurrentMatch}
-                  style={[styles.messageText, isOwn && styles.ownMessageText]}
+                  style={[
+                    styles.messageText,
+                    isOwn && styles.ownMessageText,
+                  ]}
                 />
               )}
 
@@ -678,12 +1017,24 @@ export const ChatScreen = ({ route, navigation }) => {
               )}
 
               {item.messageType === "FILE" && item.mediaUrl && (
-                <TouchableOpacity style={styles.fileBubble} onPress={() => handleOpenLink(item.mediaUrl)}>
+                <TouchableOpacity style={styles.fileBubble} onLongPress={() => handleMessageLongPress(item)} onPress={() => {
+                  if (!item.encrypted) return handleOpenLink(item.mediaUrl);
+                  openPrivateAttachment(item).catch((error) => {
+                    console.error("Unable to open local attachment:", error);
+                    showAlert(t("common.error"), t("messages.openLinkFailed"));
+                  });
+                }}>
                   <View style={[styles.fileIcon, isOwn && styles.ownFileIcon]}>
-                    <Ionicons name="document-text-outline" size={25} color={isOwn ? "#fff" : colors.primary} />
+                    <Ionicons name="document-text-outline" size={25} color={isOwn ? colors.onSentBubble : colors.primary} />
                   </View>
                   <View style={styles.fileInfo}>
-                    <Text style={[styles.fileName, isOwn && styles.ownMessageText]} numberOfLines={2}>
+                    <Text
+                      style={[
+                        styles.fileName,
+                        isOwn && styles.ownMessageText,
+                      ]}
+                      numberOfLines={2}
+                    >
                       {item.fileName || t("messages.file")}
                     </Text>
                     {item.fileSize != null && (
@@ -692,7 +1043,7 @@ export const ChatScreen = ({ route, navigation }) => {
                       </Text>
                     )}
                   </View>
-                  <Ionicons name="download-outline" size={21} color={isOwn ? "#fff" : colors.primary} />
+                  <Ionicons name="download-outline" size={21} color={isOwn ? colors.onSentBubble : colors.primary} />
                 </TouchableOpacity>
               )}
 
@@ -772,7 +1123,7 @@ export const ChatScreen = ({ route, navigation }) => {
               <Ionicons
                 name={item.deliveryState === "failed" ? "alert-circle" : "time-outline"}
                 size={12}
-                color="#FFFFFF"
+                color={colors.onSentBubble}
               />
               <Text style={styles.deliveryStateText}>
                 {t(`messages.delivery.${item.deliveryState}`)}
@@ -787,14 +1138,28 @@ export const ChatScreen = ({ route, navigation }) => {
     );
   };
 
-  const typingIndicator =
-    typingUsers.size > 0 ? (
-      <View style={styles.typingContainer}>
+  const activeTypists = [...typingUsers]
+    .filter((userId) => userId !== user.id)
+    .map((userId) =>
+      resolveDisplayName(names,
+        conversation?.participants?.find((participant) => participant.userId === userId)?.user,
+        userId) || t("messages.someone")
+    );
+  const typingLabel = activeTypists.length === 1
+    ? t("messages.userIsTyping", { name: activeTypists[0] })
+    : activeTypists.length > 1
+      ? t("messages.peopleAreTyping", { count: activeTypists.length })
+      : "";
+  const typingIndicator = typingLabel ? (
+    <View style={styles.typingContainer} accessibilityLiveRegion="polite">
+      <View style={styles.typingBubble}>
         <View style={styles.typingDot} />
         <View style={styles.typingDot} />
         <View style={styles.typingDot} />
       </View>
-    ) : null;
+      <Text style={styles.typingLabel}>{typingLabel}</Text>
+    </View>
+  ) : null;
 
   return (
     <KeyboardAvoidingView
@@ -802,6 +1167,26 @@ export const ChatScreen = ({ route, navigation }) => {
       style={styles.container}
       keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
     >
+      {conversation?.kind !== "WELCOME" && (
+        <TouchableOpacity
+          style={styles.encryptionNotice}
+          accessibilityLabel={t("secure.safetyCodesTitle")}
+          onPress={async () => {
+            try {
+              const devices = await getEncryptionSafetyCodes(user.id, conversationId, token);
+              showAlert(t("secure.safetyCodesTitle"), [
+                t("secure.conversationNotice"), t("secure.safetyCodesBody"),
+                ...devices.map((device) => `${device.userId}\n${device.deviceId}\n${device.fingerprint}`),
+              ].join("\n\n"));
+            } catch (error) {
+              console.error("Unable to load encryption safety codes:", error);
+              showAlert(t("secure.deliveryErrorTitle"), t("secure.deliveryErrorBody"));
+            }
+          }}
+        >
+          <Text style={styles.encryptionNoticeText}>{t("secure.conversationNotice")}</Text>
+        </TouchableOpacity>
+      )}
       {searchActive && (
         <View style={styles.searchContainer}>
           <View style={styles.searchRow}>
@@ -875,12 +1260,60 @@ export const ChatScreen = ({ route, navigation }) => {
       )}
 
       <FlatList
+        key={conversationId}
         ref={flatListRef}
         data={messages}
         keyExtractor={(item) => item.id}
         renderItem={renderMessageItem}
         contentContainerStyle={styles.messageList}
-        onContentSizeChange={scrollToBottom}
+        style={positionedConversationId === conversationId ? undefined : styles.initiallyHiddenList}
+        keyboardShouldPersistTaps="always"
+        onLayout={() => setLaidOutConversationId(conversationId)}
+        onContentSizeChange={(_, contentHeight) => {
+          if (contentHeight > 0) {
+            setContentConversationId(conversationId);
+          }
+          if (quoteJumpActiveRef.current) return;
+          if (
+            loadedConversationId === conversationId &&
+            positionedConversationId !== conversationId &&
+            messages.length > 0 &&
+            contentHeight > 0
+          ) {
+            scrollToBottom(false);
+            return;
+          }
+          if (
+            messages.length === 0 ||
+            positionedConversationId !== conversationId
+          ) {
+            return;
+          }
+          clearTimeout(contentScrollTimerRef.current);
+          contentScrollTimerRef.current = setTimeout(() => {
+            if (isNearBottomRef.current) {
+              scrollToBottom(true);
+            }
+          }, 80);
+        }}
+        onScroll={(event) => {
+          if (quoteJumpActiveRef.current) {
+            isNearBottomRef.current = false;
+            return;
+          }
+          if (positionedConversationId !== conversationId) {
+            isNearBottomRef.current = true;
+            return;
+          }
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          const distanceFromBottom =
+            contentSize.height - (contentOffset.y + layoutMeasurement.height);
+          const isNearBottom = distanceFromBottom < 100;
+          isNearBottomRef.current = isNearBottom;
+          setShowScrollToLatest(!isNearBottom && messages.length > 0 && !searchActive);
+          if (isNearBottom) setUnreadBelowCount(0);
+        }}
+        scrollEventThrottle={16}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             flatListRef.current?.scrollToIndex({
@@ -912,9 +1345,38 @@ export const ChatScreen = ({ route, navigation }) => {
             title={t("messages.noMessages")}
           />
         }
+        ListFooterComponent={<View style={styles.listBottomSpacer} />}
       />
+      {positionedConversationId !== conversationId && (
+        <View style={styles.initialLoadOverlay} pointerEvents="none">
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      )}
 
       {typingIndicator}
+
+      {showScrollToLatest && (
+        <TouchableOpacity
+          style={styles.scrollToLatestButton}
+          onPress={() => {
+            setUnreadBelowCount(0);
+            isNearBottomRef.current = true;
+            setShowScrollToLatest(false);
+            scrollToBottom(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t("messages.scrollToLatest")}
+        >
+          <Ionicons name="arrow-down" size={20} color={colors.primary} />
+          {unreadBelowCount > 0 && (
+            <View style={styles.scrollUnreadBadge}>
+              <Text style={styles.scrollUnreadText}>
+                {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
 
       {(replyTarget || editTarget) && (
         <View style={styles.contextBar}>
@@ -962,10 +1424,15 @@ export const ChatScreen = ({ route, navigation }) => {
             placeholderTextColor={colors.mutedText}
             value={messageText}
             onChangeText={handleTyping}
-            multiline
+            onKeyPress={isWeb ? handleInputKeyPress : undefined}
+            onSubmitEditing={handleInputSubmitEditing}
+            multiline={!isWeb}
             maxLength={10000}
-            maxHeight={100}
+            maxHeight={isWeb ? undefined : 100}
             editable={!sending}
+            returnKeyType="send"
+            blurOnSubmit={false}
+            accessibilityLabel={t("messages.typeMessage")}
           />
 
           {messageText.trim() ? (
@@ -973,19 +1440,23 @@ export const ChatScreen = ({ route, navigation }) => {
               style={[styles.sendButton, sending && styles.sendButtonDisabled]}
               onPress={handleSendMessage}
               disabled={sending}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.sendMessage")}
             >
               {sending ? (
-                <ActivityIndicator size="small" color={colors.primary} />
+                <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Ionicons name="send" size={20} color={colors.primary} />
+                <Ionicons name="send" size={18} color="#fff" />
               )}
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.sendButton}
+              style={[styles.sendButton, styles.voiceButton]}
               onPress={() => setRecordingVoice(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.voiceMessage")}
             >
-              <Ionicons name="mic" size={22} color={colors.primary} />
+              <Ionicons name="mic" size={21} color={colors.primary} />
             </TouchableOpacity>
           )}
         </View>
@@ -995,6 +1466,7 @@ export const ChatScreen = ({ route, navigation }) => {
         visible={attachmentSheetVisible}
         onClose={() => setAttachmentSheetVisible(false)}
         onSelect={handleAttachmentSelect}
+        onDismiss={handleAttachmentSheetDismiss}
       />
 
       <DrawingPad
@@ -1012,6 +1484,8 @@ const createStyles = (colors) => StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surface,
   },
+  encryptionNotice: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.surface },
+  encryptionNoticeText: { color: colors.mutedText, fontSize: 11, textAlign: "center" },
   headerActions: {
     flexDirection: "row",
     marginRight: 4,
@@ -1020,10 +1494,54 @@ const createStyles = (colors) => StyleSheet.create({
     padding: 8,
     marginLeft: 4,
   },
+  headerProfileTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    maxWidth: 190,
+  },
+  headerProfileAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    marginRight: 8,
+  },
+  headerProfileAvatarImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+  },
+  headerProfileAvatarText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  headerProfileName: {
+    color: colors.headerText,
+    fontSize: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  headerProfileDetails: {
+    flex: 1,
+    minWidth: 0,
+  },
   searchContainer: {
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  initiallyHiddenList: {
+    opacity: 0,
+  },
+  initialLoadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
   },
   searchRow: {
     flexDirection: "row",
@@ -1053,7 +1571,11 @@ const createStyles = (colors) => StyleSheet.create({
   messageList: {
     flexGrow: 1,
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 18,
+  },
+  listBottomSpacer: {
+    height: 18,
   },
   loadEarlierButton: {
     alignSelf: "center",
@@ -1071,6 +1593,9 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: "row",
     marginVertical: 4,
     alignItems: "flex-end",
+  },
+  continuedMessageRow: {
+    marginTop: 1,
   },
   systemMessageRow: {
     alignSelf: "center",
@@ -1106,6 +1631,15 @@ const createStyles = (colors) => StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginRight: 8,
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  avatarSpacer: {
+    width: 36,
   },
   avatarText: {
     color: "#fff",
@@ -1113,16 +1647,27 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: "600",
   },
   messageBubble: {
-    maxWidth: "80%",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    maxWidth: "82%",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
   ownBubble: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.sentBubble,
+    borderBottomRightRadius: 6,
   },
   otherBubble: {
-    backgroundColor: colors.input,
+    backgroundColor: colors.receivedBubble,
+    borderBottomLeftRadius: 6,
+  },
+  groupOtherBubble: {
+    maxWidth: "72%",
+  },
+  continuedOwnBubble: {
+    borderTopRightRadius: 8,
+  },
+  continuedOtherBubble: {
+    borderTopLeftRadius: 8,
   },
   matchedBubble: {
     borderWidth: 1,
@@ -1132,18 +1677,23 @@ const createStyles = (colors) => StyleSheet.create({
     borderWidth: 2,
     borderColor: "#FF9F1C",
   },
+  quotedMessageBubble: {
+    borderWidth: 2,
+    borderColor: "#FF9F1C",
+  },
   senderName: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "700",
     color: colors.secondaryText,
-    marginBottom: 2,
+    marginBottom: 5,
   },
   messageText: {
-    fontSize: 14,
+    fontSize: 18,
     color: colors.text,
+    lineHeight: 28,
   },
   ownMessageText: {
-    color: "#fff",
+    color: colors.onSentBubble,
   },
   messageTime: {
     fontSize: 11,
@@ -1151,7 +1701,7 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 4,
   },
   ownMessageTime: {
-    color: "#fff",
+    color: colors.onSentBubble,
     opacity: 0.8,
   },
   deliveryStateRow: {
@@ -1161,12 +1711,12 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 3,
   },
   deliveryStateText: {
-    color: "#FFFFFF",
+    color: colors.onSentBubble,
     fontSize: 11,
     opacity: 0.9,
   },
   readStatusText: {
-    color: "#FFFFFF",
+    color: colors.onSentBubble,
     fontSize: 11,
     marginTop: 3,
     opacity: 0.9,
@@ -1176,20 +1726,30 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.mutedText,
   },
   replyPreview: {
-    borderLeftWidth: 3,
+    borderLeftWidth: 4,
     borderLeftColor: colors.primary,
-    paddingLeft: 6,
-    marginBottom: 4,
-    opacity: 0.85,
+    backgroundColor: colors.surface,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 7,
+  },
+  ownReplyPreview: {
+    borderLeftColor: colors.onSentBubble,
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
   },
   replyPreviewSender: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: colors.secondaryText,
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.text,
   },
   replyPreviewText: {
-    fontSize: 12,
-    color: colors.secondaryText,
+    fontSize: 14,
+    lineHeight: 19,
+    color: colors.text,
+  },
+  ownReplyPreviewText: {
+    color: colors.onSentBubble,
   },
   reactionsRow: {
     flexDirection: "row",
@@ -1256,7 +1816,7 @@ const createStyles = (colors) => StyleSheet.create({
   fileInfo: { flex: 1 },
   fileName: { color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: "700" },
   fileSize: { color: colors.mutedText, marginTop: 3, fontSize: 11 },
-  ownFileSize: { color: "rgba(255,255,255,.72)" },
+  ownFileSize: { color: colors.onSentBubble, opacity: 0.85 },
   videoContainer: {
     width: 200,
     height: 200,
@@ -1325,26 +1885,75 @@ const createStyles = (colors) => StyleSheet.create({
   },
   typingContainer: {
     flexDirection: "row",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     alignItems: "center",
+    gap: 8,
+    minHeight: 38,
+  },
+  typingBubble: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderBottomLeftRadius: 5,
+    backgroundColor: colors.input,
     gap: 4,
   },
   typingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: colors.mutedText,
+  },
+  typingLabel: {
+    color: colors.mutedText,
+    fontSize: 12,
+  },
+  scrollToLatestButton: {
+    position: "absolute",
+    right: 16,
+    bottom: 76,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  scrollUnreadBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+  },
+  scrollUnreadText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700",
   },
   inputContainer: {
     flexDirection: "row",
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingVertical: 9,
     alignItems: "flex-end",
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    gap: 8,
+    gap: 6,
   },
   iconButton: {
     padding: 8,
@@ -1356,13 +1965,22 @@ const createStyles = (colors) => StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
     color: colors.text,
     backgroundColor: colors.input,
     maxHeight: 100,
+    lineHeight: 24,
   },
   sendButton: {
-    padding: 8,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+  },
+  voiceButton: {
+    backgroundColor: colors.primarySoft,
   },
   sendButtonDisabled: {
     opacity: 0.5,

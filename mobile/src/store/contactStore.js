@@ -1,28 +1,32 @@
 import { create } from "zustand";
 import * as api from "../api/contacts";
+import { getOwnerGeneration, assertOwnerGeneration } from "../utils/ownerSession";
 
 export const useContactStore = create((set, get) => ({
   contacts: {},
   loading: false,
 
   loadContacts: async (token) => {
+    const generation = getOwnerGeneration();
     set({ loading: true });
     try {
       const contacts = await api.getContacts(token);
+      assertOwnerGeneration(generation);
       set({ contacts, loading: false });
     } catch (error) {
       console.error("Error loading contacts:", error);
-      set({ loading: false });
+      if (generation === getOwnerGeneration()) set({ loading: false });
     }
   },
 
-  addContact: async (contactUserId, groupName, nickname, token) => {
+  addContact: async (contactUserId, groupName, nickname, token, displayName) => {
     try {
       const contact = await api.addContact(
         contactUserId,
         groupName,
         nickname,
-        token
+        token,
+        displayName
       );
       const { contacts } = get();
       set({

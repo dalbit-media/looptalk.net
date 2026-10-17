@@ -1,56 +1,96 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { getDeviceLanguage, setLanguage } from "../i18n/i18n";
+import { getDeviceLanguage, setLanguage, t } from "../i18n/i18n";
+import { showAlert } from "../utils/showAlert";
+import { getOwnerIdentity, readOwnerVault, updateOwnerVault } from "../utils/ownerVault";
 
 const LANGUAGE_KEY = "language";
 const THEME_KEY = "themeMode";
+const CHAT_TEXT_SIZE_KEY = "chatTextSize";
 const NOTIFICATIONS_KEY = "notificationsEnabled";
-const SUPPORTED_LANGUAGES = ["ko", "en", "ja"];
+const SUPPORTED_LANGUAGES = ["ko"];
 const THEME_MODES = ["system", "light", "dark"];
+const CHAT_TEXT_SIZES = ["standard", "large", "extraLarge"];
+const persistPreference = async (key, value) => {
+  if (getOwnerIdentity()) {
+    await updateOwnerVault((current) => ({
+      ...current, preferences: { ...current.preferences, [key]: value },
+    }));
+  } else {
+    await AsyncStorage.setItem(key, String(value));
+  }
+};
+const savePreference = async (key, value, apply) => {
+  try {
+    await persistPreference(key, value);
+    apply();
+  } catch {
+    showAlert(t("common.error"), t("privacy.preferenceSaveFailed"));
+  }
+};
 
 export const usePreferencesStore = create((set) => ({
   language: getDeviceLanguage(),
   themeMode: "system",
+  chatTextSize: "standard",
   notificationsEnabled: false,
+  loadOwnerPreferences: () => {
+    const preferences = readOwnerVault().preferences;
+    set({
+      themeMode: THEME_MODES.includes(preferences[THEME_KEY]) ? preferences[THEME_KEY] : "system",
+      chatTextSize: CHAT_TEXT_SIZES.includes(preferences[CHAT_TEXT_SIZE_KEY])
+        ? preferences[CHAT_TEXT_SIZE_KEY] : "standard",
+      notificationsEnabled: preferences[NOTIFICATIONS_KEY] === true,
+    });
+  },
+  resetOwnerPreferences: () => set({
+    themeMode: "system", chatTextSize: "standard", notificationsEnabled: false,
+  }),
 
   initialize: async () => {
-    const [savedLanguage, savedThemeMode, savedNotifications] =
+    const [savedLanguage, savedThemeMode, savedChatTextSize, savedNotifications] =
       await Promise.all([
         AsyncStorage.getItem(LANGUAGE_KEY),
         AsyncStorage.getItem(THEME_KEY),
+        AsyncStorage.getItem(CHAT_TEXT_SIZE_KEY),
         AsyncStorage.getItem(NOTIFICATIONS_KEY),
       ]);
 
-    const language = SUPPORTED_LANGUAGES.includes(savedLanguage)
-      ? savedLanguage
-      : getDeviceLanguage();
+    const language = getDeviceLanguage();
     const themeMode = THEME_MODES.includes(savedThemeMode)
       ? savedThemeMode
       : "system";
+    const chatTextSize = CHAT_TEXT_SIZES.includes(savedChatTextSize)
+      ? savedChatTextSize
+      : "standard";
     const notificationsEnabled = savedNotifications === "true";
 
     setLanguage(language);
-    set({ language, themeMode, notificationsEnabled });
+    set({ language, themeMode, chatTextSize, notificationsEnabled });
+    if (savedLanguage !== language) {
+      await AsyncStorage.setItem(LANGUAGE_KEY, language);
+    }
   },
 
   setLanguage: async (language) => {
     if (!SUPPORTED_LANGUAGES.includes(language)) return;
-    setLanguage(language);
-    set({ language });
-    await AsyncStorage.setItem(LANGUAGE_KEY, language);
+    await savePreference(LANGUAGE_KEY, language, () => {
+      setLanguage(language);
+      set({ language });
+    });
   },
 
   setThemeMode: async (themeMode) => {
     if (!THEME_MODES.includes(themeMode)) return;
-    set({ themeMode });
-    await AsyncStorage.setItem(THEME_KEY, themeMode);
+    await savePreference(THEME_KEY, themeMode, () => set({ themeMode }));
+  },
+
+  setChatTextSize: async (chatTextSize) => {
+    if (!CHAT_TEXT_SIZES.includes(chatTextSize)) return;
+    await savePreference(CHAT_TEXT_SIZE_KEY, chatTextSize, () => set({ chatTextSize }));
   },
 
   setNotificationsEnabled: async (notificationsEnabled) => {
-    set({ notificationsEnabled });
-    await AsyncStorage.setItem(
-      NOTIFICATIONS_KEY,
-      String(notificationsEnabled)
-    );
+    await savePreference(NOTIFICATIONS_KEY, notificationsEnabled, () => set({ notificationsEnabled }));
   },
 }));

@@ -1,21 +1,66 @@
 import { api } from "./client";
+import { readOwnerVault, updateOwnerVault } from "../utils/ownerVault";
+import { getOwnerGeneration, assertOwnerGeneration } from "../utils/ownerSession";
+import { resolveContactDisplayName } from "../utils/contactDisplayName";
+
+const privateConversation = (conversation) => {
+  const vault = readOwnerVault();
+  return {
+    ...conversation,
+    name: vault.conversationNames?.[conversation.id] || conversation.name,
+    participants: conversation.participants?.map((participant) => {
+      const contact = vault.contacts.find((item) => item.contactUserId === participant.userId);
+      return contact ? {
+        ...participant, user: { ...participant.user, displayName: resolveContactDisplayName(contact, participant.user) },
+      } : participant;
+    }),
+  };
+};
 
 const appendUpload = async (formData, field, { uri, name, mimeType }) => {
-  formData.append(field, { uri, name, type: mimeType });
+  if (typeof uri !== "string" || !uri) {
+    throw new Error(`Missing upload URI: ${name}`);
+  }
+
+  if (typeof window !== "undefined") {
+    let blob;
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(uri)) {
+      const binary = globalThis.atob(uri);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      blob = new Blob([bytes], { type: mimeType });
+    } else {
+      const response = await fetch(uri);
+      if (!response.ok) {
+        throw new Error(`Failed to read upload: ${name} (${response.status})`);
+      }
+      blob = await response.blob();
+    }
+    if (!blob.type && mimeType) {
+      blob = new Blob([blob], { type: mimeType });
+    }
+    formData.append(field, blob, name);
+    return;
+  }
+
+  formData.append(field, { uri, name, type: mimeType || "application/octet-stream" });
 };
 
 export const getConversations = async (token) => {
+  const generation = getOwnerGeneration();
   const response = await api.get("/conversations", {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.data;
+  assertOwnerGeneration(generation);
+  return response.data.map(privateConversation);
 };
 
 export const getConversation = async (conversationId, token) => {
+  const generation = getOwnerGeneration();
   const response = await api.get(`/conversations/${conversationId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.data;
+  assertOwnerGeneration(generation);
+  return privateConversation(response.data);
 };
 
 export const markConversationRead = async (conversationId, token) => {
@@ -28,6 +73,7 @@ export const markConversationRead = async (conversationId, token) => {
 };
 
 export const getOrCreateDirectConversation = async (userId, token) => {
+  const generation = getOwnerGeneration();
   const response = await api.post(
     `/conversations/direct/${userId}`,
     {},
@@ -35,27 +81,33 @@ export const getOrCreateDirectConversation = async (userId, token) => {
       headers: { Authorization: `Bearer ${token}` },
     }
   );
-  return response.data;
+  assertOwnerGeneration(generation);
+  return privateConversation(response.data);
 };
 
 export const createGroupConversation = async (name, userIds, token) => {
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) throw new Error("Invalid private group name");
+  const generation = getOwnerGeneration();
   const response = await api.post(
     "/conversations",
-    { name, userIds },
+    { userIds },
     {
       headers: { Authorization: `Bearer ${token}` },
     }
   );
-  return response.data;
+  assertOwnerGeneration(generation);
+  await updateOwnerVault((current) => ({
+    ...current, conversationNames: { ...current.conversationNames, [response.data.id]: name },
+  }));
+  return privateConversation(response.data);
 };
 
 export const renameGroupConversation = async (conversationId, name, token) => {
-  const response = await api.patch(
-    `/conversations/${conversationId}`,
-    { name },
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return response.data;
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) throw new Error("Invalid private group name");
+  await updateOwnerVault((current) => ({
+    ...current, conversationNames: { ...current.conversationNames, [conversationId]: name },
+  }));
+  return getConversation(conversationId, token);
 };
 
 export const addGroupMember = async (conversationId, userId, token) => {
@@ -163,11 +215,9 @@ export const sendMediaMessage = async (
     `/messages/${conversationId}/media`,
     formData,
     {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "multipart/form-data",
-      },
+      headers: { Authorization: `Bearer ${token}` },
       onUploadProgress,
+      timeout: 120000,
     }
   );
   return response.data;

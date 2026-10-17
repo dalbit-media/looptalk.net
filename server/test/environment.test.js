@@ -1,16 +1,36 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const dotenv = require("dotenv");
+const encryptionKey = require("node:crypto").randomBytes(32).toString("base64");
 const { validateEnvironment } = require("../src/config/environment");
 
-test("requires the database URL and JWT secret", () => {
+test("the example environment requires an explicitly provisioned encryption key", () => {
+  const exampleEnvironment = dotenv.parse(
+    fs.readFileSync(path.join(__dirname, "../.env.example"))
+  );
+  assert.throws(() => validateEnvironment(exampleEnvironment), /USER_DATA_ENCRYPTION_KEY/);
+  assert.doesNotThrow(() => validateEnvironment({ ...exampleEnvironment, USER_DATA_ENCRYPTION_KEY: encryptionKey }));
+});
+
+test("defaults local database and JWT settings", () => {
+  const environment = { USER_DATA_ENCRYPTION_KEY: encryptionKey };
+  assert.doesNotThrow(() => validateEnvironment(environment));
+  assert.equal(environment.DATABASE_URL, "file:./looptalk.db");
+  assert.equal(environment.JWT_SECRET, "looptalk-local-development-secret-only");
+});
+
+test("requires the JWT secret in production", () => {
   assert.throws(
-    () => validateEnvironment({}),
-    /DATABASE_URL, JWT_SECRET/
+    () => validateEnvironment({ NODE_ENV: "production" }),
+    /JWT_SECRET/
   );
 });
 
 const validEnvironment = {
-  DATABASE_URL: "mysql://user:password@db.example.com:3306/looptalk",
+  USER_DATA_ENCRYPTION_KEY: encryptionKey,
+  DATABASE_URL: "file:./dev.db",
   JWT_SECRET: "a-strong-secret-with-at-least-32-characters",
   CORS_ORIGIN: "https://app.looptalk.example",
   PUBLIC_URL: "https://api.looptalk.example",
@@ -27,22 +47,22 @@ test("accepts the documented configuration", () => {
 });
 
 test("accepts a minimal configuration", () => {
-  assert.doesNotThrow(() =>
-    validateEnvironment({
-      DATABASE_URL: validEnvironment.DATABASE_URL,
-      JWT_SECRET: validEnvironment.JWT_SECRET,
-    })
-  );
+  const environment = { USER_DATA_ENCRYPTION_KEY: encryptionKey };
+  assert.doesNotThrow(() => validateEnvironment(environment));
+  assert.equal(environment.DATABASE_URL, "file:./looptalk.db");
 });
 
-test("requires MySQL", () => {
+test("requires SQLite", () => {
   assert.throws(
-    () => validateEnvironment({ ...validEnvironment, DATABASE_URL: "file:./dev.db" }),
-    /MySQL connection string/
+    () => validateEnvironment({ ...validEnvironment, DATABASE_URL: "mysql://user:password@db.example.com:3306/looptalk" }),
+    /SQLite file URL/
   );
 });
 
 test("rejects weak secrets", () => {
+  for (const key of ["", "weak", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64")]) {
+    assert.throws(() => validateEnvironment({ ...validEnvironment, USER_DATA_ENCRYPTION_KEY: key }), /USER_DATA_ENCRYPTION_KEY/);
+  }
   assert.throws(
     () => validateEnvironment({ ...validEnvironment, JWT_SECRET: "too-short" }),
     /strong secret/
