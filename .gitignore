@@ -84,6 +84,7 @@ out/
 
 # Database
 *.db
+*.db.pre-migrate-*
 *.sqlite
 *.sqlite3
 *.app-state.json

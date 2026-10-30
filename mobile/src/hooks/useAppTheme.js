@@ -11,6 +11,8 @@ const lightColors = {
   border: "#DEDFD7",
   input: "#E8E7E0",
   primary: "#186661",
+  action: "#5B3FD9",
+  onAction: "#FFFFFF",
   navigationAccent: "#186661",
   primarySoft: "#E1EEEA",
   header: "#1C2D49",
@@ -37,6 +39,8 @@ const darkColors = {
   border: "#363D45",
   input: "#2B323A",
   primary: "#326DB3",
+  action: "#6C5CE7",
+  onAction: "#FFFFFF",
   primarySoft: "#253B53",
   header: "#252C34",
   headerText: "#F0F2F5",
@@ -61,23 +65,22 @@ export const useAppTheme = () => {
     themeMode === "dark" ||
     (themeMode === "system" && systemColorScheme === "dark");
   const colors = isDark ? darkColors : lightColors;
-  const baseTheme = isDark ? DarkTheme : DefaultTheme;
-
-  return {
-    colors,
-    isDark,
-    themeMode,
-    navigationTheme: {
-      ...baseTheme,
-      colors: {
-        ...baseTheme.colors,
-        primary: colors.navigationAccent,
-        background: colors.background,
-        card: colors.surface,
-        text: colors.text,
-        border: colors.border,
-        notification: colors.unreadBadge,
+    const baseTheme = isDark ? DarkTheme : DefaultTheme;
+    return {
+      colors,
+      isDark,
+      themeMode,
+      navigationTheme: {
+        ...baseTheme,
+        colors: {
+          ...baseTheme.colors,
+          primary: colors.navigationAccent,
+          background: colors.background,
+          card: colors.surface,
+          text: colors.text,
+          border: colors.border,
+          notification: colors.unreadBadge,
+        },
       },
-    },
-  };
+    };
 };

@@ -1,9 +1,17 @@
 const crypto = require("node:crypto");
 const publicIdentity = Symbol("publicIdentity");
 
+const isUsername = (value) => typeof value === "string" && /^[a-z][a-z0-9-]{1,28}[a-z0-9]$/.test(value);
+const ADJECTIVES = ["brave", "calm", "clever", "cosmic", "eager", "gentle", "golden", "happy", "jolly", "kind", "lucky", "mellow", "noble", "quiet", "rapid", "sunny", "swift", "witty"];
+const NOUNS = ["otter", "falcon", "maple", "comet", "harbor", "lantern", "meadow", "panda", "river", "sparrow", "tiger", "willow", "breeze", "cedar", "dolphin", "ember", "fox", "garden"];
+const wordUsername = () => {
+  const pick = (list) => list[crypto.randomInt(list.length)];
+  return `${pick(ADJECTIVES)}-${pick(NOUNS)}-${crypto.randomInt(100, 10000)}`;
+};
 const normalizeIdentifier = (value) => {
   if (typeof value !== "string" || value.length > 254) return null;
   const identifier = value.trim().toLowerCase();
+  if (isUsername(identifier)) return identifier;
   if (identifier.includes("@")) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier) ? identifier : null;
   }
@@ -53,7 +61,7 @@ const validVault = (vault) => vault && typeof vault === "object" &&
 const accountId = (publicKey) => `u_${crypto.createHash("sha512").update(publicKey).digest("hex").slice(0, 32)}`;
 const randomUsername = async (tx) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const username = crypto.randomBytes(6).toString("hex");
+    const username = wordUsername();
     const existing = await tx.user.findFirst({
       where: { OR: [{ username }, { publicUsername: username }] },
       select: { id: true },
@@ -86,4 +94,4 @@ const sanitizeIdentity = (value) => {
 };
 
 module.exports = { upgradeRequired, decodeBase64, validVault, validDisplayName, accountId, randomUsername, opaqueUser, onlyFields, sanitizeIdentity,
-  normalizeIdentifier, userDataKey, contactLookup, syntheticSalt, credentialFields };
+  normalizeIdentifier, isUsername, wordUsername, userDataKey, contactLookup, syntheticSalt, credentialFields };

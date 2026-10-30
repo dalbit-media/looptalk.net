@@ -16,8 +16,8 @@ const load = (relative, mocks) => {
   const exports = {};
   vm.runInNewContext(code, {
     exports,
-    require: (name) => {
-      assert.ok(name in mocks, `Unexpected dependency: ${name}`);
+    setTimeout,
+    require: (name) => {      assert.ok(name in mocks, `Unexpected dependency: ${name}`);
       return mocks[name];
     },
   }, { filename });
@@ -66,6 +66,7 @@ const setupStore = (options = {}) => {
         if (expected !== generation) throw new Error("Private account changed");
       },
     },
+    "../utils/invitationCode": { normalizeInvitationCode: (value) => String(value).trim().toUpperCase() },
     "../utils/invitationOnboarding": { initializeInvitationContact: async (token, userId) => {
       assert.equal(token, "token");
       assert.equal(userId, "u_random");
@@ -84,7 +85,12 @@ const setupStore = (options = {}) => {
         events.push(["parameters", value]);
         return { salt, iterations: options.badParameters ? 1 : 600000, version: 1 };
       },
-      register: async (...args) => { events.push(["register", ...args]); return options.response || response; },
+      register: async (...args) => {
+        events.push(["register", ...args]);
+        if (options.registerErrors?.length) throw options.registerErrors.shift();
+        return options.response || response;
+      },
+      socialRecover: async (...args) => { events.push(["socialRecover", ...args]); return options.response || response; },
       getChallenge: async (...args) => { events.push(["challenge", ...args]); return { challengeId: "challenge-id", challenge: "base64-challenge" }; },
       login: async (...args) => {
         events.push(["login", ...args]);
@@ -108,6 +114,8 @@ const setupStore = (options = {}) => {
         return normalized;
       },
       createCredentialSalt: () => salt,
+      createAccountIdentity: async () => identity,
+      generateUsername: () => "brave-otter-123",
       createCredentialIdentity: async (value, secret, credentialSalt) => {
         assert.equal(value, identifier);
         assert.equal(secret, password);
@@ -150,6 +158,49 @@ const setupStore = (options = {}) => {
   return { store, events, runtime, token: () => savedToken, owner: () => owner };
 };
 
+test("social signup creates a device-key account linked only for recovery, retrying username collisions", async () => {
+  const collision = Object.assign(new Error("Conflict"), { response: { status: 409, data: {} } });
+  const fixture = setupStore({ registerErrors: [collision] });
+  await fixture.store.getState().socialRegister({ provider: "google", idToken: "id-token", displayName: " Sam ", invitationCode: "CODE" });
+  const registers = fixture.events.filter(([name]) => name === "register");
+  assert.equal(registers.length, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(registers[1].slice(1))), [
+    "brave-otter-123", salt, identity.publicKey, vault, "CODE", "Sam", { provider: "google", idToken: "id-token" },
+  ]);
+  assert.equal(fixture.store.getState().token, "token");
+  assert.equal(fixture.owner().recoveryKey, identity.recoveryKey);
+
+  const exists = Object.assign(new Error("Exists"), { response: { status: 409, data: { code: "SOCIAL_ACCOUNT_EXISTS" } } });
+  const blocked = setupStore({ registerErrors: [exists] });
+  await assert.rejects(blocked.store.getState().socialRegister({ provider: "apple", idToken: "t" }), (error) => error === exists);
+  assert.equal(blocked.events.filter(([name]) => name === "register").length, 1);
+  assert.equal(blocked.store.getState().user, null);
+});
+
+test("social recovery signs in with a fresh device key and an empty vault", async () => {
+  const fixture = setupStore({});
+  await fixture.store.getState().socialRecover({ provider: "apple", idToken: "id-token" });
+  assert.deepEqual(JSON.parse(JSON.stringify(fixture.events.find(([name]) => name === "socialRecover"))), [
+    "socialRecover", "apple", "id-token", identity.publicKey, vault,
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(fixture.events.find(([name]) => name === "createVault"))), ["createVault", { displayName: "" }]);
+  assert.equal(fixture.store.getState().user.id, "u_random");
+});
+
+test("signup and sign-in screens offer Apple and Google with the recovery-only note", () => {
+  const { default: i18n } = load("src/i18n/i18n.js", { "i18n-js": require("i18n-js") });
+  for (const locale of ["ko", "en", "ja"]) {
+    for (const key of ["auth.socialRecoveryNote", "auth.socialRecoverNote", "auth.recoverWithApple", "auth.recoverWithGoogle", "auth.orUsePassword"]) {
+      assert.ok(i18n.translations[locale][key], `${locale} ${key}`);
+    }
+  }
+  const register = fs.readFileSync(path.join(root, "src/screens/auth/RegisterScreen.js"), "utf8");
+  const login = fs.readFileSync(path.join(root, "src/screens/auth/LoginScreen.js"), "utf8");
+  assert.ok(register.indexOf("<SocialAuthButtons") < register.indexOf('t("auth.username")'));
+  assert.match(register, /mode="register"/);
+  assert.match(login, /mode="recover"/);
+});
+
 test("initialization with no device identity never fetches or accepts a server-only token", async () => {
   const { store, events, token } = setupStore({ token: "stale-web-token" });
   await store.getState().initialize();
@@ -189,6 +240,17 @@ test("startup connectivity failures preserve local sign-in and surface a retryab
   options.loginError = null;
   await fixture.store.getState().initialize();
   assert.equal(fixture.store.getState().user.displayName, "Private Name");
+});
+
+test("startup rate limits are retried and then recover without clearing local sign-in", async () => {
+  const limited = Object.assign(new Error("Too many"), { response: { status: 429, headers: { "retry-after": "0.001" } } });
+  const options = { token: "saved-token", identity };
+  let reads = 0;
+  Object.defineProperty(options, "loginError", { get: () => (++reads <= 2 ? limited : null) });
+  const fixture = setupStore(options);
+  await fixture.store.getState().initialize();
+  assert.equal(fixture.store.getState().user.displayName, "Private Name");
+  assert.equal(fixture.token(), "token");
 });
 
 test("server rejection of the saved identity clears local sign-in instead of looping", async () => {
@@ -491,7 +553,7 @@ test("owned screens parse and expose credential fields without internal-key back
       plugins: ["@babel/plugin-transform-react-jsx"],
     });
     if (relative.includes("LoginScreen") || relative.includes("RegisterScreen")) {
-      assert.ok(!source.includes("SocialAuthButtons"));
+      assert.ok(source.includes("SocialAuthButtons"));
       assert.ok(!source.includes("console."));
     }
     if (relative.includes("RegisterScreen")) {

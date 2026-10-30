@@ -1977,7 +1977,7 @@ const createStyles = (colors) => StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
   },
   voiceButton: {
     backgroundColor: colors.primarySoft,

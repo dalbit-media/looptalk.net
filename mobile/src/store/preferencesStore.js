@@ -48,12 +48,23 @@ export const usePreferencesStore = create((set) => ({
   }),
 
   initialize: async () => {
+    let storageReadFailed = false;
+    let storageWriteFailed = false;
+    const readPreference = async (key) => {
+      try {
+        return await AsyncStorage.getItem(key);
+      } catch (error) {
+        storageReadFailed = true;
+        console.error(`Unable to read local preference "${key}":`, error);
+        return null;
+      }
+    };
     const [savedLanguage, savedThemeMode, savedChatTextSize, savedNotifications] =
       await Promise.all([
-        AsyncStorage.getItem(LANGUAGE_KEY),
-        AsyncStorage.getItem(THEME_KEY),
-        AsyncStorage.getItem(CHAT_TEXT_SIZE_KEY),
-        AsyncStorage.getItem(NOTIFICATIONS_KEY),
+        readPreference(LANGUAGE_KEY),
+        readPreference(THEME_KEY),
+        readPreference(CHAT_TEXT_SIZE_KEY),
+        readPreference(NOTIFICATIONS_KEY),
       ]);
 
     const language = getDeviceLanguage();
@@ -68,7 +79,18 @@ export const usePreferencesStore = create((set) => ({
     setLanguage(language);
     set({ language, themeMode, chatTextSize, notificationsEnabled });
     if (savedLanguage !== language) {
-      await AsyncStorage.setItem(LANGUAGE_KEY, language);
+      try {
+        await AsyncStorage.setItem(LANGUAGE_KEY, language);
+      } catch (error) {
+        storageWriteFailed = true;
+        console.error("Unable to persist the device language preference:", error);
+      }
+    }
+    if (storageReadFailed || storageWriteFailed) {
+      const messageKey = storageReadFailed
+        ? "privacy.preferenceLoadFailed"
+        : "privacy.preferenceSaveFailed";
+      showAlert(t("common.error"), t(messageKey));
     }
   },
 

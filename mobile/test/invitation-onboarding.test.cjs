@@ -132,7 +132,7 @@ test("automatic welcome is visibly labeled and existing navigation no longer nam
 test("welcome onboarding opens the inbox once without opening or reading the chat", () => {
   const app = fs.readFileSync(path.resolve(__dirname, "../App.js"), "utf8");
   assert.doesNotMatch(app, /\bopenPendingWelcomeConversation\b/);
-  assert.match(app, /onStateChange=\{openPendingWelcomeInbox\}/);
+  assert.match(app, /onStateChange=\{\(\) => \{\s*openPendingWelcomeInbox\(\);/);
   const start = app.indexOf("const openPendingWelcomeInbox = ");
   const end = app.indexOf("\nconst openPendingMessageNotification", start);
   assert.ok(start >= 0 && end > start);
@@ -161,7 +161,7 @@ test("welcome onboarding opens the inbox once without opening or reading the cha
   assert.equal(state.welcomeConversationId, null);
 });
 
-test("site and invitation acceptance use the same centered, screen-limited popup", () => {
+test("the site launcher opens a centered, screen-limited popup", () => {
   const repository = path.resolve(__dirname, "../..");
   const source = fs.readFileSync(path.join(repository, "public/site/site.js"), "utf8");
   for (const [availWidth, availHeight, width, height] of [[1920, 1080, 520, 850], [400, 700, 400, 700]]) {
@@ -184,4 +184,13 @@ test("site and invitation acceptance use the same centered, screen-limited popup
   }
   assert.match(fs.readFileSync(path.join(repository, "public/site/site.js"), "utf8"),
     /window\.openLoopTalkClient\(\)/);
+});
+
+test("invitation signup guides install and notification permission, then enables web push", () => {
+  const read = (file) => fs.readFileSync(path.resolve(__dirname, file), "utf8");
+  const register = read("../src/screens/auth/RegisterScreen.js");
+  assert.match(register, /invitationCode && Platform\.OS === "web" \? <InvitationSetup \/>/);
+  assert.match(register, /Notification\.permission === "granted"[\s\S]*enableWebPush\(\)/);
+  const setup = read("../src/components/InvitationSetup.js");
+  for (const key of ["invite.install", "invite.allow", "invite.acceptHint"]) assert.ok(setup.includes(key));
 });

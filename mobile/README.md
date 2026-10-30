@@ -1,5 +1,35 @@
 # LoopTalk Client
 
+## Forum and Data
+
+Forum is the leftmost navigation tab; the app still opens on Messages.
+Data is in the tab bar immediately to the right of Contacts, before Settings.
+Its on-device library and category browsing are unchanged. Chat headers no
+longer show a Data shortcut; the web installation action remains available.
+
+Every signed-in user can create a poll with 2–10 options. Each user can cast
+one final vote per poll. Results and their discussion unlock only after voting,
+including for the creator. Only voters may read or post comments. Pull to
+refresh to see updated results and comments; Load more retrieves older items.
+The server enforces these rules, including direct API requests.
+
+Inside Forum, My Contacts is selected by default and shows polls authored by
+saved contacts. Public shows polls from every user, including your own.
+Contact filtering runs on the device over the paginated public feed; no contact
+IDs are sent to the server. Load more checks older posts even when the current
+pages contain no contact polls. Adding or removing a contact updates the filter.
+These tabs filter discovery only: all polls remain public to signed-in users,
+and results/comments still require voting.
+
+The creation and discussion screens explain that forum content and votes are
+server-stored and not end-to-end encrypted. Posts show public author names,
+not private profile details. All forum UI is available in Korean, English,
+and Japanese.
+Metro watches the repository root so shared `public` assets used by My Data
+resolve in the exported messenger as well as the Next.js source client.
+Its resolver uses the client's dependencies consistently to avoid loading a
+second React runtime from the website's root dependencies.
+
 ## Calls
 
 Voice and video calls use the same bidirectional video channel. A missing,

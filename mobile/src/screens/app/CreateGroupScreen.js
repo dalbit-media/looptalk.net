@@ -257,7 +257,7 @@ const createStyles = (colors) => StyleSheet.create({
   changeMembersButton: { flexDirection: "row", alignItems: "center", gap: 6, padding: 6 },
   changeMembersText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   spacer: { flex: 1 },
-  primaryButton: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: colors.primary },
+  primaryButton: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: colors.action },
   disabled: { opacity: .45 },
   primaryText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 });

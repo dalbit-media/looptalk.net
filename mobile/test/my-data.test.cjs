@@ -144,9 +144,11 @@ test("invalid tags, corrupt records and storage failures are rejected instead of
   await assert.rejects(f.library.saveDataTags("alice", "item", "tag"), /Disk full/);
 });
 
-test("My Data navigation precedes Settings and every locale has all screen strings", () => {
+test("My Data follows Contacts in navigation and every locale has all screen strings", () => {
   const navigation = fs.readFileSync(path.join(__dirname, "..", "src", "navigation", "AppStack.js"), "utf8");
-  assert.match(navigation, /name="MyData"[\s\S]*?component=\{MyDataStack\}[\s\S]*?name="Settings"/);
+  assert.match(navigation, /name="Contacts"[\s\S]*?name="MyData"[\s\S]*?component=\{MyDataStack\}[\s\S]*?name="Settings"/);
+  assert.match(navigation, /name="MyDataHome" component=\{MyDataScreen\}/);
+  assert.doesNotMatch(navigation, /navigation\.navigate\("MyDataHome"\)/);
   assert.match(navigation, /name="DataCategory" component=\{MyDataScreen\}/);
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "i18n", "i18n.js"), "utf8");
   const ast = babel.parseSync(source, { babelrc: false, configFile: false });

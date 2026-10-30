@@ -1,4 +1,5 @@
 const { Expo } = require("expo-server-sdk");
+const webPush = require("web-push");
 const prisma = require("../db/client");
 
 const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN || undefined });
@@ -54,35 +55,86 @@ const sendPushMessages = async (messages) => {
 const getActiveDevices = async (recipientIds) => {
   const devices = await prisma.deviceToken.findMany({
     where: { userId: { in: recipientIds }, isActive: true },
-    select: { token: true },
+    select: { token: true, platform: true },
   });
-  return devices.filter(({ token }) => Expo.isExpoPushToken(token));
+  return devices.filter(({ token, platform }) => platform === "web" || Expo.isExpoPushToken(token));
+};
+
+const webPushConfigured = () => Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+let webPushReady = false;
+const configureWebPush = () => {
+  if (!webPushConfigured()) return false;
+  if (!webPushReady) {
+    webPush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:admin@looptalk.net",
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY,
+    );
+    webPushReady = true;
+  }
+  return true;
+};
+
+const parseSubscription = (token) => {
+  try {
+    const subscription = JSON.parse(token);
+    return subscription?.endpoint && subscription.keys?.p256dh && subscription.keys?.auth ? subscription : null;
+  } catch {
+    return null;
+  }
+};
+
+const sendWebPushes = async (devices, payload, { ttl = 60 * 60, urgency = "high" } = {}) => {
+  if (!configureWebPush()) return;
+  const body = JSON.stringify(payload);
+  const expired = [];
+  await Promise.all(devices.filter(({ platform }) => platform === "web").map(async ({ token }) => {
+    const subscription = parseSubscription(token);
+    if (!subscription) {
+      expired.push(token);
+      return;
+    }
+    try {
+      await webPush.sendNotification(subscription, body, { TTL: ttl, urgency });
+    } catch (error) {
+      if ([404, 410].includes(error.statusCode)) expired.push(token);
+      else console.error("Web push error:", error.statusCode || error.message);
+    }
+  }));
+  await deactivateTokens(expired);
+};
+
+const dispatch = async (devices, { expo, web, webOptions }) => {
+  const nativeDevices = devices.filter(({ platform }) => platform !== "web");
+  await Promise.all([
+    nativeDevices.length ? sendPushMessages(nativeDevices.map(({ token }) => expo(token))) : null,
+    sendWebPushes(devices, web, webOptions),
+  ]);
 };
 
 const sendIncomingCallPush = async ({ recipientIds, callId, conversationId, callType, caller }) => {
   const validDevices = await getActiveDevices(recipientIds);
-  const messages = validDevices.map(({ token }) => ({
-    to: token,
-    title: caller.displayName || caller.username || "LoopTalk",
-    body: callType === "video" ? "Incoming video call" : "Incoming voice call",
-    sound: "default",
-    priority: "high",
-    ttl: 45,
-    badge: 1,
-    channelId: "incoming-calls",
-    interruptionLevel: "time-sensitive",
-    categoryId: "incoming-call",
-    collapseId: callId,
-    data: {
-      type: "incoming_call",
-      callId,
-      conversationId,
-      callType,
-      caller,
-    },
-  }));
-
-  await sendPushMessages(messages);
+  const title = caller.displayName || caller.username || "LoopTalk";
+  const body = callType === "video" ? "Incoming video call" : "Incoming voice call";
+  const data = { type: "incoming_call", callId, conversationId, callType, caller };
+  await dispatch(validDevices, {
+    expo: (token) => ({
+      to: token,
+      title,
+      body,
+      sound: "default",
+      priority: "high",
+      ttl: 45,
+      badge: 1,
+      channelId: "incoming-calls",
+      interruptionLevel: "time-sensitive",
+      categoryId: "incoming-call",
+      collapseId: callId,
+      data,
+    }),
+    web: { title, body, tag: `call-${callId}`, requireInteraction: true, data },
+    webOptions: { ttl: 45 },
+  });
 };
 
 const sendMessagePush = async ({ recipientIds, conversationId, message }) => {
@@ -99,37 +151,41 @@ const sendMessagePush = async ({ recipientIds, conversationId, message }) => {
   const body = message.messageType === "TEXT"
     ? message.content.slice(0, 180)
     : mediaLabels[message.messageType] || "Sent a message";
-  const messages = validDevices.map(({ token }) => ({
-    to: token,
-    title: senderName,
-    body,
-    sound: "default",
-    priority: "high",
-    channelId: "messages",
-    collapseId: conversationId,
-    data: {
-      type: "message",
-      conversationId,
-      messageId: message.id,
-      senderName,
-    },
-  }));
-  await sendPushMessages(messages);
+  const data = { type: "message", conversationId, messageId: message.id, senderName };
+  await dispatch(validDevices, {
+    expo: (token) => ({
+      to: token,
+      title: senderName,
+      body,
+      sound: "default",
+      priority: "high",
+      channelId: "messages",
+      collapseId: conversationId,
+      data,
+    }),
+    web: { title: senderName, body, tag: `conversation-${conversationId}`, data },
+  });
 };
 
 const sendSecureMessagePush = async ({ recipientIds, conversationId, id }) => {
   if (!recipientIds.length) return;
   const validDevices = await getActiveDevices(recipientIds);
-  await sendPushMessages(validDevices.map(({ token }) => ({
-    to: token,
-    title: "LoopTalk",
-    body: "Encrypted message",
-    sound: "default",
-    priority: "high",
-    channelId: "messages",
-    collapseId: conversationId,
-    data: { type: "secure_message_available", conversationId, id },
-  })));
+  const data = { type: "secure_message_available", conversationId, id };
+  await dispatch(validDevices, {
+    expo: (token) => ({
+      to: token,
+      title: "LoopTalk",
+      body: "Encrypted message",
+      sound: "default",
+      priority: "high",
+      channelId: "messages",
+      collapseId: conversationId,
+      data,
+    }),
+    web: { title: "LoopTalk", body: "Encrypted message", tag: `conversation-${conversationId}`, data },
+  });
 };
 
-module.exports = { sendIncomingCallPush, sendMessagePush, sendSecureMessagePush };
+module.exports = {
+  sendIncomingCallPush, sendMessagePush, sendSecureMessagePush, webPushConfigured, parseSubscription,
+};

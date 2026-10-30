@@ -224,9 +224,10 @@ test("normalized email/phone and exact password derive the account without expos
     const salt = randomBytes(16).toString("base64");
     assert.equal(credentials.normalizeIdentifier(" Alice@Example.TEST "), "alice@example.test");
     assert.equal(credentials.normalizeIdentifier("+1 (202) 555-0123"), "+12025550123");
-    for (const invalid of ["", "alice", "a@b", "123", "+1abc5550123"]) {
+    for (const invalid of ["", "a", "a@b", "123", "+1abc5550123", "-bad", "under_score"]) {
       assert.throws(() => credentials.normalizeIdentifier(invalid), /Invalid/);
     }
+    assert.equal(credentials.normalizeIdentifier(" Brave-Otter-123 "), "brave-otter-123");
     const a = await credentials.createCredentialIdentity(" Alice@Example.TEST ", "Exact Password ", salt);
     const b = await credentials.createCredentialIdentity("alice@example.test", "Exact Password ", salt);
     const c = await credentials.createCredentialIdentity("alice@example.test", "Exact Password", salt);
@@ -273,4 +274,34 @@ test("encrypted preference sync failures notify the owner without applying a fal
     assert.equal(store.getState().themeMode, "system");
     assert.equal(alerts.length, 1);
     assert.equal(alerts[0][1], "privacy.preferenceSaveFailed");
+});
+
+test("preference storage read failures keep startup usable and report defaults", async () => {
+    const alerts = [];
+    const store = load("store/preferencesStore.js", {
+      "@react-native-async-storage/async-storage": {
+        getItem: async (key) => {
+          if (key === "themeMode") throw new Error("Local storage unavailable");
+          return {
+            language: null,
+            chatTextSize: "large",
+            notificationsEnabled: "true",
+          }[key] ?? null;
+        },
+        setItem: async () => { throw new Error("Local storage unavailable"); },
+      },
+      "../i18n/i18n": { getDeviceLanguage: () => "ko", setLanguage() {}, t: (key) => key },
+      "../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
+      "../utils/ownerVault": {
+        getOwnerIdentity: () => null,
+        readOwnerVault: () => ({ preferences: {} }),
+        updateOwnerVault: async () => {},
+      },
+    }).usePreferencesStore;
+    await store.getState().initialize();
+    assert.equal(store.getState().themeMode, "system");
+    assert.equal(store.getState().chatTextSize, "large");
+    assert.equal(store.getState().notificationsEnabled, true);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0][1], "privacy.preferenceLoadFailed");
 });

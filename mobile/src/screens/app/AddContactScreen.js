@@ -6,6 +6,7 @@ import * as InvitationsAPI from "../../api/invitations";
 import * as MessageAPI from "../../api/messages";
 import * as UserAPI from "../../api/users";
 import { SearchBar } from "../../components/SearchBar";
+import { InfoTip } from "../../components/InfoTip";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAuthStore } from "../../store/authStore";
@@ -317,8 +318,10 @@ export const AddContactScreen = ({ navigation, route }) => {
         </>
       ) : (
         <View style={styles.searchSection}>
-          <Text style={styles.searchTitle}>{t("contacts.searchForUser")}</Text>
-          <Text style={styles.searchDescription}>{t("contacts.publicSearchDescription")}</Text>
+          <View style={styles.searchTitleRow}>
+            <Text style={styles.searchTitle}>{t("contacts.searchForUser")}</Text>
+            <InfoTip align="right" text={t("contacts.publicSearchDescription")} />
+          </View>
           <SearchBar
             value={query}
             onChangeText={setQuery}
@@ -400,12 +403,13 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 7,
     borderRadius: 6,
   },
-  modeButtonActive: { backgroundColor: colors.primary },
+  modeButtonActive: { backgroundColor: colors.action },
   modeButtonText: { color: colors.secondaryText, fontSize: 14, fontWeight: "600" },
   modeButtonTextActive: { color: "#FFFFFF" },
   searchSection: { width: "100%", maxWidth: 560, alignSelf: "center" },
   searchTitle: { color: colors.text, fontSize: 22, fontWeight: "700" },
   searchDescription: { color: colors.secondaryText, fontSize: 14, lineHeight: 20, marginTop: 6, marginBottom: 18 },
+  searchTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, zIndex: 1000 },
   emptySearch: { color: colors.mutedText, textAlign: "center", marginTop: 32 },
   resultList: { marginTop: 12 },
   userRow: {
@@ -421,7 +425,7 @@ const createStyles = (colors) => StyleSheet.create({
   userText: { flex: 1, marginLeft: 12 },
   userName: { color: colors.text, fontSize: 16, fontWeight: "600" },
   username: { color: colors.secondaryText, fontSize: 13, marginTop: 2 },
-  connectButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  connectButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.action, alignItems: "center", justifyContent: "center" },
   iconContainer: {
     width: 72,
     height: 72,
@@ -485,7 +489,7 @@ const createStyles = (colors) => StyleSheet.create({
     width: "100%",
     minHeight: 50,
     borderRadius: 8,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

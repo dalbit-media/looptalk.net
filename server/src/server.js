@@ -41,7 +41,16 @@ const {
 
 // Initialize
 const app = express();
+// Behind nginx or a load balancer, trust the configured number of proxy hops so rate limits use the real client IP.
+if (process.env.TRUST_PROXY) {
+  const hops = Number.parseInt(process.env.TRUST_PROXY, 10);
+  app.set("trust proxy", Number.isInteger(hops) && String(hops) === process.env.TRUST_PROXY.trim() ? hops : process.env.TRUST_PROXY);
+}
 const server = http.createServer(app);
+// Node's default requestTimeout (5 min) aborts slow large uploads on mobile links.
+server.requestTimeout = Number(process.env.REQUEST_TIMEOUT_MS) || 30 * 60 * 1000;
+server.headersTimeout = 60 * 1000;
+server.keepAliveTimeout = 65 * 1000; // above typical load balancer idle timeout (60s)
 const isDevelopment = process.argv.includes("--dev");
 const BASE_PORT = Number.parseInt(process.env.PORT || "3001", 10) || 3001;
 const MAX_DEV_PORT_ATTEMPTS = 20;
@@ -125,7 +134,7 @@ if (hasExpoWebBuild) {
     dotfiles: "deny",
     index: false,
     setHeaders: (res, filePath) => {
-      if (path.basename(filePath) === "manifest.webmanifest") {
+      if (["manifest.webmanifest", "push-sw.js"].includes(path.basename(filePath))) {
         res.setHeader("Cache-Control", "no-cache");
       }
     },
@@ -202,6 +211,7 @@ app.use("/api/telemetry", require("./routes/telemetry"));
 app.use("/api/link-preview", require("./routes/linkPreview"));
 app.use("/api/calls", require("./routes/calls"));
 app.use("/api/reports", require("./routes/reports"));
+app.use("/api/forum", require("./routes/forum"));
 
 // Health check
 app.get("/health", (req, res) => {
@@ -551,6 +561,12 @@ app.use((err, req, res, next) => {
     path: req.path,
     message: err.message,
   }));
+  if (err.code === "LIMIT_FILE_SIZE" || err.type === "entity.too.large") {
+    err.status = 413;
+    err.message = "File is too large";
+  } else if (err.name === "MulterError" && !err.status) {
+    err.status = 400;
+  }
   const status = err.status || 500;
   const message =
     status < 500

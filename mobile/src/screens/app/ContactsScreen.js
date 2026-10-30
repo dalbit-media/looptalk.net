@@ -5,6 +5,7 @@ import { ContactIdentity } from "../../components/ContactIdentity";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState } from "../../components/EmptyState";
+import { GuestJoinBanner } from "../../components/GuestJoinBanner";
 import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
 import { useAuthStore } from "../../store/authStore";
@@ -307,6 +308,7 @@ export const ContactsScreen = ({ navigation }) => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
+      <GuestJoinBanner onPress={() => navigation.navigate("Forum", { screen: "JoinNetwork" })} />
       <View style={styles.searchRow}>
         <SearchBar
           value={searchQuery}
@@ -468,7 +470,7 @@ const createStyles = (colors) => StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",

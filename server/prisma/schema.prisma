@@ -31,6 +31,7 @@ model User {
   profilePicture  String?
   bio             String?
   status          String @default("ACTIVE")
+  isMember        Boolean @default(true)
   lastActiveAt    DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -49,10 +50,67 @@ model User {
   reactions       MessageReaction[]
   reportsSubmitted Report[] @relation("ReportReporter")
   reportsReceived  Report[] @relation("ReportSubject")
+  forumPolls       ForumPoll[]
+  forumVotes       ForumVote[]
+  forumComments    ForumComment[]
 
   @@index([username])
   @@index([email])
   @@index([phoneNumber])
+}
+
+model ForumPoll {
+  id        String @id @default(cuid())
+  authorId  String
+  question  String
+  visibility String @default("contacts")
+  createdAt DateTime @default(now())
+  author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  options   ForumOption[]
+  votes     ForumVote[]
+  comments  ForumComment[]
+
+  @@index([createdAt, id])
+}
+
+model ForumOption {
+  id       String @id @default(cuid())
+  pollId   String
+  text     String
+  position Int
+  poll     ForumPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes    ForumVote[]
+
+  @@unique([id, pollId])
+  @@unique([pollId, position])
+}
+
+model ForumVote {
+  id        String @id @default(cuid())
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime @default(now())
+  poll      ForumPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    ForumOption @relation(fields: [optionId, pollId], references: [id, pollId], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([userId])
+  @@index([optionId, pollId])
+}
+
+model ForumComment {
+  id        String @id @default(cuid())
+  pollId    String
+  authorId  String
+  content   String
+  createdAt DateTime @default(now())
+  poll      ForumPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([pollId, createdAt, id])
+  @@index([authorId])
 }
 
 model Contact {

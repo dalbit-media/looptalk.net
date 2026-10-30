@@ -26,3 +26,4 @@ for (const [attribute, tag] of installMetadata) {
 fs.writeFileSync(indexPath, indexHtml);
 
 fs.copyFileSync(manifestPath, path.join(buildDirectory, "manifest.webmanifest"));
+fs.copyFileSync(path.resolve(__dirname, "../web/push-sw.js"), path.join(buildDirectory, "push-sw.js"));

@@ -5,16 +5,19 @@ import { identityFromRecoveryKey } from "./accountEncryption";
 
 export const CREDENTIAL_ITERATIONS = 600000;
 
+export const isUsername = (value) => /^[a-z][a-z0-9-]{1,28}[a-z0-9]$/.test(value);
+
 export const normalizeIdentifier = (value) => {
-  if (typeof value !== "string" || value.length > 254) throw new Error("Invalid email or phone number");
+  if (typeof value !== "string" || value.length > 254) throw new Error("Invalid username, email or phone number");
   const trimmed = value.trim();
+  if (isUsername(trimmed.toLowerCase())) return trimmed.toLowerCase();
   if (trimmed.includes("@")) {
     const email = trimmed.toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid email or phone number");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid username, email or phone number");
     return email;
   }
   const phone = trimmed.replace(/[\s().-]/g, "");
-  if (!/^\+?\d{7,15}$/.test(phone)) throw new Error("Invalid email or phone number");
+  if (!/^\+?\d{7,15}$/.test(phone)) throw new Error("Invalid username, email or phone number");
   return phone;
 };
 

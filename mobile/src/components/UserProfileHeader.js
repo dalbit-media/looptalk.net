@@ -208,7 +208,7 @@ const createStyles = (colors) => StyleSheet.create({
   inputHint: { color: colors.mutedText, fontSize: 12, marginTop: 8 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 20 },
   modalButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 16, borderRadius: 8 },
-  modalPrimary: { minWidth: 100, alignItems: "center", backgroundColor: colors.primary },
+  modalPrimary: { minWidth: 100, alignItems: "center", backgroundColor: colors.action },
   modalCancel: { color: colors.secondaryText, fontWeight: "600" },
   modalPrimaryText: { color: "#FFFFFF", fontWeight: "600" },
 });

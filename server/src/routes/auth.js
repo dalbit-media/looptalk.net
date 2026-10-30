@@ -4,6 +4,7 @@ const rateLimit = require("express-rate-limit");
 const prisma = require("../db/client");
 const { comparePassword, generateToken } = require("../utils/auth");
 const authMiddleware = require("../middleware/auth");
+const { webPushConfigured, parseSubscription } = require("../utils/pushNotifications");
 const { pruneSecureRecipient, secureTransaction } = require("../utils/secureRelay");
 const { opaqueUser, upgradeRequired, decodeBase64, validVault, accountId, onlyFields,
   normalizeIdentifier, credentialFields } = require("../utils/privateAccounts");
@@ -151,11 +152,22 @@ router.get("/invitation-onboarding", authMiddleware, async (req, res) => {
   } });
 });
 
+router.get("/web-push-key", (_req, res) => {
+  if (!webPushConfigured()) return res.status(503).json({ error: "Web push is not configured" });
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+});
+
 router.post("/device-token", authMiddleware, async (req, res) => {
   const { token, platform } = req.body || {};
   if (typeof token !== "string" || !token || token.length > 4096 ||
       !["ios", "android", "web"].includes(platform)) {
     return res.status(400).json({ error: "Invalid device token" });
+  }
+  if (platform === "web") {
+    const subscription = parseSubscription(token);
+    let secureEndpoint = false;
+    try { secureEndpoint = new URL(subscription?.endpoint).protocol === "https:"; } catch { /* invalid endpoint */ }
+    if (!secureEndpoint) return res.status(400).json({ error: "Invalid web push subscription" });
   }
   await prisma.deviceToken.upsert({
     where: { token }, update: { userId: req.userId, isActive: true, platform },

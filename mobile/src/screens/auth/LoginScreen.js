@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuthStore } from "../../store/authStore";
-import * as AuthAPI from "../../api/auth";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { BrandMark } from "../../components/BrandMark";
+import { InfoTip } from "../../components/InfoTip";
+import { SocialAuthButtons } from "../../components/SocialAuthButtons";
 import { normalizeIdentifier } from "../../utils/accountPrivacy";
 
 export const LoginScreen = ({ navigation }) => {
@@ -22,15 +23,8 @@ export const LoginScreen = ({ navigation }) => {
   const cancelLegacyMigration = useAuthStore((state) => state.cancelLegacyMigration);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
   const login = useAuthStore((state) => state.login);
   const initializationError = useAuthStore((state) => state.initializationError);
-
-  useEffect(() => {
-    AuthAPI.getBootstrapStatus()
-      .then(({ bootstrapAvailable: available }) => setBootstrapAvailable(available))
-      .catch(() => setBootstrapAvailable(false));
-  }, []);
 
   const handleLogin = async () => {
     if (loading) return;
@@ -99,7 +93,7 @@ export const LoginScreen = ({ navigation }) => {
           <BrandMark size={72} />
           <Text style={styles.title}>{t("brand.name")}</Text>
           <Text style={styles.subtitle}>{t("auth.loginSubtitle")}</Text>
-          <Text style={styles.sessionNotice}>{t("auth.persistentSessionNotice")}</Text>
+          <InfoTip align="center" text={t("auth.persistentSessionNotice")} style={styles.infoTip} />
         </View>
 
         <View style={styles.form}>
@@ -175,18 +169,21 @@ export const LoginScreen = ({ navigation }) => {
             </TouchableOpacity>
           )}
 
+          <View style={styles.dividerRow}>
+            <View style={styles.divider} />
+            <Text style={styles.dividerText}>{t("auth.orContinueWith")}</Text>
+            <View style={styles.divider} />
+          </View>
+          <SocialAuthButtons mode="recover" disabled={loading} onError={setErrorMessage} />
+
           <TouchableOpacity
-            onPress={() => navigation.navigate(
-              bootstrapAvailable ? "Register" : "Invitation",
-              bootstrapAvailable ? { isBootstrap: true } : undefined
-            )}
+            onPress={() => navigation.navigate("Register")}
             disabled={loading}
           >
-            <Text style={styles.link}>
-              {bootstrapAvailable
-                ? t("auth.createFirstAccount")
-                : t("auth.getInvite")}
-            </Text>
+            <Text style={styles.link}>{t("auth.createAccount")}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.navigate("Invitation")} disabled={loading}>
+            <Text style={styles.link}>{t("auth.haveInvite")}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -195,6 +192,9 @@ export const LoginScreen = ({ navigation }) => {
 };
 
 const createStyles = (colors) => StyleSheet.create({
+  dividerRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
+  divider: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { color: colors.mutedText, fontSize: 12 },
   container: {
     flex: 1,
     backgroundColor: colors.surface,
@@ -226,6 +226,10 @@ const createStyles = (colors) => StyleSheet.create({
     textAlign: "center",
     color: colors.mutedText,
   },
+  infoTip: {
+    marginTop: 8,
+    alignSelf: "center",
+  },
   form: {
     gap: 16,
   },
@@ -244,7 +248,7 @@ const createStyles = (colors) => StyleSheet.create({
     lineHeight: 20,
   },
   button: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",

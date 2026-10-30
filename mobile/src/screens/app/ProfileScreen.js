@@ -272,7 +272,7 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 12,
   },
   primaryButton: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     flexDirection: "row",
     paddingVertical: 12,
     borderRadius: 12,

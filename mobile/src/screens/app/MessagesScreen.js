@@ -7,6 +7,7 @@ import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
 import { HighlightText } from "../../components/HighlightText";
 import { UserPresence } from "../../components/UserPresence";
+import { GuestJoinBanner } from "../../components/GuestJoinBanner";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useContactStore } from "../../store/contactStore";
@@ -206,6 +207,7 @@ export const MessagesScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
+      <GuestJoinBanner onPress={() => navigation.navigate("Forum", { screen: "JoinNetwork" })} />
       <View style={styles.searchRow}>
         <SearchBar
           value={searchQuery}
@@ -282,7 +284,7 @@ const createStyles = (colors) => StyleSheet.create({
     borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     elevation: 5,
     shadowColor: "#000",
     shadowOpacity: 0.25,

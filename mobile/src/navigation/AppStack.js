@@ -1,7 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { TouchableOpacity, View } from "react-native";
+import { TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { MessagesScreen } from "../screens/app/MessagesScreen";
@@ -9,7 +9,9 @@ import { ChatScreen } from "../screens/app/ChatScreen";
 import { ContactsScreen } from "../screens/app/ContactsScreen";
 import { SettingsScreen } from "../screens/app/SettingsScreen";
 import { MyDataScreen } from "../screens/app/MyDataScreen";
+import { ForumScreen, CreatePollScreen, PollScreen } from "../screens/app/ForumScreen";
 import { ProfileScreen } from "../screens/app/ProfileScreen";
+import { JoinNetworkScreen } from "../screens/app/JoinNetworkScreen";
 import { AddContactScreen } from "../screens/app/AddContactScreen";
 import { MyInvitationsScreen } from "../screens/app/MyInvitationsScreen";
 import { CreateGroupScreen } from "../screens/app/CreateGroupScreen";
@@ -177,6 +179,36 @@ const MyDataStack = () => {
   );
 };
 
+const ForumStack = () => {
+  const t = useTranslation();
+  const { colors } = useAppTheme();
+  const textSize = usePreferencesStore((state) => state.chatTextSize);
+  const textScale = getAppTextScale(textSize);
+  return (
+    <Stack.Navigator screenOptions={{
+      headerStyle: { backgroundColor: colors.header },
+      headerTintColor: colors.headerIcon,
+      headerTitleStyle: { fontSize: 17 * textScale, fontWeight: "600", color: colors.headerText },
+      headerBackTitleVisible: false,
+      statusBarStyle: "light",
+    }}>
+      <Stack.Screen name="ForumHome" component={ForumScreen} options={{ title: t("navigation.forum") }} />
+      <Stack.Screen name="CreatePoll" component={CreatePollScreen} options={({ navigation }) => ({
+        title: t("forum.create"),
+        ...getBackButtonOptions(navigation, t),
+      })} />
+      <Stack.Screen name="Poll" component={PollScreen} options={({ navigation }) => ({
+        title: t("navigation.forum"),
+        ...getBackButtonOptions(navigation, t),
+      })} />
+      <Stack.Screen name="JoinNetwork" component={JoinNetworkScreen} options={({ navigation }) => ({
+        title: t("join.cta"),
+        ...getBackButtonOptions(navigation, t),
+      })} />
+    </Stack.Navigator>
+  );
+};
+
 const SettingsStack = () => {
   const t = useTranslation();
   const { colors } = useAppTheme();
@@ -243,6 +275,7 @@ export const AppStack = () => {
   const tabBarBottomPadding = Math.max(insets.bottom, 10);
   return (
     <Tab.Navigator
+      initialRouteName="Messages"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ focused, color, size }) => {
@@ -253,6 +286,8 @@ export const AppStack = () => {
             iconName = focused ? "people" : "people-outline";
           } else if (route.name === "MyData") {
             iconName = focused ? "file-tray-full" : "file-tray-full-outline";
+          } else if (route.name === "Forum") {
+            iconName = focused ? "bar-chart" : "bar-chart-outline";
           } else if (route.name === "Settings") {
             iconName = focused ? "settings" : "settings-outline";
           }
@@ -281,6 +316,11 @@ export const AppStack = () => {
         },
       })}
     >
+      <Tab.Screen
+        name="Forum"
+        component={ForumStack}
+        options={{ title: t("navigation.forum"), tabBarLabel: t("navigation.forum") }}
+      />
       <Tab.Screen
         name="Messages"
         component={MessagesStack}

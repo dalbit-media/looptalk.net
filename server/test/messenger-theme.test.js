@@ -106,6 +106,8 @@ test("sample palettes have matching semantic tokens and readable text", () => {
         `${foreground} on ${background} must meet 4.5:1 contrast`);
     }
     assert.ok(contrast("#FFFFFF", colors.primary) >= 4.5);
+    assert.ok(contrast(colors.onAction, colors.action) >= 4.5);
+    assert.notEqual(colors.action, colors.primary);
     assert.ok(contrast(colors.navigationAccent, colors.tabBar) >= 3);
   }
 });
@@ -130,10 +132,13 @@ test("all authenticated stacks and bottom tabs use the semantic navigation palet
     };
     for (const name of [
       "Messages", "Chat", "Contacts", "Settings", "Profile", "AddContact",
-      "MyInvitations", "CreateGroup", "GroupInfo",
+      "MyInvitations", "CreateGroup", "GroupInfo", "MyData", "JoinNetwork",
     ]) {
       mocks[`../screens/app/${name}Screen`] = { [`${name}Screen`]: () => null };
     }
+    mocks["../screens/app/ForumScreen"] = {
+      ForumScreen: () => null, CreatePollScreen: () => null, PollScreen: () => null,
+    };
     const { AppStack } = loadClient("navigation/AppStack.js", mocks);
     const tree = AppStack();
     const options = tree.props.screenOptions({ route: { name: "Messages" } });

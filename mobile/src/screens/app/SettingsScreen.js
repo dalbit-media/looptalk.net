@@ -10,7 +10,7 @@ import { useMessageStore } from "../../store/messageStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { t } from "../../i18n/i18n";
 import { showAlert } from "../../utils/showAlert";
-import { getCallPushToken } from "../../utils/callNotifications";
+import { getCallPushToken, requestPushPermission } from "../../utils/callNotifications";
 import { getChatMessageFontSize } from "../../utils/chatTextSize";
 import { API_URL } from "../../config/environment";
 
@@ -51,9 +51,8 @@ export const SettingsScreen = ({ navigation }) => {
     }
 
     try {
-      const Notifications = require("expo-notifications");
-      const permission = await Notifications.requestPermissionsAsync();
-      if (permission.status !== "granted") {
+      const permission = await requestPushPermission();
+      if (permission !== "granted") {
         showAlert(t("common.error"), t("settings.notificationsDenied"));
         return;
       }

@@ -3,10 +3,13 @@ import * as SecureStore from "../utils/tokenStorage";
 import * as api from "../api/auth";
 import { publishDisplayName } from "../api/users";
 import { initializeInvitationContact } from "../utils/invitationOnboarding";
+import { normalizeInvitationCode } from "../utils/invitationCode";
 import { getOwnerGeneration, assertOwnerGeneration } from "../utils/ownerSession";
 import {
+  createAccountIdentity,
   createCredentialIdentity,
   createCredentialSalt,
+  generateUsername,
   normalizeIdentifier,
   signAccountChallenge,
 } from "../utils/accountPrivacy";
@@ -23,10 +26,29 @@ const TOKEN_KEY = "token";
 const RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 let renewal;
 
-const authenticateSavedIdentity = async (identity) => {
-  const { challengeId, challenge } = await api.getChallenge(identity.accountId);
-  const signature = signAccountChallenge(identity.recoveryKey, challenge);
-  return api.login(identity.accountId, challengeId, signature);
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+const MAX_AUTH_ATTEMPTS = 3;
+const MAX_RETRY_DELAY_MS = 10000;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Rate limits and gateway blips are temporary, so wait (honoring Retry-After) instead of failing startup.
+const retryDelay = (error, attempt) => {
+  const seconds = Number(error.response?.headers?.["retry-after"]);
+  const delay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000 * 2 ** attempt;
+  return Math.min(delay, MAX_RETRY_DELAY_MS);
+};
+
+const authenticateSavedIdentity = async (identity, { retry = false } = {}) => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const { challengeId, challenge } = await api.getChallenge(identity.accountId);
+      const signature = signAccountChallenge(identity.recoveryKey, challenge);
+      return await api.login(identity.accountId, challengeId, signature);
+    } catch (error) {
+      if (!retry || attempt + 1 >= MAX_AUTH_ATTEMPTS || !RETRYABLE_STATUSES.has(error.response?.status)) throw error;
+      await wait(retryDelay(error, attempt));
+    }
+  }
 };
 
 const clearRuntime = () => {
@@ -111,7 +133,7 @@ export const useAuthStore = create((set, get) => ({
         set({ user: null, token: null, loading: false });
         return;
       }
-      const response = await authenticateSavedIdentity(identity);
+      const response = await authenticateSavedIdentity(identity, { retry: true });
       const opened = await openSession(identity, response);
       set({ ...opened, token: response.token, loading: false, initializationError: false });
     } catch (error) {
@@ -161,15 +183,15 @@ export const useAuthStore = create((set, get) => ({
 
   register: async (identifier, password, displayName, invitationCode) => {
     const normalized = validateCredentials(identifier, password);
-    const name = displayName.trim();
-    if (!name || name.length > 100) throw new Error("Invalid display name");
+    const name = (displayName || "").trim();
+    if (name.length > 100) throw new Error("Invalid display name");
     set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
     await clearSession();
     try {
       const credentialSalt = createCredentialSalt();
       const identity = await createCredentialIdentity(normalized, password, credentialSalt);
       const { vault } = await createOwnerVault(identity, { displayName: name });
-      const response = await api.register(normalized, credentialSalt, identity.publicKey, vault, invitationCode, name);
+      const response = await api.register(normalized, credentialSalt, identity.publicKey, vault, invitationCode || undefined, name || undefined);
       const opened = await openSession(identity, response);
       set({
         ...opened, token: response.token, initializationError: false,
@@ -179,6 +201,27 @@ export const useAuthStore = create((set, get) => ({
       await clearFailedSession();
       throw error;
     }
+  },
+
+  joinNetwork: async (invitationCode) => {
+    const { token, user } = get();
+    if (!token || !user) throw new Error("Sign in before joining a network");
+    const generation = getOwnerGeneration();
+    const response = await api.joinNetwork(normalizeInvitationCode(invitationCode), token);
+    assertOwnerGeneration(generation);
+    if (response.user?.id !== user.id || response.user.member !== true) {
+      throw new Error("Invalid network join response");
+    }
+    set({ user: { ...get().user, member: true } });
+    // The server already accepted the invitation; a failed contact import is retried on the next sign-in.
+    try {
+      const welcomeConversationId = await initializeInvitationContact(token, user.id);
+      assertOwnerGeneration(generation);
+      set({ welcomeConversationId });
+    } catch (error) {
+      console.warn("Unable to import the inviter contact:", error.message);
+    }
+    return response;
   },
 
   login: async (identifier, password) => {
@@ -249,9 +292,51 @@ export const useAuthStore = create((set, get) => ({
     });
   },
 
-  // Legacy identity-provider sign-in is intentionally unavailable.
-  socialAuth: async () => {
-    throw new Error("Email or phone and password sign-in required.");
+  // Apple/Google identities are only linked for account recovery; they never replace the device key.
+  socialRegister: async ({ provider, idToken, displayName, invitationCode }) => {
+    const name = (displayName || "").trim();
+    if (name.length > 100) throw new Error("Invalid display name");
+    set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
+    await clearSession();
+    try {
+      const identity = await createAccountIdentity();
+      const { vault } = await createOwnerVault(identity, { displayName: name });
+      let response;
+      for (let attempt = 0; !response; attempt += 1) {
+        try {
+          response = await api.register(
+            generateUsername(), createCredentialSalt(), identity.publicKey, vault,
+            invitationCode || undefined, name || undefined, { provider, idToken }
+          );
+        } catch (error) {
+          const retryable = error.response?.status === 409 && error.response.data?.code !== "SOCIAL_ACCOUNT_EXISTS";
+          if (!retryable || attempt + 1 >= 3) throw error;
+        }
+      }
+      const opened = await openSession(identity, response);
+      set({ ...opened, token: response.token, initializationError: false });
+      return response;
+    } catch (error) {
+      await clearFailedSession();
+      throw error;
+    }
+  },
+
+  // Replaces the lost device key; the old encrypted vault (chat history) cannot be restored.
+  socialRecover: async ({ provider, idToken }) => {
+    set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
+    await clearSession();
+    try {
+      const identity = await createAccountIdentity();
+      const { vault } = await createOwnerVault(identity, { displayName: "" });
+      const response = await api.socialRecover(provider, idToken, identity.publicKey, vault);
+      const opened = await openSession(identity, response);
+      set({ ...opened, token: response.token, initializationError: false });
+      return response;
+    } catch (error) {
+      await clearFailedSession();
+      throw error;
+    }
   },
 
   logout: async () => {

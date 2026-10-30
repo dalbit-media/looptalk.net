@@ -158,7 +158,7 @@ test("inbox titles and navigation react to saved contact display names without r
     "react-native": { ...native, FlatList, RefreshControl: () => null },
     "../../components/AppText": { AppText: host("span") },
     "@expo/vector-icons/Ionicons": () => null,
-    ...Object.fromEntries(["EmptyState", "SearchBar", "FilterDropdown", "UserPresence"].map(
+    ...Object.fromEntries(["EmptyState", "SearchBar", "FilterDropdown", "UserPresence", "GuestJoinBanner"].map(
       (name) => [`../../components/${name}`, { [name]: () => null }]
     )),
     "../../components/HighlightText": { HighlightText: ({ text }) => React.createElement("span", null, text) },

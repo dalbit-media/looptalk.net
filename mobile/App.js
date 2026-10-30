@@ -1,6 +1,6 @@
 import "react-native-url-polyfill/auto";
 import { useEffect, useState } from "react";
-import { AppState, Button, LogBox, Platform, View } from "react-native";
+import { AppState, Button, Linking, LogBox, Platform, View } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import {
   createNavigationContainerRef,
@@ -47,6 +47,7 @@ sentryModule?.init?.({
 
 const navigationRef = createNavigationContainerRef();
 let pendingMessageNotification = null;
+let pendingInvitationCode = null;
 
 const openPendingWelcomeInbox = () => {
   const { token, welcomeConversationId, clearWelcomeConversation } = useAuthStore.getState();
@@ -82,6 +83,34 @@ const openPendingMessageNotification = () => {
     },
   });
 };
+
+const openPendingInvitation = () => {
+  const { token, user } = useAuthStore.getState();
+  if (!pendingInvitationCode || !token) return;
+  if (user?.member !== false) {
+    pendingInvitationCode = null;
+    return;
+  }
+  if (!navigationRef.isReady() || !navigationRef.getRootState()?.routeNames.includes("Forum")) return;
+  const code = pendingInvitationCode;
+  pendingInvitationCode = null;
+  navigationRef.navigate("Forum", { screen: "JoinNetwork", params: { code } });
+};
+
+const rememberInvitationUrl = (url) => {
+  try {
+    const parsed = new URL(url, "https://looptalk.app");
+    if (!parsed.pathname.replace(/\/$/, "").endsWith("/register")) return;
+    const code = parsed.searchParams.get("code")?.trim();
+    if (code) pendingInvitationCode = code;
+  } catch {
+    // Malformed links are ignored.
+  }
+};
+
+if (Platform.OS === "web" && typeof window !== "undefined") {
+  rememberInvitationUrl(window.location.href);
+}
 
 const handleMessageNotification = (data) => {
   if (!data?.conversationId) return;
@@ -183,7 +212,7 @@ function App() {
         await minimumSplashTime;
         initialized = true;
       } catch (e) {
-        console.error("Unable to initialize application:", e);
+        console.warn("Unable to initialize application:", e?.message || e);
         useAuthStore.setState({ loading: false, initializationError: true });
         if (mounted) setResetError(true);
       } finally {
@@ -218,7 +247,7 @@ function App() {
     const renew = () => {
       if (AppState.currentState !== "active" || useCallStore.getState().call) return;
       useAuthStore.getState().renewSession().catch((error) =>
-        console.error("Unable to renew saved account session; it will be retried:", error)
+        console.warn("Unable to renew saved account session; it will be retried:", error?.message || error)
       );
     };
     const subscription = AppState.addEventListener("change", (state) => {
@@ -234,8 +263,15 @@ function App() {
   }, [token]);
 
   useEffect(() => {
-    if (Platform.OS === "web") return undefined;
     let cleanupNotifications;
+    if (Platform.OS === "web") {
+      setupCallNotifications({ onMessageOpen: handleMessageNotification })
+        .then((cleanup) => {
+          cleanupNotifications = cleanup;
+        })
+        .catch((error) => console.error("Unable to initialize web notifications:", error));
+      return () => cleanupNotifications?.();
+    }
     setupNativeCalling({
       onAnswer: (callId) =>
         useCallStore.getState().handleNativeCallAction(callId, "answer"),
@@ -267,9 +303,25 @@ function App() {
     messageStore.loadConversations(token, userId);
     useContactStore.getState().loadContacts(token);
     openPendingWelcomeInbox();
+    openPendingInvitation();
     openPendingMessageNotification();
 
   }, [token, userId]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        rememberInvitationUrl(url);
+        openPendingInvitation();
+      }
+    }).catch(() => {});
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      rememberInvitationUrl(url);
+      openPendingInvitation();
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => () => useMessageStore.getState().cleanup(), [userId]);
 
@@ -299,9 +351,13 @@ function App() {
             initialState={token ? undefined : initialNavigationState}
             onReady={() => {
               openPendingWelcomeInbox();
+              openPendingInvitation();
               openPendingMessageNotification();
             }}
-            onStateChange={openPendingWelcomeInbox}
+            onStateChange={() => {
+              openPendingWelcomeInbox();
+              openPendingInvitation();
+            }}
           >
             {token ? <AppStack /> : <AuthStack />}
           </NavigationContainer>

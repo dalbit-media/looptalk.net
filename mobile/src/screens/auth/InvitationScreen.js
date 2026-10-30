@@ -226,7 +226,7 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 4,
   },
   button: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",

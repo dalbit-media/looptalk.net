@@ -2,6 +2,8 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import { displayNativeIncomingCall } from "./nativeCalling";
 
+export const requestPushPermission = async () => (await Notifications.requestPermissionsAsync()).status;
+
 export const getCallPushToken = async () => {
   const projectId =
     process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim() || Constants.expoConfig?.extra?.eas?.projectId;

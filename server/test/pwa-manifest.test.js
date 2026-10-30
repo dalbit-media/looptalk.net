@@ -36,8 +36,9 @@ test("Expo export adds consistent installation metadata without duplicates", () 
     readFileSync: () => indexHtml,
     writeFileSync: (file, html) => { indexHtml = html; },
     copyFileSync: (source, destination) => {
-      assert.equal(source, path.join(root, "mobile", "manifest.json"));
-      assert.equal(destination, path.join(root, "mobile", "dist", "manifest.webmanifest"));
+      const worker = source === path.join(root, "mobile", "web", "push-sw.js");
+      assert.equal(source, worker ? source : path.join(root, "mobile", "manifest.json"));
+      assert.equal(destination, path.join(root, "mobile", "dist", worker ? "push-sw.js" : "manifest.webmanifest"));
       copied += 1;
     },
   };
@@ -49,7 +50,7 @@ test("Expo export adds consistent installation metadata without duplicates", () 
   const first = indexHtml;
   prepare();
   assert.equal(indexHtml, first);
-  assert.equal(copied, 2);
+  assert.equal(copied, 4);
   for (const attribute of [
     'rel="manifest"', 'rel="apple-touch-icon"', 'rel="icon"',
     'name="apple-mobile-web-app-capable"', 'name="apple-mobile-web-app-title"',

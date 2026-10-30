@@ -118,7 +118,6 @@ const getInvitationUrl = (code, language = "ko", req) => (
 const getPreviewUrl = (code, language = "ko", req) => (
   `${getRequestOrigin(req)}/api/invitations/${encodeURIComponent(code)}/preview.png?lang=${normalizeLanguage(language)}`
 );
-const getAppUrl = (code) => `looptalk://register?code=${encodeURIComponent(code)}`;
 const getWebRegistrationUrl = (code, req) => {
   const clientUrl = new URL(
     process.env.WEB_CLIENT_URL || "/app/",
@@ -341,7 +340,6 @@ router.get("/open/:code", async (req, res) => {
   const language = getRequestLanguage(req);
   const copy = LANDING_COPY[language];
   const safeCode = escapeHtml(code);
-  const appUrl = getAppUrl(code);
   const webRegistrationUrl = getWebRegistrationUrl(code, req);
   const previewUrl = getPreviewUrl(safeCode, language, req);
   const isAvailable = getInvitationStatus(invitation) === "CREATED";
@@ -398,32 +396,14 @@ router.get("/open/:code", async (req, res) => {
       <p class="inviter">${escapeHtml(inviterLabel(invitation.inviter))}${language === "en" ? " " : ""}${escapeHtml(copy.invitedBy)}</p>
       <h1>${escapeHtml(title)}</h1>
       <p id="description">${escapeHtml(description)}</p>
-      ${isAvailable ? `<div class="actions"><a id="accept" href="${escapeHtml(webRegistrationUrl)}">${escapeHtml(copy.accept)}</a><button id="decline" type="button">${escapeHtml(copy.decline)}</button><span id="countdown">${escapeHtml(copy.expiresIn)}</span></div>` : ""}
+      ${isAvailable ? `<div class="actions"><a id="accept" href="${escapeHtml(webRegistrationUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(copy.accept)}</a><button id="decline" type="button">${escapeHtml(copy.decline)}</button><span id="countdown">${escapeHtml(copy.expiresIn)}</span></div>` : ""}
     </main>
-    ${isAvailable ? `<script nonce="${escapeHtml(res.locals.cspNonce)}" src="/site/site.js"></script>
-    <script nonce="${escapeHtml(res.locals.cspNonce)}">
+    ${isAvailable ? `<script nonce="${escapeHtml(res.locals.cspNonce)}">
       const expiresAt = ${JSON.stringify(invitation.expiresAt.toISOString())};
       const countdown = document.getElementById("countdown");
       const accept = document.getElementById("accept");
       const decline = document.getElementById("decline");
       const description = document.getElementById("description");
-      const nativeAppUrl = ${JSON.stringify(appUrl)};
-      const webRegistrationUrl = ${JSON.stringify(webRegistrationUrl)};
-      accept.addEventListener("click", function (event) {
-        event.preventDefault();
-        if (!accept.hasAttribute("href")) return;
-        if (!/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-          window.openLoopTalkClient(webRegistrationUrl);
-          return;
-        }
-        const fallback = setTimeout(function () {
-          window.location.href = webRegistrationUrl;
-        }, 900);
-        window.addEventListener("pagehide", function () {
-          clearTimeout(fallback);
-        }, { once: true });
-        window.location.href = nativeAppUrl;
-      });
       const updateCountdown = function () {
         const remaining = new Date(expiresAt).getTime() - Date.now();
         if (remaining <= 0) {

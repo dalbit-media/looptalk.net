@@ -178,10 +178,10 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     const result = await register(alice, aliceVault);
     assert.equal(result.status, 200);
     aliceToken = result.data.token;
-    assert.match(alice.username, /^[0-9a-f]{12}$/);
+    assert.match(alice.username, /^[a-z]+-[a-z]+-\d{3,4}$/);
     assert.match(alice.id, /^u_[0-9a-f]{32}$/);
     assert.notEqual(alice.username, alice.id);
-    assert.deepEqual(result.data.user, { id: alice.id, username: alice.username, displayName: alice.username });
+    assert.deepEqual(result.data.user, { id: alice.id, username: alice.username, displayName: alice.username, member: true });
     assert.equal((await prisma.user.findUnique({ where: { id: alice.id } })).publicUsername, alice.username);
     assert.deepEqual(result.data.vault, aliceVault);
     assert.equal(result.data.revision, 1);
@@ -194,7 +194,13 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     }
     assert.equal(await prisma.message.count(), 0);
     assert.equal(await prisma.conversation.count(), 0);
-    assert.equal((await register(bob, bobVault)).status, 400);
+    const guest = credentialIdentity("guest-visitor", "Guest Password 1");
+    const guestResult = await register(guest, bobVault);
+    assert.equal(guestResult.status, 200);
+    assert.equal(guestResult.data.user.member, false);
+    assert.equal(guestResult.data.user.username, "guest-visitor");
+    assert.equal((await register(bob, bobVault, "ZZZZZZZZZZ")).status, 400);
+    await prisma.user.delete({ where: { id: guest.id } });
   });
   await t.test("invitation redemption atomically creates inviter CHAT and fixed welcome without plaintext contacts or private profile data", async () => {
     for (const inviterDisplayName of ["", " ", 42, "x".repeat(101), "Alice\nHidden"]) {
@@ -220,7 +226,7 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     assert.equal(result.status, 200);
     bobToken = result.data.token;
     welcomeConversationId = result.data.welcomeConversationId;
-    assert.match(bob.username, /^[0-9a-f]{12}$/);
+    assert.match(bob.username, /^[a-z]+-[a-z]+-\d{3,4}$/);
     assert.notEqual(bob.username, alice.username);
     assert.deepEqual((await request(`/users/search?q=${alice.username}`, { token: bobToken })).data,
       [{ id: alice.id, username: alice.username, displayName: alice.username }]);
@@ -317,38 +323,13 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
       const response = await fetch(`${origin}/api/invitations/open/${code}`);
       const landing = await response.text();
       assert.match(landing, /id="accept"/);
-      assert.match(landing, /<script nonce="test-invitation-nonce" src="\/site\/site\.js"><\/script>/);
-      assert.match(landing, /window\.openLoopTalkClient\(webRegistrationUrl\)/);
+      assert.match(landing, new RegExp(`<a id="accept" href="[^"]*/app/register\\?code=${code}" target="_blank" rel="noopener noreferrer">`));
+      assert.doesNotMatch(landing, /looptalk:\/\/|openLoopTalkClient|site\/site\.js/);
       const script = landing.match(/<script nonce="test-invitation-nonce">([\s\S]*?)<\/script>/)[1];
-      for (const mobile of [false, true]) {
-        const handlers = {}, opened = [];
-        let fallback;
-        const accept = {
-          addEventListener: (event, handler) => { handlers[event] = handler; },
-          hasAttribute: () => true,
-        };
-        const window = {
-          location: { href: "" }, addEventListener: () => {},
-          openLoopTalkClient: (url) => opened.push(url),
-        };
-        vm.runInNewContext(script, {
-          window, navigator: { userAgent: mobile ? "iPhone" : "Desktop" },
-          document: { getElementById: (id) => id === "accept" ? accept
-            : { addEventListener: () => {} } },
-          setTimeout: (handler) => { fallback = handler; },
-          clearTimeout: () => {}, setInterval: () => {},
-        });
-        handlers.click({ preventDefault: () => {} });
-        if (mobile) {
-          assert.match(window.location.href, /^looptalk:/);
-          fallback();
-          assert.match(window.location.href, new RegExp(`/app/register\\?code=${code}`));
-          assert.deepEqual(opened, []);
-        } else {
-          assert.equal(opened.length, 1);
-          assert.match(opened[0], new RegExp(`/app/register\\?code=${code}`));
-        }
-      }
+      vm.runInNewContext(script, {
+        document: { getElementById: () => ({ addEventListener: () => {}, style: {} }) },
+        setInterval: () => {},
+      });
       assert.match(landing, /\/site\/theme\.css/);
       assert.ok(landing.includes(owner ? `${alice.username} (${alice.username})` : "LoopTalk"));
       await prisma.privateInvitation.delete({ where: { code } });
@@ -383,7 +364,7 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     assert.equal(Buffer.from(missing.data.salt, "base64").length, 16);
     assert.deepEqual((await parameters(" MISSING@EXAMPLE.TEST ")).data, missing.data);
     assert.notEqual((await parameters("another@example.test")).data.salt, missing.data.salt);
-    assert.equal((await parameters("not-an-identifier")).status, 400);
+    assert.equal((await parameters("a")).status, 400);
     assert.equal((await parameters("123")).status, 400);
     const stored = await prisma.user.findUnique({ where: { id: alice.id } });
     assert.equal(stored.credentialSalt, alice.credentialSalt);
@@ -412,7 +393,7 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     const authenticated = await login(alice, proof);
     assert.equal(authenticated.status, 200);
     assert.deepEqual(authenticated.data.vault, aliceVault);
-    assert.deepEqual(authenticated.data.user, { id: alice.id, username: alice.username, displayName: alice.username });
+    assert.deepEqual(authenticated.data.user, { id: alice.id, username: alice.username, displayName: alice.username, member: true });
     assert.equal((await login(alice, proof)).status, 401);
     const wrongAccount = (await challenge(alice)).data;
     assert.equal((await login(bob, wrongAccount)).status, 401);
@@ -733,9 +714,100 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     assert.equal(registered.data.user.displayName, "New Public Name");
     assert.equal((await prisma.user.findUnique({ where: { id: registered.data.user.id } })).publicDisplayName, "New Public Name");
   });
+  await t.test("a signed-in guest can join the network later with an invitation", async () => {
+    const guest = credentialIdentity("late-joiner", "Guest Password 1");
+    const registered = await register(guest, bobVault);
+    assert.equal(registered.data.user.member, false);
+    const guestToken = registered.data.token;
+    const join = (code, token = guestToken) => request("/auth/join-network", { method: "POST", token, body: { invitationCode: code } });
+    const codes = Object.fromEntries(['self', 'expired', 'good', 'extra'].map((name) => [name, crypto.randomBytes(16).toString('hex').toUpperCase()]));
+    const expiresAt = new Date(Date.now() + 60000);
+    const invitation = (code, inviterId = alice.id, extra = {}) =>
+      prisma.privateInvitation.create({ data: { code, inviterId, expiresAt, ...extra } });
+
+    assert.equal((await request("/auth/join-network", { method: "POST", body: { invitationCode: "X" } })).status, 401);
+    assert.equal((await join("NOTAREALCODE")).status, 400);
+    assert.equal((await request("/auth/join-network", { method: "POST", token: guestToken, body: {} })).status, 400);
+    await invitation(codes.self, guest.id);
+    assert.equal((await join(codes.self)).status, 400);
+    await invitation(codes.expired, alice.id, { expiresAt: new Date(Date.now() - 1000) });
+    assert.equal((await join(codes.expired)).status, 400);
+    assert.equal((await prisma.user.findUnique({ where: { id: guest.id } })).isMember, false);
+
+    await invitation(codes.good);
+    const joined = await join(codes.good.toLowerCase());
+    assert.equal(joined.status, 200);
+    assert.equal(joined.data.user.member, true);
+    assert.equal(typeof joined.data.welcomeConversationId, "string");
+    assert.equal((await prisma.user.findUnique({ where: { id: guest.id } })).isMember, true);
+    const used = await prisma.privateInvitation.findUnique({ where: { code: codes.good } });
+    assert.equal(used.status, "ACCEPTED");
+    assert.equal(used.acceptedById, guest.id);
+    const onboarding = await request("/auth/invitation-onboarding", { token: guestToken });
+    assert.equal(onboarding.data.onboarding.conversationId, joined.data.welcomeConversationId);
+
+    await invitation(codes.extra);
+    assert.equal((await join(codes.extra)).status, 409);
+    const other = credentialIdentity("other-guest", "Guest Password 1");
+    const otherResult = await register(other, bobVault);
+    assert.equal((await join(codes.good, otherResult.data.token)).status, 400);
+    await prisma.privateInvitation.deleteMany({ where: { code: { in: Object.values(codes) } } });
+    await prisma.user.deleteMany({ where: { id: { in: [other.id] } } });
+  });
+  await t.test("Apple/Google sign-in is optional recovery: it links at signup and only replaces the device key", async () => {
+    const jwt = require("jsonwebtoken");
+    const { setKeyFetcher } = require("../src/utils/socialIdentity");
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
+    setKeyFetcher(async () => [jwk]);
+    process.env.GOOGLE_CLIENT_IDS = "google-client, other-client";
+    delete process.env.APPLE_CLIENT_IDS;
+    const sign = (sub, overrides = {}) => jwt.sign({ sub }, privateKey, {
+      algorithm: "RS256", keyid: "test-key", issuer: "https://accounts.google.com",
+      audience: "google-client", expiresIn: 300, ...overrides,
+    });
+    const social = (token, provider = "google") => ({ social: { provider, idToken: token } });
+    const recover = (token, person, provider = "google") => request("/auth/social-recover", { method: "POST",
+      body: { provider, idToken: token, publicKey: person.publicKey, vault: vault() } });
+    try {
+      const device = identity();
+      const forged = [sign("g-1", { audience: "someone-else" }), sign("g-1", { issuer: "https://evil.test" }),
+        sign("g-1", { expiresIn: -10 }), sign("g-1", { keyid: "unknown" }), "not-a-token"];
+      for (const token of forged) assert.equal((await register(device, vault(), null, social(token))).status, 401);
+      assert.equal((await register(device, vault(), null, social(sign("g-1"), "apple"))).status, 503);
+      assert.equal((await register(device, vault(), null, { social: { provider: "google" } })).status, 400);
+
+      const first = await register(device, vault(), null, social(sign("g-1")));
+      assert.equal(first.status, 200);
+      assert.equal(first.data.user.member, false);
+      const stored = await prisma.user.findUnique({ where: { id: device.id } });
+      assert.match(stored.googleId, /^[0-9a-f]{64}$/);
+      assert.ok(!stored.googleId.includes("g-1"));
+      const duplicate = await register(identity(), vault(), null, social(sign("g-1")));
+      assert.equal(duplicate.status, 409);
+      assert.equal(duplicate.data.code, "SOCIAL_ACCOUNT_EXISTS");
+
+      assert.equal((await recover(sign("never-linked"), identity())).status, 404);
+      assert.equal((await recover(sign("g-1", { audience: "someone-else" }), identity())).status, 401);
+      const replacement = identity();
+      const recovered = await recover(sign("g-1"), replacement);
+      assert.equal(recovered.status, 200);
+      assert.equal(recovered.data.user.id, device.id);
+      assert.equal(recovered.data.accountId, replacement.accountId);
+      assert.equal(recovered.data.revision, stored.vaultRevision + 1);
+      assert.equal((await login(replacement, await challenge(replacement).then((r) => r.data))).status, 200);
+      assert.equal((await login(device, await challenge(device).then((r) => r.data))).status, 401);
+    } finally {
+      setKeyFetcher(async () => { throw new Error("unconfigured"); });
+      delete process.env.GOOGLE_CLIENT_IDS;
+    }
+  });
   await t.test("device tokens and account deletion still work", async () => {
     assert.equal((await request("/auth/device-token", { method: "POST", token: bobToken,
-      body: { token: "opaque-device-token", platform: "web" } })).status, 200);
+      body: { token: "opaque-device-token", platform: "web" } })).status, 400);
+    const subscription = JSON.stringify({ endpoint: "https://push.example/abc", keys: { p256dh: "a", auth: "b" } });
+    assert.equal((await request("/auth/device-token", { method: "POST", token: bobToken,
+      body: { token: subscription, platform: "web" } })).status, 200);
     assert.equal((await request("/auth/device-token", { method: "DELETE", token: bobToken })).status, 200);
     const bobInvitation = await prisma.privateInvitation.create({ data: {
       code: "B".repeat(32), inviterId: bob.id, inviterDisplayName: "Shared Bob",

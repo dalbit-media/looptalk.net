@@ -1,46 +1,46 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { AppText as Text } from "../../components/AppText";
 import { useAuthStore } from "../../store/authStore";
-import * as AuthAPI from "../../api/auth";
+import { usePreferencesStore } from "../../store/preferencesStore";
+import { registerDeviceToken } from "../../api/auth";
+import { getCallPushToken } from "../../utils/callNotifications";
+import { InvitationSetup } from "../../components/InvitationSetup";
+import { SocialAuthButtons } from "../../components/SocialAuthButtons";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
-import { normalizeIdentifier } from "../../utils/accountPrivacy";
+import { generateUsername, normalizeIdentifier, isUsername } from "../../utils/accountPrivacy";
+
+const enableWebPush = async () => {
+  const deviceToken = await getCallPushToken();
+  await registerDeviceToken(deviceToken, "web", useAuthStore.getState().token);
+  await usePreferencesStore.getState().setNotificationsEnabled(true);
+};
 
 export const RegisterScreen = ({ route, navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const [displayName, setDisplayName] = useState("");
-  const [identifier, setIdentifier] = useState("");
+  const [identifier, setIdentifier] = useState(() => generateUsername());
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [bootstrapAvailable, setBootstrapAvailable] = useState(null);
+  const [socialError, setSocialError] = useState("");
+  const [socialBusy, setSocialBusy] = useState(false);
   const invitationCode = route.params?.invitationCode || route.params?.code;
   const register = useAuthStore((state) => state.register);
 
-  useEffect(() => {
-    let active = true;
-    AuthAPI.getBootstrapStatus()
-      .then(({ bootstrapAvailable: available }) => {
-        if (active) setBootstrapAvailable(available);
-      })
-      .catch(() => {
-        if (active) setBootstrapAvailable(false);
-      });
-    return () => { active = false; };
-  }, []);
-
   const handleRegister = async () => {
-    if (loading) return;
+    if (loading || socialBusy) return;
     let normalized;
     try {
       normalized = normalizeIdentifier(identifier);
+      if (!isUsername(normalized)) throw new Error("Invalid username");
     } catch {
-      setErrorMessage(t(identifier.includes("@") ? "auth.invalidEmail" : "auth.invalidPhoneNumber"));
+      setErrorMessage(t("auth.invalidUsername"));
       return;
     }
     if (password.length < 8 || password.length > 128) {
@@ -52,18 +52,16 @@ export const RegisterScreen = ({ route, navigation }) => {
       return;
     }
     const name = displayName.trim();
-    if (!name || name.length > 100) {
-      setErrorMessage(t(name ? "auth.displayNameTooLong" : "auth.displayNameRequired"));
+    if (name.length > 100) {
+      setErrorMessage(t("auth.displayNameTooLong"));
       return;
-    }
-    if (!invitationCode && bootstrapAvailable !== true) {
-      setErrorMessage(t("auth.invitationRequired"));
-      return;
-    }
-    setErrorMessage("");
+    }    setErrorMessage("");
     setLoading(true);
     try {
       await register(normalized, password, name, invitationCode);
+      if (Platform.OS === "web" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        enableWebPush().catch(() => {});
+      }
       setPassword("");
       setConfirmPassword("");
       setDisplayName("");
@@ -71,7 +69,7 @@ export const RegisterScreen = ({ route, navigation }) => {
       setErrorMessage(t(
         error.response?.status === 409
           ? "auth.userExists"
-          : error.response?.status === 400 || error.response?.status === 403
+          : invitationCode && (error.response?.status === 400 || error.response?.status === 403)
           ? "auth.invalidInvitation"
           : error.request && !error.response
             ? "auth.serverUnavailable"
@@ -86,20 +84,38 @@ export const RegisterScreen = ({ route, navigation }) => {
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>{t("auth.createAccount")}</Text>
+        {invitationCode && Platform.OS === "web" ? <InvitationSetup /> : null}
+        <SocialAuthButtons
+          mode="register"
+          invitationCode={invitationCode}
+          displayName={displayName.trim()}
+          disabled={loading}
+          onError={setSocialError}
+          onBusyChange={setSocialBusy}
+        />
+        {socialError ? <Text accessibilityRole="alert" style={styles.error}>{socialError}</Text> : null}
+        <View style={styles.dividerRow}>
+          <View style={styles.divider} />
+          <Text style={styles.dividerText}>{t("auth.orUsePassword")}</Text>
+          <View style={styles.divider} />
+        </View>
             <Text style={styles.notice}>{t("auth.credentialNotice")}</Text>
             <TextInput
               style={styles.input}
-              placeholder={t("auth.identifier")}
-              accessibilityLabel={t("auth.identifier")}
+              placeholder={t("auth.username")}
+              accessibilityLabel={t("auth.username")}
               placeholderTextColor={colors.mutedText}
               value={identifier}
-              onChangeText={setIdentifier}
+              onChangeText={(value) => setIdentifier(value.toLowerCase())}
               autoCapitalize="none"
               autoCorrect={false}
               autoComplete="off"
-              maxLength={254}
+              maxLength={30}
               editable={!loading}
             />
+            <TouchableOpacity onPress={() => setIdentifier(generateUsername())} disabled={loading} accessibilityRole="button">
+              <Text style={styles.link}>{t("auth.randomUsername")}</Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.input}
               placeholder={t("auth.password")}
@@ -132,8 +148,8 @@ export const RegisterScreen = ({ route, navigation }) => {
             />
             <TextInput
               style={styles.input}
-              placeholder={t("auth.displayName")}
-              accessibilityLabel={t("auth.displayName")}
+              placeholder={t("auth.displayNameOptional")}
+              accessibilityLabel={t("auth.displayNameOptional")}
               placeholderTextColor={colors.mutedText}
               value={displayName}
               onChangeText={setDisplayName}
@@ -146,8 +162,8 @@ export const RegisterScreen = ({ route, navigation }) => {
             />
             {errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{errorMessage}</Text> : null}
             <TouchableOpacity
-              style={[styles.button, (loading || (!invitationCode && bootstrapAvailable === null)) && styles.disabled]}
-              disabled={loading || (!invitationCode && bootstrapAvailable === null)}
+              style={[styles.button, loading && styles.disabled]}
+              disabled={loading}
               onPress={handleRegister}
               accessibilityRole="button"
             >
@@ -167,9 +183,12 @@ const createStyles = (colors) => StyleSheet.create({
   title: { fontSize: 28, fontWeight: "700", color: colors.text },
   notice: { fontSize: 15, lineHeight: 23, color: colors.secondaryText },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 16, fontSize: 16, color: colors.text, backgroundColor: colors.input },
-  button: { backgroundColor: colors.primary, padding: 16, borderRadius: 12, alignItems: "center" },
+  button: { backgroundColor: colors.action, padding: 16, borderRadius: 12, alignItems: "center" },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   disabled: { opacity: 0.6 },
   error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
   link: { color: colors.primary, textAlign: "center", padding: 12 },
+  dividerRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  divider: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { color: colors.mutedText, fontSize: 12 },
 });

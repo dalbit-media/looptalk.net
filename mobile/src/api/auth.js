@@ -10,7 +10,7 @@ export const getCredentialParameters = async (identifier) => {
   return response.data;
 };
 
-export const register = async (identifier, credentialSalt, publicKey, vault, invitationCode, displayName) => {
+export const register = async (identifier, credentialSalt, publicKey, vault, invitationCode, displayName, social) => {
   const response = await api.post("/auth/register", {
     identifier,
     credentialSalt,
@@ -18,7 +18,13 @@ export const register = async (identifier, credentialSalt, publicKey, vault, inv
     vault,
     invitationCode,
     ...(displayName === undefined ? {} : { displayName }),
+    ...(social ? { social } : {}),
   });
+  return response.data;
+};
+
+export const socialRecover = async (provider, idToken, publicKey, vault) => {
+  const response = await api.post("/auth/social-recover", { provider, idToken, publicKey, vault });
   return response.data;
 };
 
@@ -73,6 +79,18 @@ export const getInvitationOnboarding = async (token) => {
     headers: { Authorization: `Bearer ${token}` },
   });
   return response.data.onboarding;
+};
+
+export const joinNetwork = async (invitationCode, token) => {
+  const response = await api.post("/auth/join-network", { invitationCode }, {
+    headers: { Authorization: ["Bearer", token].join(" ") },
+  });
+  return response.data;
+};
+
+export const getWebPushKey = async () => {
+  const response = await api.get("/auth/web-push-key");
+  return response.data;
 };
 
 export const registerDeviceToken = async (deviceToken, platform, authToken) => {

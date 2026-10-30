@@ -229,7 +229,7 @@ const createStyles = (colors) => StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
     borderRadius: 10,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.action,
   },
   retryText: {
     color: "#fff",

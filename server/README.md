@@ -1,5 +1,37 @@
 # LoopTalk Server
 
+## Poll forum
+
+Any authenticated user can browse and create forum polls with a question
+(1–300 characters) and 2–10 distinct options (1–120 characters each).
+Each account gets one final vote per poll. A database uniqueness constraint
+prevents duplicate/concurrent votes, and a composite foreign key prevents votes
+for another poll's option.
+
+All routes below require authentication:
+
+- `GET /api/forum/polls?page=1`: newest polls and the caller's participation;
+  never includes vote totals, other people's votes, or comments.
+- `POST /api/forum/polls`: `{ question, options: ["...", "..."] }`.
+- `GET /api/forum/polls/:id`: question and options; includes `results` and
+  `totalVotes` only if the caller has voted in this poll, including its creator.
+- `POST /api/forum/polls/:id/vote`: `{ optionId }`; duplicate votes return 409.
+- `GET /api/forum/polls/:id/comments?page=1`: newest comments, voters only.
+- `POST /api/forum/polls/:id/comments`: `{ content }` (1–2,000 characters),
+  voters only. Nonparticipants receive 403 for either comments route.
+
+Lists use 20-item pages and return `hasMore`. Forum writes are limited to 30 per
+minute per account, in addition to the existing API limiter. Responses are
+`no-store`. Public author names are used; private profiles are not exposed.
+Questions, options, votes and comments persist as server-readable data, not
+end-to-end encrypted chat. Voting access is an API restriction, not a guarantee
+against a participant sharing results elsewhere. Account deletion cascades to
+that user's polls (and their votes/comments), votes and comments.
+
+Apply migration `20261018070000_poll_forum` or use the existing additive
+schema-push workflow. Run root `npm run prisma:generate` before starting the
+updated server; normal startup synchronizes the schema without resetting data.
+
 ## Development startup
 
 `npm run dev` still synchronizes the SQLite schema before accepting requests.

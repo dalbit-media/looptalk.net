@@ -96,11 +96,14 @@ Web3 로드맵은 현재의 초대 관계망에서, 신뢰가 확인된 사람�
 
 사용자 기기만 개인정보를 복호화하는 구조와 전환 조건은
 [암호화 문서](docs/ENCRYPTED_MESSAGING.md#owner-only-identity-architecture)에 정리되어 있습니다.
-개인 계정은 이메일+비밀번호 또는 전화번호+비밀번호로 인증하며, 프로필·연락처·초대 이력·설정과
+개인 계정은 사용자 이름+비밀번호(또는 Apple/Google 가입)로 만들며, 이메일과 전화번호는 필요하지 않습니다.
+프로필·연락처·초대 이력·설정과
 개인 대화 이름은 기기에서 암호화한 개인 저장소로 동기화합니다.
 계정 ID는 무작위로 배정하고, 원하는 사람은 공개 사용자명을 예약할 수 있습니다.
 계정 ID 또는 사용자명의 정확한 검색으로 연결하며 개인 프로필 이름은 검색하지 않습니다.
-로그인용 이메일·전화번호는 서버에서 암호화 보관하고, 비밀번호 자체는 전송하거나 저장하지 않습니다.
+로그인용 사용자 이름은 서버에서 암호화 보관하고, 비밀번호 자체는 전송하거나 저장하지 않습니다.
+비밀번호를 잊거나 기기를 잃으면 복구할 수 없습니다. Apple/Google을 연결한 계정만 복구할 수 있으며
+이 경우에도 이전 대화 기록은 복원되지 않습니다.
 소유자 키는 비밀번호 강화 함수로 기기에서 유도합니다. 1단계에는 인증번호나 복구 문구가 필요하지 않습니다.
 암호문을 열 수 있는 키는 서버로 보내지 않습니다. 서버에는 공개 키와
 임의 계정·참여·전달 식별자 등 운영 메타데이터가 남습니다.
@@ -129,7 +132,10 @@ API는 `/api/invitations/map`이며 1분 캐시와 동시 요청 병합을 적�
 
 구현된 기능:
 
-- 이메일/전화번호+비밀번호 기반 키 유도 및 Ed25519 증명으로 가입·로그인
+- Apple/Google 가입(계정 복구 전용), 사용자 이름+비밀번호, 무작위 사용자 이름, 선택적 표시 이름
+- 초대 없이 가입하면 공개 루프만 열람하며, 나중에 초대 코드로 네트워크에 참여
+- 포럼 공개 범위 3단계: 내 루프 · 이웃 루프 · 공개
+- 웹 푸시(VAPID)와 Expo 푸시
 - 최초 사용자 등록 및 초대 코드 기반 가입
 - 일대일 및 그룹 대화 메타데이터 관리
 - 실시간 텍스트, 입력 상태, 반응, 수정 및 삭제 이벤트 중계
@@ -163,6 +169,8 @@ API는 `/api/invitations/map`이며 1분 캐시와 동시 요청 병합을 적�
 남은 작업은 외부 운영 작업입니다. `looptalk.app`에 HTTPS 서버를 배포하고 SQLite
 데이터베이스와 업로드를 위한 영구 볼륨, 백업, Coturn, Sentry 및 운영 이메일을
 구성해야 합니다. 현재 데이터베이스는 SQLite이므로 단일 서버 인스턴스를 사용해야 합니다.
+서버 설치 절차와 대규모(최대 1억 명) 확장 아키텍처는
+[설치 및 확장 가이드](docs/SCALING_AND_DEPLOYMENT.md)를 참고하세요.
 그 다음 EAS 운영 환경 변수와 iOS 서명 자격 증명을 설정하고 서명된
 iOS/Android 빌드를 실제 기기에서 검증한 후 스토어 심사를 제출하세요. 정확한 순서와
 완료 조건은 [출시 실행서](docs/LAUNCH_RUNBOOK.md)를 따릅니다.
@@ -253,7 +261,10 @@ Socket.ioサーバーで構築された招待制メッセンジャーです。�
 
 実装済み:
 
-- メールアドレスまたは電話番号による登録、初回ユーザー登録、招待制アクセス
+- Apple/Google登録（アカウント復旧専用）、ユーザー名とパスワード、ランダムなユーザー名、任意の表示名
+- 招待なしで登録すると公開ループのみ閲覧でき、後から招待コードでネットワークに参加
+- フォーラムの公開範囲は3段階：マイループ・近隣ループ・公開
+- Webプッシュ（VAPID）とExpoプッシュ
 - プロバイダー認証情報を設定した場合のGoogleおよびAppleログイン
 - ダイレクトおよびグループ会話のメタデータ管理
 - テキスト、入力状態、リアクション、編集、削除イベントのリアルタイム中継
@@ -282,6 +293,8 @@ Android本番キーストアもEASに作成済みです。
 残りは外部運用作業です。`looptalk.app`へHTTPSサーバーを配備し、SQLiteデータベースと
 アップロード用の永続ボリューム、バックアップ、Coturn、Sentry、本番メールを設定します。
 現在のデータベースはSQLiteのため、サーバーは1インスタンスで運用してください。
+サーバーのインストール手順と大規模（最大1億ユーザー）向けの構成は
+[インストールとスケーリングガイド](docs/SCALING_AND_DEPLOYMENT.md)を参照してください。
 その後、EAS本番環境変数とiOS署名資格情報を設定し、
 署名済みiOS/Androidビルドを実機で検証してからストア審査へ提出してください。
 正確な順序と完了条件は[リリースランブック](docs/LAUNCH_RUNBOOK.md)に従います。
@@ -375,8 +388,12 @@ Operator conversations are server-readable. See the
 
 Implemented:
 
-- Email or phone registration, first-user bootstrap, and invitation access
-- Google and Apple identity verification when provider credentials are set
+- Sign-up with Apple or Google (used only for account recovery), or a username and
+  password, with a generated word-and-number username and an optional display name
+- Signing up without an invitation gives guest access to public loops; a guest can
+  join a network later with an invitation code
+- Three forum visibility levels: My Loop, Neighbor Loops, and Public
+- Web Push (VAPID) and Expo push notifications
 - Direct and group conversation metadata
 - Live text relay, typing indicators, reactions, edits, and deletions
 - Per-account native private-file/browser IndexedDB history and attachments
@@ -411,7 +428,10 @@ backups, Coturn, Sentry, and production email; configure
 the EAS production environment and iOS signing; then certify signed iOS and
 Android builds on physical devices before store submission. Follow the
 [launch runbook](docs/LAUNCH_RUNBOOK.md) for the exact order and release gates.
-The current database is SQLite, so deploy one server instance.
+The current database is SQLite, so deploy one server instance. See the
+[installation and scaling guide](docs/SCALING_AND_DEPLOYMENT.md) for a step-by-step
+server install and the architecture and code changes required to scale toward
+100 million users (not possible with the current single-node design).
 
 ### Architecture
 
@@ -505,6 +525,7 @@ files before deploying a schema change.
 - [Mobile app guide](mobile/README.md)
 - [Server guide and API](server/README.md)
 - [Launch runbook](docs/LAUNCH_RUNBOOK.md)
+- [Installation and scaling guide](docs/SCALING_AND_DEPLOYMENT.md)
 - [Store listing](docs/STORE_LISTING.md)
 - [Privacy disclosures](docs/PRIVACY_DISCLOSURES.md)
 - [License](LICENSE)

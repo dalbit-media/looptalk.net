@@ -353,6 +353,6 @@ const createStyles = (colors) => StyleSheet.create({
   error: { color: colors.danger, fontSize: 13, lineHeight: 20, marginTop: 8 },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 12 },
   cancelButton: { padding: 12, minHeight: 44, justifyContent: "center" },
-  button: { backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 12, minHeight: 44, borderRadius: 9, justifyContent: "center" },
+  button: { backgroundColor: colors.action, paddingHorizontal: 22, paddingVertical: 12, minHeight: 44, borderRadius: 9, justifyContent: "center" },
   buttonText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
 });
