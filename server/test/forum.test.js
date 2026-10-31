@@ -299,10 +299,40 @@ test("poll forum persistence, validation and participation access with isolated 
     assert.equal(next.hasMore, false);
     assert.equal(new Set([...first.polls, ...next.polls].map((item) => item.id)).size, 25);
     assert.ok(first.polls.every((item) => JSON.stringify(item.tags) === '["not-invited"]'));
+    assert.deepEqual(first.tagTrends, [{ authorId: "feed-guest", tag: "not-invited", count: 25 }]);
     const members = (await request("/polls?scope=public")).data;
     assert.ok(members.polls.every((item) => !item.tags.includes("not-invited")));
+    assert.ok(members.tagTrends.every((item) => item.tag !== "not-invited"));
     assert.equal(members.hasMore, false);
     await prisma.user.delete({ where: { id: "feed-guest" } });
+  });
+
+  await t.test("trending tags count seven-day posts across pages and respect scope", async () => {
+    await prisma.user.create({ data: { id: "trend-author", username: "trend-author", displayName: "Trend" } });
+    const recent = new Date(Date.now() - 60 * 60 * 1000);
+    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    for (let i = 0; i < 22; i++) {
+      await prisma.forumPoll.create({ data: {
+        authorId: "trend-author", question: "Recent", visibility: "public", createdAt: recent,
+        tags: '["travel","food"]',
+      } });
+    }
+    await prisma.forumPoll.create({ data: {
+      authorId: "trend-author", question: "Old", visibility: "public", createdAt: old, tags: '["old"]',
+    } });
+    await prisma.forumPoll.create({ data: {
+      authorId: "trend-author", question: "Network", visibility: "network", createdAt: recent, tags: '["work"]',
+    } });
+    const trends = async (scope, page = 1) => (await request(`/polls?scope=${scope}&page=${page}`)).data.tagTrends
+      .filter((item) => item.authorId === "trend-author").sort((a, b) => a.tag.localeCompare(b.tag));
+    assert.deepEqual(await trends("public"), [
+      { authorId: "trend-author", tag: "food", count: 22 },
+      { authorId: "trend-author", tag: "travel", count: 22 },
+    ]);
+    assert.deepEqual(await trends("public", 2), await trends("public"));
+    assert.deepEqual(await trends("network"), [{ authorId: "trend-author", tag: "work", count: 1 }]);
+    assert.equal((await trends("loop")).length, 3);
+    await prisma.user.delete({ where: { id: "trend-author" } });
   });
 
   await t.test("poll and comment pagination is bounded and stable, invalid pages and missing polls are explicit", async () => {

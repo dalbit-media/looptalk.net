@@ -88,13 +88,14 @@ router.get("/polls", async (req, res) => {
   const includeGuests = req.query.includeGuests ?? "false";
   if (!["true", "false"].includes(includeGuests)) return res.status(400).json({ error: "Invalid guest filter" });
   try {
+    const where = {
+      ...(scope === "loop" ? {} : { visibility: scope }),
+      ...(!req.isMember ? { author: { isMember: false } } :
+        includeGuests === "true" ? {} : { author: { isMember: true } }),
+    };
     // The server does not know contacts; "loop" returns every post and the device keeps those from the user's contacts.
     const polls = await prisma.forumPoll.findMany({
-      where: {
-        ...(scope === "loop" ? {} : { visibility: scope }),
-        ...(!req.isMember ? { author: { isMember: false } } :
-          includeGuests === "true" ? {} : { author: { isMember: true } }),
-      },
+      where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip,
       take: PAGE_SIZE + 1,
@@ -102,9 +103,24 @@ router.get("/polls", async (req, res) => {
     });
     const page = polls.slice(0, PAGE_SIZE);
     const reactions = await getReactionSummaries(page, req.userId);
+    const recentPosts = await prisma.forumPoll.findMany({
+      where: { ...where, createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+      select: { authorId: true, tags: true, author: { select: { isMember: true } } },
+    });
+    const trends = new Map();
+    for (const post of recentPosts) {
+      const tags = post.author.isMember ? normalizeTags(JSON.parse(post.tags)) : ["not-invited"];
+      for (const tag of tags) {
+        const key = `${post.authorId}\u0000${tag}`;
+        const trend = trends.get(key) || { authorId: post.authorId, tag, count: 0 };
+        trend.count += 1;
+        trends.set(key, trend);
+      }
+    }
     res.json({
       polls: page.map((poll) => ({ ...pollSummary(poll), reactions: reactions.get(poll.id) || [] })),
       hasMore: polls.length > PAGE_SIZE,
+      tagTrends: [...trends.values()],
     });
   } catch (error) {
     console.error("Forum list error:", error);

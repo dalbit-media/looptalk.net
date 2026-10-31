@@ -4,6 +4,10 @@ const translations = {
   ko: {
     "navigation.forum": "포럼",
     "forum.myContacts": "나의 루프",
+    "forum.trendingTags": "인기 태그 · 최근 7일",
+    "forum.allTags": "전체 태그",
+    "forum.tagFilterHint": "불러온 글을 필터링합니다. 더 보기로 이전 글도 확인하세요.",
+    "forum.noTagPosts": "이 태그의 글이 없습니다. 다른 태그를 선택하거나 더 보기를 누르세요.",
     "forum.public": "전체 공개",
     "forum.contactsScope": "내 연락처가 작성한 공개 투표를 이 기기에서 골라 보여 줍니다. 연락처 목록은 서버에 보내지 않으며, 이 탭이 비공개 게시 공간은 아닙니다. 내 투표는 전체 공개 탭에서 볼 수 있습니다.",
     "forum.noContacts": "아직 연락처가 없습니다. 연락처를 추가하거나 전체 공개 탭에서 모든 사용자의 투표를 둘러보세요.",
@@ -621,6 +625,10 @@ const translations = {
   en: {
     "navigation.forum": "Forum",
     "forum.myContacts": "My Loop",
+    "forum.trendingTags": "Trending tags · 7 days",
+    "forum.allTags": "All tags",
+    "forum.tagFilterHint": "Filtering loaded posts. Load more to find older matches.",
+    "forum.noTagPosts": "No matching posts. Try another tag or load more.",
     "forum.public": "Public",
     "forum.contactsScope": "Public polls by your contacts, filtered on this device without sending your contact list to the server. This is not a private posting space. Find your own polls in Public.",
     "forum.noContacts": "No contacts yet. Add contacts or browse everyone's polls in Public.",
@@ -1238,6 +1246,10 @@ const translations = {
   ja: {
     "navigation.forum": "フォーラム",
     "forum.myContacts": "マイループ",
+    "forum.trendingTags": "人気タグ · 過去7日",
+    "forum.allTags": "すべて",
+    "forum.tagFilterHint": "読み込み済みの投稿を絞り込みます。「もっと見る」で過去の投稿も確認。",
+    "forum.noTagPosts": "該当する投稿はありません。別のタグか「もっと見る」をお試しください。",
     "forum.public": "公開",
     "forum.contactsScope": "連絡先の公開投票をこの端末で絞り込みます。連絡先一覧はサーバーに送信されません。このタブは非公開の投稿場所ではありません。自分の投票は公開タブで確認できます。",
     "forum.noContacts": "連絡先がありません。連絡先を追加するか、公開タブで全ユーザーの投票をご覧ください。",

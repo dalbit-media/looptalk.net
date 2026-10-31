@@ -515,6 +515,69 @@ test("member guest filter refetches the selected scope and stays selected on pag
   assert.deepEqual(calls, [["token", 1, "loop", false], ["token", 1, "loop", true], ["token", 2, "loop", true]]);
 });
 
+test("small trending tag filters respect contacts, preserve pagination and reset with scope", async () => {
+  const f = fixture("ForumScreen", {
+    listPolls: async (_token, page) => ({
+      polls: page === 1 ? [
+        { ...poll, tags: ["travel"] },
+        { ...poll, id: "food", tags: ["food"] },
+      ] : [{ ...poll, id: "older", tags: ["travel"] }],
+      hasMore: page === 1,
+      tagTrends: [
+        { authorId: "alice", tag: "travel", count: 4 },
+        { authorId: "alice", tag: "food", count: 2 },
+        { authorId: "stranger", tag: "gaming", count: 99 },
+        { authorId: "stranger", tag: "not-invited", count: 100 },
+      ],
+    }),
+  });
+  let list = await f.open();
+  const chips = (tree) => nodes(tree.props.ListHeaderComponent).filter((node) =>
+    node.props?.accessibilityRole === "button" && node.props?.accessibilityLabel?.startsWith("#"));
+  assert.deepEqual(chips(list).map((node) => node.props.accessibilityLabel), ["#travel · 4", "#food · 2"]);
+  const label = find(list.props.ListHeaderComponent, (node) => node.props?.children === "forum.trendingTags");
+  assert.equal(label.props.style.fontSize, 11);
+  assert.equal(chips(list)[0].props.children[0].props.style.fontSize, 12);
+  chips(list)[0].props.onPress();
+  list = f.render();
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["poll"]);
+  assert.equal(chips(list)[0].props.accessibilityState.selected, true);
+  await list.props.ListFooterComponent.props.onPress();
+  list = f.render();
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["poll", "older"]);
+  find(list.props.ListHeaderComponent, (node) => node.props?.accessibilityLabel === "forum.allTags").props.onPress();
+  list = f.render();
+  assert.equal(list.props.data.length, 3);
+  const card = list.props.renderItem({ item: list.props.data[1] });
+  find(card, (node) => node.props?.tags)?.props.onSelect("food");
+  list = f.render();
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["food"]);
+  find(list.props.ListHeaderComponent, (node) => node.props?.accessibilityRole === "tab" &&
+    node.props.children?.props?.label === "forum.public").props.onPress();
+  list = await f.refocus();
+  assert.equal(list.props.data.length, 2);
+  assert.equal(chips(list)[0].props.accessibilityLabel, "#gaming · 99");
+  assert.ok(!chips(list).some((node) => node.props.accessibilityLabel.includes("not-invited")));
+});
+
+test("tag filters retain rare selections and show an actionable empty state", async () => {
+  const f = fixture("ForumScreen", {
+    listPolls: async () => ({
+      polls: [{ ...poll, tags: ["rare"] }], hasMore: true,
+      tagTrends: Array.from({ length: 10 }, (_, i) => ({ authorId: "alice", tag: `tag${i}`, count: 10 - i })),
+    }),
+  });
+  let list = await f.open();
+  find(list.props.renderItem({ item: list.props.data[0] }), (node) => node.props?.tags).props.onSelect("rare");
+  list = f.render();
+  assert.ok(find(list.props.ListHeaderComponent, (node) => node.props?.accessibilityLabel === "#rare · 0"));
+  find(list.props.ListHeaderComponent, (node) => node.props?.accessibilityLabel === "#tag0 · 10").props.onPress();
+  list = f.render();
+  assert.equal(list.props.data.length, 0);
+  assert.equal(list.props.ListEmptyComponent.props.children, "forum.noTagPosts");
+  assert.ok(list.props.ListFooterComponent);
+});
+
 test("unavailable post links show a clear error without exposing content", async () => {
   const f = fixture("PollScreen", { getPoll: async () => {
     const error = new Error("Not found");

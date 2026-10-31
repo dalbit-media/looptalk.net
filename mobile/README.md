@@ -26,6 +26,12 @@ Their empty tags fall back to `general`. Guest posts show only `not-invited`,
 including older posts; guests have no topic-tag controls. After joining, posts
 without topic tags fall back to `general`.
 Tags appear on feed cards and post details.
+Members can tap a post tag or a compact trending chip to filter loaded posts,
+and tap All tags to clear it. Trending counts cover posts from the last seven
+days in the selected feed, not just the loaded page; My Loop counts are filtered
+locally by contacts. Up to eight trending tags appear, plus the selected tag.
+Load more preserves the tag filter and checks older posts. Changing scope or
+the guest inclusion filter resets the tag selection. Guests have no topic filter.
 Guests see the same compact invitation banner immediately below the header on
 all five tab home screens, outside scrolling content. It is hidden on detail and
 join screens and for members. Banner descriptions are single-line, with the full

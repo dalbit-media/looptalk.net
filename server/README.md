@@ -26,6 +26,10 @@ the selected scope, with filtering applied before pagination.
 
 - `GET /api/forum/polls?page=1`: newest polls and the caller's participation;
   never includes vote totals, other people's votes, or comments.
+  Also returns `tagTrends: [{ authorId, tag, count }]`, counting posts per tag
+  over the last seven days in the requested scope, before pagination and with
+  the same membership filters. The client uses author IDs to restrict My Loop
+  trends locally; private contact lists are never sent to the server.
 - `POST /api/forum/polls`: `{ question, options: ["...", "..."], tags?: ["topic"] }`.
 - `GET /api/forum/polls/:id`: question and options; includes `results` and
   `totalVotes` only if the caller has voted in this poll, including its creator.

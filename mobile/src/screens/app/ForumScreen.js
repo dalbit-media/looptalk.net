@@ -38,12 +38,16 @@ const VisibilityBadge = ({ visibility, label, styles, colors }) => (
   </View>
 );
 
-const PostTags = ({ tags, styles }) => (
+const PostTags = ({ tags, styles, onSelect, selectedTag }) => (
   <View style={styles.tags}>
     {(tags || ["general"]).map((tag) => (
-      <View key={tag} style={[styles.tag, tag === "not-invited" && styles.guestTag]}>
+      <TouchableOpacity key={tag} disabled={!onSelect} accessibilityRole={onSelect ? "button" : undefined}
+        accessibilityLabel={`#${tag}`} accessibilityState={onSelect ? { selected: selectedTag === tag } : undefined}
+        onPress={() => onSelect?.(tag)}
+        style={[styles.tag, onSelect && styles.tagHitTarget, tag === "not-invited" && styles.guestTag,
+          selectedTag === tag && styles.tagSelected]}>
         <Text style={styles.tagText}>{`#${tag}`}</Text>
-      </View>
+      </TouchableOpacity>
     ))}
   </View>
 );
@@ -58,6 +62,8 @@ export const ForumScreen = ({ navigation }) => {
   const isMember = useAuthStore((state) => state.user?.member !== false);
   const [selectedTab, setTab] = useState("contacts");
   const [includeGuests, setIncludeGuests] = useState(false);
+  const [selectedTag, setSelectedTag] = useState(null);
+  const [tagTrends, setTagTrends] = useState([]);
   const tab = isMember ? selectedTab : "public";
   const [polls, setPolls] = useState([]);
   const [page, setPage] = useState(1);
@@ -81,6 +87,7 @@ export const ForumScreen = ({ navigation }) => {
         [...previous, ...data.polls.filter((poll) => !previous.some((item) => item.id === poll.id))]);
       setPage(nextPage);
       setHasMore(data.hasMore);
+      setTagTrends(data.tagTrends || []);
     } catch {
       if (current === request.current) setError(true);
     } finally {
@@ -94,7 +101,7 @@ export const ForumScreen = ({ navigation }) => {
   }, [load]));
 
   const contactIds = new Set(Object.values(contacts).flat().map((contact) => contact.contactUserId));
-  const visiblePolls = polls.filter((poll) => {
+  const feedPolls = polls.filter((poll) => {
     const guestPost = poll.tags?.includes("not-invited") === true;
     if (!isMember && !guestPost) return false;
     if (isMember && !includeGuests && guestPost) return false;
@@ -102,6 +109,16 @@ export const ForumScreen = ({ navigation }) => {
       ? poll.author.id === myId || contactIds.has(poll.author.id)
       : poll.visibility === tab;
   });
+  const visiblePolls = selectedTag ? feedPolls.filter((poll) => (poll.tags || ["general"]).includes(selectedTag)) : feedPolls;
+  const tagCounts = new Map();
+  for (const trend of tagTrends) {
+    if (tab === "contacts" && trend.authorId !== myId && !contactIds.has(trend.authorId)) continue;
+    if (!isMember && trend.tag !== "not-invited") continue;
+    if (isMember && !includeGuests && trend.tag === "not-invited") continue;
+    tagCounts.set(trend.tag, (tagCounts.get(trend.tag) || 0) + trend.count);
+  }
+  const trendingTags = [...tagCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8);
+  if (selectedTag && !trendingTags.some(([tag]) => tag === selectedTag)) trendingTags.push([selectedTag, tagCounts.get(selectedTag) || 0]);
   const canLoadMore = hasMore && (tab !== "contacts" || contactIds.size > 0);
   const emptyKey = tab === "network" ? "forum.networkEmpty" : tab === "public" ? "forum.empty" :
     contactIds.size === 0 ? "forum.noContacts" : hasMore ? "forum.noContactsLoaded" : "forum.contactsEmpty";
@@ -133,7 +150,7 @@ export const ForumScreen = ({ navigation }) => {
         <View accessibilityRole="tablist" style={styles.tabs}>
           {["contacts", "network", "public"].map((key) => (
             <TouchableOpacity key={key} accessibilityRole="tab" accessibilityState={{ selected: tab === key }}
-              onPress={() => { if (tab !== key) { setPolls([]); setHasMore(false); setTab(key); } }}
+              onPress={() => { if (tab !== key) { setPolls([]); setTagTrends([]); setSelectedTag(null); setHasMore(false); setTab(key); } }}
               style={[styles.tab, tab === key && styles.tabSelected]}>
               <TabLabel visibility={key} label={t(TAB_LABELS[key])} selected={tab === key} styles={styles}
                 color={tab === key ? colors.navigationAccent : colors.secondaryText} />
@@ -142,16 +159,34 @@ export const ForumScreen = ({ navigation }) => {
         </View>
         <TouchableOpacity accessibilityRole="checkbox" accessibilityLabel={t("forum.includeGuests")}
           accessibilityState={{ checked: includeGuests }} style={styles.filter}
-          onPress={() => { setPolls([]); setHasMore(false); setIncludeGuests((value) => !value); }}>
+          onPress={() => { setPolls([]); setTagTrends([]); setSelectedTag(null); setHasMore(false); setIncludeGuests((value) => !value); }}>
           <Ionicons name={includeGuests ? "checkbox" : "square-outline"} size={20} color={colors.primary} />
-          <Text style={styles.body}>{t("forum.includeGuests")}</Text>
+          <Text style={styles.tagText}>{t("forum.includeGuests")}</Text>
         </TouchableOpacity>
         </> : <Text style={styles.notice}>{t("forum.guestFeed")}</Text>}
+        {isMember && (trendingTags.length > 0 || feedPolls.length > 0) && <View>
+          <Text style={styles.trendingLabel}>{t("forum.trendingTags")}</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagFilters}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={t("forum.allTags")}
+              accessibilityState={{ selected: selectedTag === null }} onPress={() => setSelectedTag(null)}
+              style={[styles.tag, styles.tagHitTarget, selectedTag === null && styles.tagSelected]}>
+              <Text style={styles.tagText}>{t("forum.allTags")}</Text>
+            </TouchableOpacity>
+            {trendingTags.map(([tag, count]) => <TouchableOpacity key={tag} accessibilityRole="button"
+              accessibilityLabel={`#${tag} · ${count}`} accessibilityState={{ selected: selectedTag === tag }}
+              onPress={() => setSelectedTag(selectedTag === tag ? null : tag)}
+              style={[styles.tag, styles.tagHitTarget, selectedTag === tag && styles.tagSelected]}>
+              <Text style={styles.tagText}>{`#${tag}`}</Text>
+              {count > 0 && <Text style={styles.tagCount}>{count}</Text>}
+            </TouchableOpacity>)}
+          </ScrollView>
+          {selectedTag && <Text style={styles.trendingLabel}>{t("forum.tagFilterHint")}</Text>}
+        </View>}
         {error && <Text accessibilityRole="alert" style={styles.error}>{t("forum.loadFailed")}</Text>}
         {error && <Button secondary styles={styles} disabled={loading} label={t("forum.retry")} onPress={() => load()} />}
         {!!reactionError && <Text accessibilityRole="alert" style={styles.error}>{reactionError}</Text>}
       </View>}
-      ListEmptyComponent={!loading && !error ? <Text style={styles.notice}>{t(emptyKey)}</Text> : null}
+      ListEmptyComponent={!loading && !error ? <Text style={styles.notice}>{t(selectedTag ? "forum.noTagPosts" : emptyKey)}</Text> : null}
       ListFooterComponent={canLoadMore ? <Button secondary styles={styles} disabled={loading}
         label={t("forum.loadMore")} onPress={() => load(page + 1)} /> : null}
       renderItem={({ item }) => (
@@ -166,9 +201,10 @@ export const ForumScreen = ({ navigation }) => {
                 styles={styles} colors={colors} />
             </View>
             <Text style={styles.title}>{item.question}</Text>
-            <PostTags tags={item.tags} styles={styles} />
             {item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
           </TouchableOpacity>
+          <PostTags tags={item.tags} styles={styles} selectedTag={selectedTag}
+            onSelect={isMember ? (tag) => setSelectedTag(selectedTag === tag ? null : tag) : undefined} />
           <ReactionBar reactions={item.reactions} userId={myId} colors={colors}
             addLabel={t("forum.react")} disabled={!isMember || reactionSaving}
             onSelect={isMember ? (emoji) => toggleListReaction(item, emoji) : undefined}
@@ -583,6 +619,11 @@ const createStyles = (colors) => StyleSheet.create({
   tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10, backgroundColor: colors.primarySoft },
   guestTag: { borderWidth: 1, borderColor: colors.border },
   tagText: { color: colors.secondaryText, fontSize: 12, fontWeight: "600" },
+  tagHitTarget: { minHeight: 44, justifyContent: "center", flexDirection: "row", alignItems: "center", gap: 5 },
+  tagSelected: { borderWidth: 1, borderColor: colors.navigationAccent },
+  tagCount: { color: colors.secondaryText, fontSize: 11 },
+  trendingLabel: { color: colors.secondaryText, fontSize: 11, marginVertical: 4 },
+  tagFilters: { gap: 6, paddingVertical: 4 },
   filter: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 },
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { padding: 16, gap: 12, width: "100%", maxWidth: 800, alignSelf: "center", flexGrow: 1 },
