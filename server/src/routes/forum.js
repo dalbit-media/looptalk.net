@@ -103,10 +103,14 @@ router.get("/polls", async (req, res) => {
     });
     const page = polls.slice(0, PAGE_SIZE);
     const reactions = await getReactionSummaries(page, req.userId);
-    const recentPosts = await prisma.forumPoll.findMany({
-      where: { ...where, createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+    const recentPosts = scope === "public" ? await prisma.forumPoll.findMany({
+      where: {
+        visibility: "public",
+        ...(!req.isMember ? { author: { isMember: false } } : {}),
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
       select: { authorId: true, tags: true, author: { select: { isMember: true } } },
-    });
+    }) : [];
     const trends = new Map();
     for (const post of recentPosts) {
       const tags = post.author.isMember ? normalizeTags(JSON.parse(post.tags)) : ["not-invited"];

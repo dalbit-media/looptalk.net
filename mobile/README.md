@@ -16,8 +16,8 @@ The server enforces these rules, including direct API requests.
 
 Inside Forum, My Contacts is selected by default and shows polls authored by
 saved contacts for invited members. Members hide posts from non-invited authors
-by default; the "Include not-invited posts" checkbox includes them within the
-selected scope. Guests have no scope tabs and see only public posts from
+by default; selecting `not-invited` in the Public tag row shows only guest posts.
+There is no separate guest checkbox. Guests have no scope tabs and see only public posts from
 non-invited authors. These posts carry the server-assigned `not-invited` tag,
 which is removed when their author joins a network.
 Topic tags are suggested locally from English, Korean, or Japanese post text.
@@ -26,12 +26,14 @@ Their empty tags fall back to `general`. Guest posts show only `not-invited`,
 including older posts; guests have no topic-tag controls. After joining, posts
 without topic tags fall back to `general`.
 Tags appear on feed cards and post details.
-Members can tap a post tag or a compact trending chip to filter loaded posts,
+On Public only, members can tap a post tag or a compact trending chip to filter loaded posts,
 and tap All tags to clear it. Trending counts cover posts from the last seven
-days in the selected feed, not just the loaded page; My Loop counts are filtered
-locally by contacts. Up to eight trending tags appear, plus the selected tag.
+days in the public feed, not just the loaded page, including guest counts so
+`not-invited` is always selectable. My Loop and Neighbor Loops have no tag row,
+tag filters or post-tag badges. Non-public details also hide tag badges.
+Up to eight trending tags appear, plus `not-invited` and the selected tag.
 Load more preserves the tag filter and checks older posts. Changing scope or
-the guest inclusion filter resets the tag selection. Guests have no topic filter.
+scope resets the tag selection. Guests have no topic filter.
 Guests see the same compact invitation banner immediately below the header on
 all five tab home screens, outside scrolling content. It is hidden on detail and
 join screens and for members. Banner descriptions are single-line, with the full

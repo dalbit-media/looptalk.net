@@ -61,10 +61,19 @@ export const ForumScreen = ({ navigation }) => {
   const contacts = useContactStore((state) => state.contacts);
   const isMember = useAuthStore((state) => state.user?.member !== false);
   const [selectedTab, setTab] = useState("contacts");
-  const [includeGuests, setIncludeGuests] = useState(false);
   const [selectedTag, setSelectedTag] = useState(null);
   const [tagTrends, setTagTrends] = useState([]);
   const tab = isMember ? selectedTab : "public";
+  const includeGuests = isMember && tab === "public" && selectedTag === "not-invited";
+  const selectTag = (tag) => {
+    const next = selectedTag === tag ? null : tag;
+    if ((selectedTag === "not-invited") !== (next === "not-invited")) {
+      request.current += 1;
+      setPolls([]);
+      setHasMore(false);
+    }
+    setSelectedTag(next);
+  };
   const [polls, setPolls] = useState([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -109,15 +118,15 @@ export const ForumScreen = ({ navigation }) => {
       ? poll.author.id === myId || contactIds.has(poll.author.id)
       : poll.visibility === tab;
   });
-  const visiblePolls = selectedTag ? feedPolls.filter((poll) => (poll.tags || ["general"]).includes(selectedTag)) : feedPolls;
+  const visiblePolls = tab === "public" && selectedTag ? feedPolls.filter((poll) => (poll.tags || ["general"]).includes(selectedTag)) : feedPolls;
   const tagCounts = new Map();
   for (const trend of tagTrends) {
     if (tab === "contacts" && trend.authorId !== myId && !contactIds.has(trend.authorId)) continue;
     if (!isMember && trend.tag !== "not-invited") continue;
-    if (isMember && !includeGuests && trend.tag === "not-invited") continue;
     tagCounts.set(trend.tag, (tagCounts.get(trend.tag) || 0) + trend.count);
   }
   const trendingTags = [...tagCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8);
+  if (isMember && !trendingTags.some(([tag]) => tag === "not-invited")) trendingTags.push(["not-invited", tagCounts.get("not-invited") || 0]);
   if (selectedTag && !trendingTags.some(([tag]) => tag === selectedTag)) trendingTags.push([selectedTag, tagCounts.get(selectedTag) || 0]);
   const canLoadMore = hasMore && (tab !== "contacts" || contactIds.size > 0);
   const emptyKey = tab === "network" ? "forum.networkEmpty" : tab === "public" ? "forum.empty" :
@@ -157,24 +166,18 @@ export const ForumScreen = ({ navigation }) => {
             </TouchableOpacity>
           ))}
         </View>
-        <TouchableOpacity accessibilityRole="checkbox" accessibilityLabel={t("forum.includeGuests")}
-          accessibilityState={{ checked: includeGuests }} style={styles.filter}
-          onPress={() => { setPolls([]); setTagTrends([]); setSelectedTag(null); setHasMore(false); setIncludeGuests((value) => !value); }}>
-          <Ionicons name={includeGuests ? "checkbox" : "square-outline"} size={20} color={colors.primary} />
-          <Text style={styles.tagText}>{t("forum.includeGuests")}</Text>
-        </TouchableOpacity>
         </> : <Text style={styles.notice}>{t("forum.guestFeed")}</Text>}
-        {isMember && (trendingTags.length > 0 || feedPolls.length > 0) && <View>
+        {isMember && tab === "public" && <View>
           <Text style={styles.trendingLabel}>{t("forum.trendingTags")}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagFilters}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={t("forum.allTags")}
-              accessibilityState={{ selected: selectedTag === null }} onPress={() => setSelectedTag(null)}
+              accessibilityState={{ selected: selectedTag === null }} onPress={() => selectTag(null)}
               style={[styles.tag, styles.tagHitTarget, selectedTag === null && styles.tagSelected]}>
               <Text style={styles.tagText}>{t("forum.allTags")}</Text>
             </TouchableOpacity>
             {trendingTags.map(([tag, count]) => <TouchableOpacity key={tag} accessibilityRole="button"
               accessibilityLabel={`#${tag} · ${count}`} accessibilityState={{ selected: selectedTag === tag }}
-              onPress={() => setSelectedTag(selectedTag === tag ? null : tag)}
+              onPress={() => selectTag(tag)}
               style={[styles.tag, styles.tagHitTarget, selectedTag === tag && styles.tagSelected]}>
               <Text style={styles.tagText}>{`#${tag}`}</Text>
               {count > 0 && <Text style={styles.tagCount}>{count}</Text>}
@@ -203,8 +206,8 @@ export const ForumScreen = ({ navigation }) => {
             <Text style={styles.title}>{item.question}</Text>
             {item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
           </TouchableOpacity>
-          <PostTags tags={item.tags} styles={styles} selectedTag={selectedTag}
-            onSelect={isMember ? (tag) => setSelectedTag(selectedTag === tag ? null : tag) : undefined} />
+          {tab === "public" && <PostTags tags={item.tags} styles={styles} selectedTag={selectedTag}
+            onSelect={isMember ? selectTag : undefined} />}
           <ReactionBar reactions={item.reactions} userId={myId} colors={colors}
             addLabel={t("forum.react")} disabled={!isMember || reactionSaving}
             onSelect={isMember ? (emoji) => toggleListReaction(item, emoji) : undefined}
@@ -520,7 +523,7 @@ export const PollScreen = ({ route }) => {
               <Ionicons name="eye-outline" size={18} color={colors.secondaryText} />
             </TouchableOpacity>}
           </View>
-          <PostTags tags={poll.tags} styles={styles} />
+          {poll.visibility === "public" && <PostTags tags={poll.tags} styles={styles} />}
           <ReactionBar reactions={poll.reactions} userId={myId} colors={colors}
             addLabel={t("forum.react")} disabled={!isMember || reactionSaving || loading}
             onSelect={isMember ? (emoji) => togglePollReaction(emoji) : undefined}
