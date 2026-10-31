@@ -157,7 +157,8 @@ export const CallOverlay = () => {
   const isReconnecting = call.status === "reconnecting";
   const canMinimize = call.status === "connected" || isReconnecting;
   const showVideo =
-    (call.status === "connecting" || call.status === "connected" || isReconnecting);
+    (call.status === "connecting" || call.status === "connected" || isReconnecting ||
+      (isScreenSharing && call.direction === "outgoing" && call.status === "ringing"));
   const localPreviewStream = isScreenSharing ? screenStream : localStream;
 
   const handleScreenShare = async () => {

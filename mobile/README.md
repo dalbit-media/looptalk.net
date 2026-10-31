@@ -67,11 +67,27 @@ shared screen without having a camera yourself.
 During a connected call, use the camera button to switch between voice-only
 and camera video, or the screen button to share a screen without hanging up.
 Turning the camera off releases it. Screen sharing replaces outgoing camera
+video. The screen-sharing meeting action beside video calling in direct chats
+and profiles opens the system picker immediately, prefers an entire display,
+and starts a video meeting with the selected screen and microphone, without
+requesting camera access. The full call overlay previews sharing while ringing.
+Browser/OS approval is required; the app cannot bypass the picker or force the
+selected capture surface. Cancelling leaves no meeting or active capture.
+This action is available on supported browsers and Android, not iOS.
+Invalid call types/conversations and ended capture tracks are rejected before
+inviting peers. Failed SDP answers terminate the owned call and release media.
+During an existing call, screen sharing replaces outgoing camera
 video while preserving microphone audio and incoming video. Stopping sharing
 (including the browser's Stop sharing action) restores the previous camera,
 or returns to voice-only if the camera was off. Pressing the camera button
 while sharing switches back to the camera. Shared screens fit within the
 remote view rather than being cropped. Minimizing keeps remote audio playing.
+
+Drawing attachments bind mouse/touch/pen input after the modal canvas mounts,
+including on reopen. A single tap draws a dot; Undo and Clear edit completed
+strokes. Capture and upload are single-flight, and edits/closing are locked
+while sending. Failed uploads preserve the drawing for retry; successful sends
+close the pad. Native temporary captures are released after sending.
 
 Screen capture is available in HTTPS desktop browsers exposing
 `getDisplayMedia`, and in rebuilt native Android apps. Browser users choose

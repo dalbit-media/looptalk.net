@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet, TouchableOpacity, Modal, PanResponder, Platform } from "react-native";
 import { AppText as Text } from "./AppText";
 import Svg, { Path } from "react-native-svg";
-import { captureRef } from "react-native-view-shot";
+import { captureRef, releaseCapture } from "react-native-view-shot";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
@@ -23,15 +23,20 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
   const currentPathRef = useRef(null);
   const [, forceRender] = useState(0);
   const canvasRef = useRef(null);
+  const [canvas, setCanvas] = useState(null);
+  const bindCanvas = useCallback((node) => {
+    canvasRef.current = node;
+    setCanvas(node);
+  }, []);
+  const sendingRef = useRef(false);
+  const pointerRef = useRef(null);
   const colorRef = useRef(color);
   const strokeWidthRef = useRef(strokeWidth);
   colorRef.current = color;
   strokeWidthRef.current = strokeWidth;
 
   useEffect(() => {
-    if (Platform.OS !== "web") return undefined;
-    const canvas = canvasRef.current;
-    if (!canvas) return undefined;
+    if (Platform.OS !== "web" || !visible || !canvas) return undefined;
 
     const getPoint = (event) => {
       const bounds = canvas.getBoundingClientRect();
@@ -41,19 +46,20 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
       };
     };
     const handlePointerDown = (event) => {
-      if (event.button !== 0) return;
+      if (sendingRef.current || pointerRef.current !== null || event.button !== 0) return;
       event.preventDefault();
       canvas.setPointerCapture?.(event.pointerId);
+      pointerRef.current = event.pointerId;
       const { x, y } = getPoint(event);
       currentPathRef.current = {
-        d: `M${x},${y}`,
+        d: `M${x},${y} L${x},${y}`,
         color: colorRef.current,
         strokeWidth: strokeWidthRef.current,
       };
       forceRender((value) => value + 1);
     };
     const handlePointerMove = (event) => {
-      if (!currentPathRef.current || (event.buttons & 1) !== 1) return;
+      if (sendingRef.current || event.pointerId !== pointerRef.current || !currentPathRef.current) return;
       event.preventDefault();
       const { x, y } = getPoint(event);
       currentPathRef.current = {
@@ -62,32 +68,39 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
       };
       forceRender((value) => value + 1);
     };
-    const finishPointer = () => {
+    const finishPointer = (event) => {
+      if (event.pointerId !== pointerRef.current) return;
+      pointerRef.current = null;
       const completedPath = currentPathRef.current;
       currentPathRef.current = null;
       if (completedPath) setPaths((prev) => [...prev, completedPath]);
+      forceRender((value) => value + 1);
     };
 
     canvas.addEventListener("pointerdown", handlePointerDown);
     canvas.addEventListener("pointermove", handlePointerMove);
     canvas.addEventListener("pointerup", finishPointer);
     canvas.addEventListener("pointercancel", finishPointer);
+    canvas.addEventListener("lostpointercapture", finishPointer);
     return () => {
       canvas.removeEventListener("pointerdown", handlePointerDown);
       canvas.removeEventListener("pointermove", handlePointerMove);
       canvas.removeEventListener("pointerup", finishPointer);
       canvas.removeEventListener("pointercancel", finishPointer);
+      canvas.removeEventListener("lostpointercapture", finishPointer);
+      pointerRef.current = null;
+      currentPathRef.current = null;
     };
-  }, []);
+  }, [visible, canvas]);
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => !sendingRef.current,
+      onMoveShouldSetPanResponder: () => !sendingRef.current,
       onPanResponderGrant: (event) => {
         const { locationX, locationY } = event.nativeEvent;
         currentPathRef.current = {
-          d: `M${locationX},${locationY}`,
+          d: `M${locationX},${locationY} L${locationX},${locationY}`,
           color: colorRef.current,
           strokeWidth: strokeWidthRef.current,
         };
@@ -109,30 +122,38 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
       },
       onPanResponderTerminate: () => {
         currentPathRef.current = null;
+        forceRender((value) => value + 1);
       },
     })
   ).current;
 
-  const handleUndo = () => setPaths((prev) => prev.slice(0, -1));
-  const handleClear = () => setPaths([]);
+  const handleUndo = () => { if (!sendingRef.current) setPaths((prev) => prev.slice(0, -1)); };
+  const handleClear = () => { if (!sendingRef.current) setPaths([]); };
 
   const handleClose = () => {
+    if (sendingRef.current) return;
     setPaths([]);
     currentPathRef.current = null;
     onClose();
   };
 
   const handleSend = async () => {
-    if (!paths.length || sending) return;
+    if (!paths.length || currentPathRef.current || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
+    let uri;
     try {
-      const uri = await captureRef(canvasRef, { format: "png", quality: 1 });
-      setPaths([]);
+      uri = await captureRef(canvasRef, {
+        format: "png", quality: 1, result: Platform.OS === "web" ? "data-uri" : "tmpfile",
+      });
       await onSend(uri);
+      setPaths([]);
     } catch (error) {
-      console.error("Error capturing drawing:", error);
+      console.error("Error sending drawing:", error);
       showAlert(t("common.error"), t("messages.mediaUploadFailed"));
     } finally {
+      if (uri && Platform.OS !== "web") releaseCapture(uri);
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -141,7 +162,8 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={handleClose} style={styles.headerButton}>
+          <TouchableOpacity onPress={handleClose} disabled={sending} style={styles.headerButton}
+            accessibilityRole="button" accessibilityLabel={t("common.close")}>
             <Ionicons name="close" size={26} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t("messages.drawingTitle")}</Text>
@@ -149,7 +171,9 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
             <TouchableOpacity
               onPress={handleUndo}
               style={styles.headerButton}
-              disabled={!paths.length}
+              disabled={!paths.length || sending}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.drawingUndo")}
             >
               <Ionicons
                 name="arrow-undo"
@@ -160,7 +184,9 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
             <TouchableOpacity
               onPress={handleClear}
               style={styles.headerButton}
-              disabled={!paths.length}
+              disabled={!paths.length || sending}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.drawingClear")}
             >
               <Ionicons
                 name="trash"
@@ -172,7 +198,7 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
         </View>
 
         <View
-          ref={canvasRef}
+          ref={bindCanvas}
           style={styles.canvas}
           collapsable={false}
           {...(Platform.OS === "web" ? {} : panResponder.panHandlers)}
@@ -213,6 +239,7 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
                   swatch === color && styles.swatchActive,
                 ]}
                 onPress={() => setColor(swatch)}
+                disabled={sending}
               />
             ))}
           </View>
@@ -222,6 +249,7 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
                 key={width}
                 style={[styles.strokeOption, width === strokeWidth && styles.strokeOptionActive]}
                 onPress={() => setStrokeWidth(width)}
+                disabled={sending}
               >
                 <View
                   style={{
@@ -237,6 +265,8 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
               style={[styles.sendButton, !paths.length && styles.sendButtonDisabled]}
               onPress={handleSend}
               disabled={!paths.length || sending}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.drawingSend")}
             >
               <Ionicons name="send" size={18} color="#fff" />
               <Text style={styles.sendButtonText}>{t("messages.drawingSend")}</Text>

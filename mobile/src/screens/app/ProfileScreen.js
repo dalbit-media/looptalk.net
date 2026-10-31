@@ -25,6 +25,7 @@ export const ProfileScreen = ({ route, navigation }) => {
   const addContact = useContactStore((state) => state.addContact);
   const userId = route.params?.userId || currentUser?.id;
   const startCall = useCallStore((state) => state.startCall);
+  const isScreenSharingSupported = useCallStore((state) => state.isScreenSharingSupported);
   const isCallingSupported = useCallStore((state) => state.isCallingSupported);
   const isVideoCallingSupported = useCallStore(
     (state) => state.isVideoCallingSupported
@@ -254,6 +255,14 @@ export const ProfileScreen = ({ route, navigation }) => {
                         <Text style={styles.callButtonText}>{t("calls.videoCall")}</Text>
                       </TouchableOpacity>
                     )}
+                    {isVideoCallingSupported && isScreenSharingSupported && (
+                      <TouchableOpacity style={[styles.callButton, styles.videoCallButton]}
+                        onPress={() => handleStartCall("screen")} accessibilityRole="button"
+                        accessibilityLabel={t("calls.startScreenMeeting")}>
+                        <Ionicons name="desktop-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.callButtonText}>{t("calls.screenMeeting")}</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </>
@@ -300,10 +309,12 @@ const createStyles = (colors) => StyleSheet.create({
   },
   callActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   callButton: {
     flex: 1,
+    minWidth: 110,
     minHeight: 48,
     flexDirection: "row",
     paddingHorizontal: 12,

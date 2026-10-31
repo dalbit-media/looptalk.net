@@ -106,6 +106,7 @@ const deferred = () => {
 };
 const setup = (options = {}) => {
   const captures = [];
+  const displayCaptures = [];
   const signals = [];
   const warnings = [];
   const errors = [];
@@ -133,13 +134,17 @@ const setup = (options = {}) => {
     "../utils/webrtc": {
       RTCPeerConnection: Peer, RTCSessionDescription: class { constructor(value) { Object.assign(this, value); } },
       RTCIceCandidate: class { constructor(value) { Object.assign(this, value); } },
-      MediaStream: Stream, isCallingSupported: true, isVideoCallingSupported: true, isScreenSharingSupported: true,
+      MediaStream: Stream, isCallingSupported: true, isVideoCallingSupported: true,
+      isScreenSharingSupported: options.screenSupported !== false,
       mediaDevices: {
         getUserMedia: async (constraints) => {
           captures.push(constraints);
           return options.capture ? options.capture(constraints) : constraints.audio === false ? new Stream([track("video")]) : local;
         },
-        getDisplayMedia: async () => options.display ? options.display() : display,
+        getDisplayMedia: async (constraints) => {
+          displayCaptures.push(constraints);
+          return options.display ? options.display() : display;
+        },
       },
     },
     "../utils/inCallManager": Object.fromEntries(["start", "stop", "setKeepScreenOn", "setForceSpeakerphoneOn"].map((name) => [name, () => {}])),
@@ -173,7 +178,7 @@ const setup = (options = {}) => {
     store.getState().pc.onconnectionstatechange();
   };
   return {
-    store, connect, captures, signals, permissions, warnings, errors, auth,
+    store, connect, captures, displayCaptures, signals, permissions, warnings, errors, auth,
     audio, camera, screen, local, display, timeouts, intervals,
     appState: (value) => appState(value),
     runTimeout: async (delay) => {
@@ -215,6 +220,135 @@ test("denied native camera permission retries microphone permission only", async
   await env.connect("video");
   assert.deepEqual(env.permissions, ["video", "audio"]);
   assert.equal(env.store.getState().isCameraOff, true);
+  env.store.getState().endCall();
+});
+
+test("screen meeting captures the display from the click and offers screen video with microphone only", async () => {
+  const env = setup();
+  let resolved = false;
+  const starting = env.store.getState().startCall(async () => {
+    resolved = true;
+    return "conversation";
+  }, "screen", { id: "peer" });
+  assert.equal(env.displayCaptures.length, 1, "Picker starts before any asynchronous conversation lookup");
+  assert.equal(resolved, false);
+  assert.equal(env.captures.length, 0);
+  await starting;
+  const state = env.store.getState();
+  assert.equal(state.call.callType, "video", "Uses the existing video signaling protocol");
+  assert.equal(state.call.status, "ringing");
+  assert.equal(state.isScreenSharing, true);
+  assert.equal(state.isCameraOff, true);
+  assert.equal(state.minimized, false);
+  assert.equal(state.videoSender.track, env.screen);
+  assert.equal(state.audioSender.track, env.audio);
+  assert.equal(env.screen.contentHint, "detail");
+  assert.equal(env.captures[0].video, false);
+  assert.deepEqual(env.permissions, ["audio"]);
+  assert.equal(env.displayCaptures[0].video.displaySurface, "monitor");
+  assert.equal(env.signals.find(([event]) => event === "call:invite")[1].callType, "video");
+  env.store.getState().endCall();
+  assert.equal(env.screen.readyState, "ended");
+  assert.equal(env.audio.readyState, "ended");
+});
+
+test("screen meeting cancellation and capture failures never ring or leak media", async () => {
+  for (const failure of ["denied", "missing-track", "microphone"]) {
+    const env = setup({
+      display: failure === "denied" ? async () => { throw namedError("NotAllowedError"); }
+        : failure === "missing-track" ? async () => new Stream() : undefined,
+      capture: failure === "microphone" ? async () => { throw namedError("NotAllowedError"); } : undefined,
+    });
+    await assert.rejects(env.store.getState().startCall("conversation", "screen", {}));
+    assert.equal(env.store.getState().call, null);
+    assert.equal(env.store.getState().isStartingCall, false);
+    assert.equal(env.signals.length, 0);
+    if (failure === "microphone") assert.equal(env.screen.readyState, "ended");
+  }
+  const pending = deferred();
+  const env = setup({ display: () => pending.promise });
+  const starting = env.store.getState().startCall("conversation", "screen", {});
+  env.store.getState().endCall();
+  pending.resolve(env.display);
+  await starting;
+  assert.equal(env.screen.readyState, "ended");
+  assert.equal(env.captures.length, 0);
+  assert.equal(env.signals.length, 0);
+});
+
+test("screen meeting stops sharing cleanly while ringing without activating the camera", async () => {
+  const env = setup();
+  await env.store.getState().startCall("conversation", "screen", {});
+  env.screen.onended();
+  await new Promise(setImmediate);
+  assert.equal(env.store.getState().isScreenSharing, false);
+  assert.equal(env.store.getState().videoSender.track, null);
+  assert.equal(env.store.getState().isCameraOff, true);
+  env.store.getState().endCall();
+});
+
+test("unsupported, duplicate and aborted screen meetings never open an extra picker", async () => {
+  const unsupported = setup({ screenSupported: false });
+  await assert.rejects(unsupported.store.getState().startCall("conversation", "screen", {}), /not supported/);
+  assert.equal(unsupported.displayCaptures.length, 0);
+  const env = setup();
+  await env.store.getState().startCall("conversation", "screen", {});
+  await env.store.getState().startCall("conversation", "screen", {});
+  assert.equal(env.displayCaptures.length, 1);
+  env.store.getState().endCall();
+  const aborted = setup();
+  await assert.rejects(aborted.store.getState().startCall(async () => {
+    throw new Error("Conversation unavailable");
+  }, "screen", {}), /Conversation unavailable/);
+  assert.equal(aborted.screen.readyState, "ended");
+  assert.equal(aborted.audio.readyState, "ended");
+  assert.equal(aborted.store.getState().call, null);
+  assert.equal(aborted.signals.length, 0);
+});
+
+test("invalid call requests release captured media without sending invites", async () => {
+  const env = setup();
+  await assert.rejects(env.store.getState().startCall("conversation", "invalid", {}), /Invalid call type/);
+  assert.equal(env.captures.length, 0);
+  await assert.rejects(env.store.getState().startCall(async () => null, "screen", {}), /conversation is required/);
+  assert.equal(env.screen.readyState, "ended");
+  assert.equal(env.audio.readyState, "ended");
+  assert.equal(env.signals.length, 0);
+});
+
+test("invalid answers end the owned call and release tracks rather than leaving it ringing", async () => {
+  const env = setup();
+  await env.store.getState().startCall("conversation", "screen", {});
+  env.store.getState().pc.setRemoteDescription = async () => { throw new Error("Invalid SDP"); };
+  await env.store.getState()._handleAnswered({
+    callId: env.store.getState().call.callId, sdp: { type: "answer", sdp: "invalid" },
+  });
+
+  assert.equal(env.store.getState().pc, null);
+  assert.equal(env.screen.readyState, "ended");
+  assert.equal(env.audio.readyState, "ended");
+  assert.equal(env.store.getState().call.status, "ended");
+});
+
+test("already-ended display and camera tracks cannot become active media", async () => {
+  const display = new Stream([track("video")]);
+  display.getVideoTracks()[0].stop();
+  const starting = setup({ display: async () => display });
+  await assert.rejects(starting.store.getState().startCall("conversation", "screen", {}), /no live video track/);
+  assert.equal(starting.captures.length, 0);
+  assert.equal(starting.signals.length, 0);
+  const camera = track("video");
+  camera.stop();
+  const env = setup({
+    display: async () => display,
+    capture: async (constraints) => new Stream(constraints.audio === false ? [camera] : [track("audio")]),
+  });
+  await env.connect();
+  await assert.rejects(env.store.getState().toggleCamera(), /no live video track/);
+  await assert.rejects(env.store.getState().startScreenShare(), /no live video track/);
+  assert.equal(env.store.getState().isCameraOff, true);
+  assert.equal(env.store.getState().isScreenSharing, false);
+  assert.equal(env.store.getState().isChangingMedia, false);
   env.store.getState().endCall();
 });
 
@@ -417,7 +551,7 @@ test("Android screen-sharing plugin enables the bundled projection service once 
     module,
     require: (name) => name === "@expo/config-plugins"
       ? { withMainApplication: (config, operation) => operation(config) }
-      : require(path.join(root, "node_modules", name)),
+      : require(name),
   }, { filename });
   for (const language of ["java", "kt"]) {
     const config = { modResults: { language, contents: "onCreate() {\n    super.onCreate();\n}" } };
@@ -486,6 +620,31 @@ test("voice-call overlay shows incoming video, camera controls, and screen shari
   assert.match(markup, /aria-label="calls.toggleCamera"/);
   assert.match(markup, /aria-label="calls.startScreenShare"/);
   assert.match(markup, /<video data-fit="contain"/);
+});
+
+test("outgoing screen meeting immediately previews the display in the full call overlay", () => {
+  const { markup } = renderOverlay({
+    call: { callId: "screen", callType: "video", direction: "outgoing", status: "ringing", peerUser: {} },
+    isScreenSharing: true, screenStream: new Stream([track("video")]), remoteStream: null,
+  });
+  assert.match(markup, /<video data-fit="contain"/);
+  assert.match(markup, /calls.sharingScreen/);
+  assert.doesNotMatch(markup, /calls.returnToCall/);
+});
+
+test("chat and profile wire the screen action beside video only on supported member surfaces", () => {
+  for (const filename of ["ChatScreen.js", "ProfileScreen.js"]) {
+    const source = fs.readFileSync(path.join(root, "src", "screens", "app", filename), "utf8");
+    assert.match(source, /onPress=\{\(\) => handleStartCall\("screen"\)\}/);
+    assert.match(source, /accessibilityLabel=\{t\("calls.startScreenMeeting"\)\}/);
+    assert.match(source, /name="desktop-outline"/);
+    assert.ok(source.indexOf('handleStartCall("screen")') > source.indexOf('handleStartCall("video")'));
+  }
+  const chat = fs.readFileSync(path.join(root, "src", "screens", "app", "ChatScreen.js"), "utf8");
+  assert.match(chat, /canScreenShare = canVideoCall && isScreenSharingSupported && user\?\.member !== false/);
+  const profile = fs.readFileSync(path.join(root, "src", "screens", "app", "ProfileScreen.js"), "utf8");
+  assert.match(profile, /isVideoCallingSupported && isScreenSharingSupported &&/);
+  assert.match(profile, /if \(!isMember\) return;/);
 });
 
 test("minimized call keeps its remote audio player mounted", () => {

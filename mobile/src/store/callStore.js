@@ -110,6 +110,16 @@ const captureLocalMedia = async (callType, facingMode = "user") => {
   }
 };
 
+const captureScreenMedia = () => mediaDevices.getDisplayMedia({
+  video: {
+    displaySurface: "monitor",
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 15, max: 15 },
+  },
+  audio: false,
+});
+
 const replaceVideoTrack = async (sender, track) => {
   await sender.replaceTrack(track);
   // Native WebRTC can resolve a failed replacement without changing track.
@@ -578,19 +588,33 @@ export const useCallStore = create((set, get) => ({
   },
 
   startCall: async (conversationId, callType, peerUser) => {
+    if (!["audio", "video", "screen"].includes(callType)) throw new Error("Invalid call type");
+    const shareScreen = callType === "screen";
+    if (shareScreen) callType = "video";
     if (!isCallingSupported) {
       throw new Error("Calling is not supported on this platform");
     }
     if (callType === "video" && !isVideoCallingSupported) {
       throw new Error("Video calling is not supported on this platform");
     }
+    if (shareScreen && !isScreenSharingSupported) {
+      throw new Error("Screen sharing is not supported on this platform");
+    }
     if (get().call || get().isStartingCall) return;
     const epoch = callEpoch;
     set({ isStartingCall: true });
     let localStream;
+    let screenStream;
     let callId;
     try {
-      localStream = await captureLocalMedia(callType);
+      if (shareScreen) {
+        // Open the system picker within the initiating user gesture.
+        screenStream = await captureScreenMedia();
+        const screenTrack = screenStream.getVideoTracks()[0];
+        if (!screenTrack || screenTrack.readyState === "ended") throw new Error("Screen capture returned no live video track");
+        if (epoch !== callEpoch) return false;
+      }
+      localStream = await captureLocalMedia(shareScreen ? "audio" : callType);
       if (epoch !== callEpoch || get().call) {
         localStream.getTracks().forEach((track) => track.stop());
         return;
@@ -599,6 +623,9 @@ export const useCallStore = create((set, get) => ({
       const resolvedConversationId = typeof conversationId === "function"
         ? await conversationId()
         : conversationId;
+      if (typeof resolvedConversationId !== "string" || !resolvedConversationId.trim()) {
+        throw new Error("A conversation is required to start a call");
+      }
       if (epoch !== callEpoch) {
         localStream.getTracks().forEach((track) => track.stop());
         return false;
@@ -621,7 +648,7 @@ export const useCallStore = create((set, get) => ({
         },
         pendingIceCandidates: [],
       });
-      set({ localStream, isCameraOff: !localStream.getVideoTracks().length });
+      set({ localStream, isCameraOff: !localStream.getVideoTracks().length, minimized: false });
       try {
         await startNativeOutgoingCall(get().call);
       } catch (error) {
@@ -643,6 +670,23 @@ export const useCallStore = create((set, get) => ({
       }
       set({ pc });
       get()._attachLocalTracks(pc, localStream);
+      if (screenStream) {
+        const screenTrack = screenStream.getVideoTracks()[0];
+        if (screenTrack.readyState === "ended") throw new Error("Screen sharing ended before the meeting started");
+        if ("contentHint" in screenTrack) screenTrack.contentHint = "detail";
+        await replaceVideoTrack(get().videoSender, screenTrack);
+        if (get().pc !== pc) return false;
+        const activeStream = screenStream;
+        screenTrack.onended = () => {
+          if (get().screenStream === activeStream) {
+            get().stopScreenShare().catch((error) => console.error("Unable to stop screen sharing:", error));
+          }
+        };
+        set({ screenStream, isScreenSharing: true });
+        if (screenTrack.readyState === "ended") throw new Error("Screen sharing ended before the meeting started");
+        get()._publishMediaState();
+        get()._applyInitialVideoParameters(get().videoSender);
+      }
 
       const offer = await pc.createOffer();
       if (get().pc !== pc) return false;
@@ -661,7 +705,7 @@ export const useCallStore = create((set, get) => ({
         return false;
       }
       console.error("Error starting call:", error);
-      if (epoch === callEpoch && get().call?.callId === callId) {
+      if (callId && epoch === callEpoch && get().call?.callId === callId) {
         get()._teardown();
         set({ call: null });
       } else if (localStream) {
@@ -670,6 +714,9 @@ export const useCallStore = create((set, get) => ({
       if (error?.name === "NotFoundError") return "device-unavailable";
       throw error;
     } finally {
+      if (screenStream && get().screenStream !== screenStream) {
+        screenStream.getTracks().forEach((track) => { track.onended = null; track.stop(); });
+      }
       if (epoch === callEpoch) set({ isStartingCall: false });
     }
   },
@@ -859,6 +906,7 @@ export const useCallStore = create((set, get) => ({
       }, CONNECT_TIMEOUT_MS);
     } catch (error) {
       console.error("Error applying call answer:", error);
+      if (get().pc === pc && get().call?.callId === call.callId) get().endCall("connection-failed");
     }
   },
 
@@ -1106,7 +1154,7 @@ export const useCallStore = create((set, get) => ({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
       });
       const cameraTrack = cameraStream.getVideoTracks()[0];
-      if (!cameraTrack) throw new Error("Camera capture returned no video track");
+      if (!cameraTrack || cameraTrack.readyState === "ended") throw new Error("Camera capture returned no live video track");
       if (get().pc !== pc) return;
       if ("contentHint" in cameraTrack) cameraTrack.contentHint = "motion";
       await replaceVideoTrack(videoSender, cameraTrack);
@@ -1145,16 +1193,9 @@ export const useCallStore = create((set, get) => ({
     set({ isChangingMedia: true });
     let screenStream;
     try {
-      screenStream = await mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 15, max: 15 },
-        },
-        audio: false,
-      });
+      screenStream = await captureScreenMedia();
       const screenTrack = screenStream.getVideoTracks()[0];
-      if (!screenTrack) throw new Error("Screen capture returned no video track");
+      if (!screenTrack || screenTrack.readyState === "ended") throw new Error("Screen capture returned no live video track");
       if (get().pc !== pc) return false;
       if ("contentHint" in screenTrack) screenTrack.contentHint = "detail";
       await replaceVideoTrack(videoSender, screenTrack);
@@ -1194,6 +1235,7 @@ export const useCallStore = create((set, get) => ({
     let restored = false;
     try {
       await replaceVideoTrack(videoSender, cameraTrack);
+      if (get().pc !== pc) return false;
       restored = true;
     } catch (error) {
       if (get().pc !== pc) return false;

@@ -125,6 +125,8 @@ export const ChatScreen = ({ route, navigation }) => {
     : null;
   const canCall = isCallingSupported && !!peerUser;
   const canVideoCall = canCall && isVideoCallingSupported;
+  const isScreenSharingSupported = useCallStore((state) => state.isScreenSharingSupported);
+  const canScreenShare = canVideoCall && isScreenSharingSupported && user?.member !== false;
 
   const matches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -298,6 +300,12 @@ export const ChatScreen = ({ route, navigation }) => {
                   <Ionicons name="videocam" size={22} color={colors.headerIcon} />
                 </TouchableOpacity>
               )}
+              {canScreenShare && (
+                <TouchableOpacity style={styles.headerButton} onPress={() => handleStartCall("screen")}
+                  accessibilityRole="button" accessibilityLabel={t("calls.startScreenMeeting")}>
+                  <Ionicons name="desktop-outline" size={22} color={colors.headerIcon} />
+                </TouchableOpacity>
+              )}
             </>
           )}
           {conversation?.isGroupChat && (
@@ -314,7 +322,7 @@ export const ChatScreen = ({ route, navigation }) => {
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigation, colors, canCall, canVideoCall, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.isGroupChat, route.params?.name, names]);
+  }, [navigation, colors, canCall, canVideoCall, canScreenShare, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.isGroupChat, route.params?.name, names]);
 
   useEffect(() => {
     let isActive = true;
@@ -445,7 +453,7 @@ export const ChatScreen = ({ route, navigation }) => {
   }, [searchActive, recordingVoice, !!replyTarget, !!editTarget]);
 
   const handleStartCall = async (callType) => {
-    if (!peerUser) return;
+    if (!peerUser || (callType === "screen" && !canScreenShare)) return;
     try {
       const result = await startCall(conversationId, callType, peerUser);
       if (result === "device-unavailable") {
@@ -626,13 +634,15 @@ export const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleDrawingSend = async (uri) => {
-    setDrawingVisible(false);
-    await uploadMedia({
-      uri,
-      name: "drawing.png",
-      mimeType: "image/png",
-      messageType: "DRAWING",
-    });
+    setUploadingMedia(true);
+    try {
+      await sendMediaMessage(conversationId, {
+        uri, name: "drawing.png", mimeType: "image/png", messageType: "DRAWING",
+      }, token);
+      setDrawingVisible(false);
+    } finally {
+      setUploadingMedia(false);
+    }
   };
 
   const handlePickFile = async () => {
