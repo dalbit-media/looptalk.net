@@ -10,15 +10,34 @@ for another poll's option.
 
 All routes below require authentication:
 
+Invited authors' posts have 1–5 normalized topic tags (1–24 letters, numbers or hyphens each).
+The shared local keyword rules suggest topics in English, Korean and Japanese;
+authors can edit suggestions. Empty tag arrays fall back to `general`, and older
+posts get `general` through the additive `20261031010000_forum_tags` migration.
+For authors whose current account is not a member, the server returns only
+`not-invited`, including existing posts. Guests cannot supply topic tags (403);
+new guest posts store an empty topic array. Joining removes `not-invited`, with
+`general` as the fallback when no topic tags exist.
+Guests' feeds contain only public `not-invited` posts and have no scope tabs.
+Direct post links enforce the same guest boundary: public posts by invited
+authors and non-public posts return 404 to guests.
+Members hide these posts by default; `includeGuests=true` includes them within
+the selected scope, with filtering applied before pagination.
+
 - `GET /api/forum/polls?page=1`: newest polls and the caller's participation;
   never includes vote totals, other people's votes, or comments.
-- `POST /api/forum/polls`: `{ question, options: ["...", "..."] }`.
+- `POST /api/forum/polls`: `{ question, options: ["...", "..."], tags?: ["topic"] }`.
 - `GET /api/forum/polls/:id`: question and options; includes `results` and
   `totalVotes` only if the caller has voted in this poll, including its creator.
+- `POST /api/forum/polls/:id/reactions`: `{ emoji }`; members can toggle one of
+  the supported emoji reactions independently of voting. Poll responses include
+  per-emoji counts and whether the caller reacted, never other user identities.
 - `POST /api/forum/polls/:id/vote`: `{ optionId }`; duplicate votes return 409.
-- `GET /api/forum/polls/:id/comments?page=1`: newest comments, voters only.
+- `GET /api/forum/polls/:id/comments?page=1`: newest comments.
 - `POST /api/forum/polls/:id/comments`: `{ content }` (1–2,000 characters),
-  voters only. Nonparticipants receive 403 for either comments route.
+  Invited members must vote to use either comments route (otherwise 403).
+  Guests may read and post comments without voting only on public posts by
+  non-invited authors; other posts return 404, matching direct-detail access.
 
 Lists use 20-item pages and return `hasMore`. Forum writes are limited to 30 per
 minute per account, in addition to the existing API limiter. Responses are
@@ -26,15 +45,20 @@ minute per account, in addition to the existing API limiter. Responses are
 Questions, options, votes and comments persist as server-readable data, not
 end-to-end encrypted chat. Voting access is an API restriction, not a guarantee
 against a participant sharing results elsewhere. Account deletion cascades to
-that user's polls (and their votes/comments), votes and comments.
+that user's polls (and their votes/reactions/comments), votes, reactions and comments.
 
-Apply migration `20261018070000_poll_forum` or use the existing additive
-schema-push workflow. Run root `npm run prisma:generate` before starting the
-updated server; normal startup synchronizes the schema without resetting data.
+Apply migrations `20261018070000_poll_forum` and
+`20261031000000_forum_reactions` or use the existing additive
+schema-push workflow. Normal startup regenerates the Prisma client and then
+synchronizes the schema without resetting data. Restart the server after schema
+changes; an already-running process retains its previously loaded Prisma client.
+On Windows, stop the old server before restarting if generation reports a locked
+Prisma engine.
 
 ## Development startup
 
-`npm run dev` still synchronizes the SQLite schema before accepting requests.
+`npm run dev` regenerates the Prisma client and synchronizes the SQLite schema
+before accepting requests. A generation or schema update failure stops startup.
 It logs schema setup progress and elapsed server readiness time.
 
 The API and Socket.IO start without waiting for development page compilation.

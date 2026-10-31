@@ -4,6 +4,7 @@ import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { ContactIdentity } from "../../components/ContactIdentity";
+import { MemberFeatureGate } from "../../components/MemberFeatureGate";
 import { SearchBar } from "../../components/SearchBar";
 import { useAuthStore } from "../../store/authStore";
 import { useContactStore } from "../../store/contactStore";
@@ -33,6 +34,7 @@ export const CreateGroupScreen = ({ navigation, route }) => {
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
+  const isMember = useAuthStore((state) => state.user?.member !== false);
   const contacts = useContactStore((state) => state.contacts);
   const contactsLoading = useContactStore((state) => state.loading);
   const loadContacts = useContactStore((state) => state.loadContacts);
@@ -61,8 +63,8 @@ export const CreateGroupScreen = ({ navigation, route }) => {
   );
 
   useEffect(() => {
-    loadContacts(token);
-  }, [loadContacts, token]);
+    if (isMember) loadContacts(token);
+  }, [isMember, loadContacts, token]);
 
   const toggleUser = (user) => {
     setSelectedUsers((current) =>
@@ -111,6 +113,17 @@ export const CreateGroupScreen = ({ navigation, route }) => {
       setCreating(false);
     }
   };
+
+  if (!isMember) {
+    return (
+      <View style={[styles.container, styles.gateContainer]}>
+        <MemberFeatureGate
+          message="memberAccess.newMessages"
+          onJoinNetwork={() => navigation.navigate("Forum", { screen: "JoinNetwork" })}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -244,6 +257,7 @@ export const CreateGroupScreen = ({ navigation, route }) => {
 
 const createStyles = (colors) => StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: colors.surface },
+  gateContainer: { justifyContent: "center", alignItems: "center" },
   selectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   sectionTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   count: { color: colors.secondaryText, fontSize: 13 },

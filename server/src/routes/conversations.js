@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const requireMember = require("../middleware/requireMember");
 const { pruneSecureRecipient, secureTransaction } = require("../utils/secureRelay");
 
 const router = express.Router();
@@ -91,7 +92,7 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 // Get or create 1-to-1 conversation
-router.post("/direct/:userId", authMiddleware, async (req, res) => {
+router.post("/direct/:userId", authMiddleware, requireMember, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -223,7 +224,7 @@ router.post("/:id/read", authMiddleware, async (req, res) => {
 });
 
 // Create group conversation
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, requireMember, async (req, res) => {
   try {
     const { name, userIds } = req.body;
 
@@ -313,7 +314,7 @@ router.patch("/:id", authMiddleware, async (req, res) => {
 });
 
 // Add a member to an existing group conversation
-router.post("/:id/members", authMiddleware, async (req, res) => {
+router.post("/:id/members", authMiddleware, requireMember, async (req, res) => {
   try {
     const { userId } = req.body;
     if (typeof userId !== "string" || !userId || userId === req.userId) {

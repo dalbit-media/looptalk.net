@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { ActivityIndicator, FlatList, RefreshControl, Share, StyleSheet, TouchableOpacity, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
+import { MemberFeatureGate } from "../../components/MemberFeatureGate";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 import * as InvitationsAPI from "../../api/invitations";
@@ -34,6 +35,7 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
+  const isMember = useAuthStore((state) => state.user?.member !== false);
   const language = usePreferencesStore((state) => state.language);
   const [invitations, setInvitations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,12 +79,13 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
   }, [language, t, token]);
 
   useFocusEffect(useCallback(() => {
+    if (!isMember) return undefined;
     let isFocused = true;
     loadInvitations(false, () => isFocused);
     return () => {
       isFocused = false;
     };
-  }, [loadInvitations]));
+  }, [isMember, loadInvitations]));
 
   const handleShare = (invitation) => Share.share({
     title: t("contacts.shareInvitationLink"),
@@ -101,6 +104,17 @@ export const MyInvitationsScreen = ({ route, navigation }) => {
       showAlert(t("common.error"), t("contacts.invitationLinkCopyFailed"));
     }
   };
+
+  if (!isMember) {
+    return (
+      <View style={[styles.center, styles.gateContainer]}>
+        <MemberFeatureGate
+          message="memberAccess.invitations"
+          onJoinNetwork={() => navigation.navigate("Forum", { screen: "JoinNetwork" })}
+        />
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -216,6 +230,7 @@ const createStyles = (colors) => StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.surface,
   },
+  gateContainer: { paddingHorizontal: 20 },
   errorContainer: {
     flex: 1,
     alignItems: "center",

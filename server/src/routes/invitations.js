@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const requireMember = require("../middleware/requireMember");
 const { normalizeInvitationCode, validInvitationCode, createInvitationCode } = require("../utils/invitationCode");
 const sharp = require("sharp");
 const { createInvitationMapHandler } = require("../utils/invitationMap");
@@ -176,7 +177,7 @@ const getInvitationStats = async (inviterId) => {
 };
 
 // Get invitation and connection activity for the current user
-router.get("/stats", authMiddleware, async (req, res) => {
+router.get("/stats", authMiddleware, requireMember, async (req, res) => {
   try {
     res.json(await getInvitationStats(req.userId));
   } catch (error) {
@@ -186,7 +187,7 @@ router.get("/stats", authMiddleware, async (req, res) => {
 });
 
 // Create invitation
-router.post("/create", authMiddleware, async (req, res) => {
+router.post("/create", authMiddleware, requireMember, async (req, res) => {
   try {
     if (req.body && Object.keys(req.body).some((key) => !["language", "inviterDisplayName"].includes(key))) {
       return require("../utils/privateAccounts").upgradeRequired(res);
@@ -461,7 +462,7 @@ router.get("/:code", async (req, res) => {
 });
 
 // List invitations sent by user
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, requireMember, async (req, res) => {
   try {
     const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
     if (owner?.authPublicKey) return res.json([]);

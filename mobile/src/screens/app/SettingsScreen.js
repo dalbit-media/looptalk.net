@@ -121,10 +121,18 @@ export const SettingsScreen = ({ navigation }) => {
     showAlert(t("settings.about"), t("settings.aboutBody"));
   };
 
-  const handlePermissionSettings = () => {
-    Linking.openSettings().catch(() => {
-      showAlert(t("settings.privacy"), t("settings.privacyDescription"));
-    });
+  const handlePermissionSettings = async () => {
+    if (Platform.OS === "web") {
+      showAlert(t("settings.browserPermissions"), t("settings.browserPermissionsHelp"));
+      return;
+    }
+
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      console.error("Unable to open device permission settings:", error);
+      showAlert(t("common.error"), t("settings.permissionsOpenFailed"));
+    }
   };
 
   const openPublicPage = (path) => {
@@ -141,27 +149,33 @@ export const SettingsScreen = ({ navigation }) => {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.account")}</Text>
 
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
-        >
-          <Ionicons name="link" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
-            <Text style={styles.settingValue}>
-              {t("settings.myInvitationsDescription")}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
-        </TouchableOpacity>
+        {user.member !== false && (
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => navigation.navigate("MyInvitations", { filter: "all" })}
+          >
+            <Ionicons name="link" size={20} color={colors.primary} />
+            <View style={styles.settingContent}>
+              <Text style={styles.settingLabel}>{t("settings.myInvitations")}</Text>
+              <Text style={styles.settingValue}>
+                {t("settings.myInvitationsDescription")}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity style={styles.settingItem} onPress={handlePermissionSettings}>
           <Ionicons name="lock-closed" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
-            <Text style={styles.settingLabel}>{t("settings.devicePermissions")}</Text>
-            <Text style={styles.settingValue}>{t("settings.privacyDescription")}</Text>
+            <Text style={styles.settingLabel}>
+              {t(Platform.OS === "web" ? "settings.browserPermissions" : "settings.devicePermissions")}
+            </Text>
+            <Text style={styles.settingValue}>
+              {t(Platform.OS === "web" ? "settings.browserPermissionsDescription" : "settings.privacyDescription")}
+            </Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
+          <Ionicons name={Platform.OS === "web" ? "information-circle-outline" : "chevron-forward"} size={20} color={colors.mutedText} />
         </TouchableOpacity>
       </View>
 

@@ -1,9 +1,10 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const requireMember = require("../middleware/requireMember");
 
 const router = express.Router();
-router.use(authMiddleware, (req, res, next) => {
+router.use(authMiddleware, requireMember, (req, res, next) => {
   if (["POST", "PUT", "PATCH"].includes(req.method)) {
     return require("../utils/privateAccounts").upgradeRequired(res);
   }

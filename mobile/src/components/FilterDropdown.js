@@ -4,7 +4,7 @@ import { AppText as Text } from "./AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 // Icon button that opens a dropdown menu of filter options anchored below it.
-export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }) => {
+export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style, disabled = false, accessibilityHint }) => {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const buttonRef = useRef(null);
@@ -12,6 +12,7 @@ export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }
   const isActive = !!selectedKey && selectedKey !== options[0]?.key;
 
   const openMenu = () => {
+    if (disabled) return;
     buttonRef.current?.measureInWindow((x, y, width, height) => {
       setAnchor({ x, y, width, height });
       setOpen(true);
@@ -46,15 +47,18 @@ export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }
     <View style={style}>
       <TouchableOpacity
         ref={buttonRef}
-        style={[styles.iconButton, isActive && styles.iconButtonActive]}
+        style={[styles.iconButton, isActive && styles.iconButtonActive, disabled && styles.disabled]}
         onPress={openMenu}
+        disabled={disabled}
+        accessibilityState={{ disabled }}
+        accessibilityHint={accessibilityHint}
         accessibilityRole="button"
         accessibilityLabel="Filter"
       >
         <Ionicons name="filter" size={18} color={isActive ? "#FFFFFF" : colors.mutedText} />
       </TouchableOpacity>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <Modal visible={open && !disabled} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)}>
           {anchor && (
             <View
@@ -91,6 +95,7 @@ export const FilterDropdown = ({ options, selectedKey, onSelect, colors, style }
 
 const createStyles = (colors) =>
   StyleSheet.create({
+    disabled: { opacity: 0.5 },
     iconButton: {
       width: 40,
       height: 40,

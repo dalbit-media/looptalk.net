@@ -7,7 +7,6 @@ import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
 import { HighlightText } from "../../components/HighlightText";
 import { UserPresence } from "../../components/UserPresence";
-import { GuestJoinBanner } from "../../components/GuestJoinBanner";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useContactStore } from "../../store/contactStore";
@@ -41,6 +40,7 @@ export const MessagesScreen = ({ navigation }) => {
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const isMember = user?.member !== false;
   const conversations = useMessageStore((state) => state.conversations);
   const contacts = useContactStore((state) => state.contacts);
   const names = useMemo(() => contactDisplayNames(contacts), [contacts]);
@@ -60,9 +60,9 @@ export const MessagesScreen = ({ navigation }) => {
     conversation.name || getPeerName(conversation, user.id, names) || t("messages.unnamedChat");
 
   const filteredConversations = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = isMember ? searchQuery.trim().toLowerCase() : "";
     return conversations.filter((conversation) => {
-      if (filterKey === "unread" && !(conversation.unreadCount > 0)) return false;
+      if (isMember && filterKey === "unread" && !(conversation.unreadCount > 0)) return false;
       if (!query) return true;
       const title = getConversationTitle(conversation).toLowerCase();
       const lastMessageText = (conversation.messages?.[0]?.content || "").toLowerCase();
@@ -79,7 +79,7 @@ export const MessagesScreen = ({ navigation }) => {
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversations, searchQuery, filterKey, user.id, names]);
+  }, [conversations, searchQuery, filterKey, user.id, names, isMember]);
 
   const loadConversations = useMessageStore((state) => state.loadConversations);
 
@@ -191,7 +191,7 @@ export const MessagesScreen = ({ navigation }) => {
   };
 
   const ListEmptyComponent = () =>
-    searchQuery.trim() || filterKey !== "all" ? (
+    isMember && (searchQuery.trim() || filterKey !== "all") ? (
       <EmptyState
         icon="search-outline"
         title={t("messages.noResults")}
@@ -207,20 +207,23 @@ export const MessagesScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <GuestJoinBanner onPress={() => navigation.navigate("Forum", { screen: "JoinNetwork" })} />
       <View style={styles.searchRow}>
         <SearchBar
-          value={searchQuery}
+          value={isMember ? searchQuery : ""}
           onChangeText={setSearchQuery}
           placeholder={t("messages.searchPlaceholder")}
           colors={colors}
           style={styles.searchBarFlex}
+          disabled={!isMember}
+          accessibilityHint={!isMember ? t("memberAccess.chatSearch") : undefined}
         />
         <FilterDropdown
           options={filterOptions}
-          selectedKey={filterKey}
+          selectedKey={isMember ? filterKey : "all"}
           onSelect={setFilterKey}
           colors={colors}
+          disabled={!isMember}
+          accessibilityHint={!isMember ? t("memberAccess.chatSearch") : undefined}
         />
       </View>
       {loading && !refreshing ? (
@@ -239,14 +242,16 @@ export const MessagesScreen = ({ navigation }) => {
           }
         />
       )}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate("CreateGroup")}
-        accessibilityRole="button"
-        accessibilityLabel={t("messages.newMessage")}
-      >
-        <Ionicons name="create-outline" size={25} color="#fff" />
-      </TouchableOpacity>
+      {isMember && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => navigation.navigate("CreateGroup")}
+          accessibilityRole="button"
+          accessibilityLabel={t("messages.newMessage")}
+        >
+          <Ionicons name="create-outline" size={25} color="#fff" />
+        </TouchableOpacity>
+      )}
     </View>
   );
 };

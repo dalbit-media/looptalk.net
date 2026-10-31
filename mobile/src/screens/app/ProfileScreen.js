@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { View, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { UserProfileHeader } from "../../components/UserProfileHeader";
+import { MemberFeatureGate } from "../../components/MemberFeatureGate";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuthStore } from "../../store/authStore";
 import { useCallStore } from "../../store/callStore";
@@ -19,6 +20,7 @@ export const ProfileScreen = ({ route, navigation }) => {
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
   const currentUser = useAuthStore((state) => state.user);
+  const isMember = currentUser?.member !== false;
   const contacts = useContactStore((state) => state.contacts);
   const addContact = useContactStore((state) => state.addContact);
   const userId = route.params?.userId || currentUser?.id;
@@ -63,7 +65,7 @@ export const ProfileScreen = ({ route, navigation }) => {
   };
 
   const handleAddContact = async () => {
-    if (addingContact || isContact) return;
+    if (!isMember || addingContact || isContact) return;
     setAddingContact(true);
     try {
       await addContact(userId, "All Contacts 1", null, token, userProfile.displayName);
@@ -76,6 +78,7 @@ export const ProfileScreen = ({ route, navigation }) => {
   };
 
   const handleStartChat = async () => {
+    if (!isMember) return;
     try {
       const conversation = await MessageAPI.getOrCreateDirectConversation(
         userId,
@@ -96,6 +99,7 @@ export const ProfileScreen = ({ route, navigation }) => {
   };
 
   const handleStartCall = async (callType) => {
+    if (!isMember) return;
     try {
       const result = await startCall(
         () => MessageAPI.getOrCreateDirectConversation(userId, token)
@@ -198,52 +202,61 @@ export const ProfileScreen = ({ route, navigation }) => {
 
         {!isOwnProfile && (
           <View style={styles.actionContainer}>
-            {!isContact && (
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={handleAddContact}
-                disabled={addingContact}
-                accessibilityRole="button"
-                accessibilityLabel={t("contacts.addContact")}
-              >
-                {addingContact ? <ActivityIndicator color="#fff" /> : (
-                  <>
-                    <Ionicons name="person-add-outline" size={18} color="#fff" />
-                    <Text style={styles.primaryButtonText}>{t("contacts.addContact")}</Text>
-                  </>
+            {!isMember ? (
+              <MemberFeatureGate
+                message="memberAccess.profile"
+                onJoinNetwork={() => navigation.navigate("Forum", { screen: "JoinNetwork" })}
+              />
+            ) : (
+              <>
+                {!isContact && (
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={handleAddContact}
+                    disabled={addingContact}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("contacts.addContact")}
+                  >
+                    {addingContact ? <ActivityIndicator color="#fff" /> : (
+                      <>
+                        <Ionicons name="person-add-outline" size={18} color="#fff" />
+                        <Text style={styles.primaryButtonText}>{t("contacts.addContact")}</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 )}
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={styles.primaryButton} onPress={handleStartChat}>
-              <Ionicons name="chatbubble" size={18} color="#fff" />
-              <Text style={styles.primaryButtonText}>{t("profile.sendMessage")}</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={styles.primaryButton} onPress={handleStartChat}>
+                  <Ionicons name="chatbubble" size={18} color="#fff" />
+                  <Text style={styles.primaryButtonText}>{t("profile.sendMessage")}</Text>
+                </TouchableOpacity>
 
-            {(isCallingSupported || isVideoCallingSupported) && (
-              <View style={styles.callActions}>
-                {isCallingSupported && (
-                  <TouchableOpacity
-                    style={[styles.callButton, styles.voiceCallButton]}
-                    onPress={() => handleStartCall("audio")}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("calls.startAudioCall")}
-                  >
-                    <Ionicons name="call" size={18} color="#FFFFFF" />
-                    <Text style={styles.callButtonText}>{t("calls.audioCall")}</Text>
-                  </TouchableOpacity>
+                {(isCallingSupported || isVideoCallingSupported) && (
+                  <View style={styles.callActions}>
+                    {isCallingSupported && (
+                      <TouchableOpacity
+                        style={[styles.callButton, styles.voiceCallButton]}
+                        onPress={() => handleStartCall("audio")}
+                        accessibilityRole="button"
+                        accessibilityLabel={t("calls.startAudioCall")}
+                      >
+                        <Ionicons name="call" size={18} color="#FFFFFF" />
+                        <Text style={styles.callButtonText}>{t("calls.audioCall")}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {isVideoCallingSupported && (
+                      <TouchableOpacity
+                        style={[styles.callButton, styles.videoCallButton]}
+                        onPress={() => handleStartCall("video")}
+                        accessibilityRole="button"
+                        accessibilityLabel={t("calls.startVideoCall")}
+                      >
+                        <Ionicons name="videocam" size={18} color="#FFFFFF" />
+                        <Text style={styles.callButtonText}>{t("calls.videoCall")}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 )}
-                {isVideoCallingSupported && (
-                  <TouchableOpacity
-                    style={[styles.callButton, styles.videoCallButton]}
-                    onPress={() => handleStartCall("video")}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("calls.startVideoCall")}
-                  >
-                    <Ionicons name="videocam" size={18} color="#FFFFFF" />
-                    <Text style={styles.callButtonText}>{t("calls.videoCall")}</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              </>
             )}
 
             <TouchableOpacity style={styles.secondaryButton} onPress={handleBlock}>

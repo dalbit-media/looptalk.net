@@ -58,7 +58,7 @@ const fixture = (screen, api, contacts = { friends: [{ contactUserId: "alice" }]
       useCallback: (callback) => callback,
     },
     "react-native": {
-      ...Object.fromEntries(["ActivityIndicator", "FlatList", "KeyboardAvoidingView", "RefreshControl",
+      ...Object.fromEntries(["ActivityIndicator", "FlatList", "KeyboardAvoidingView", "Modal", "RefreshControl",
         "ScrollView", "TouchableOpacity", "View"].map((name) => [name, name])),
       Platform: { OS: "web" }, StyleSheet: { create: (value) => value },
     },
@@ -67,12 +67,14 @@ const fixture = (screen, api, contacts = { friends: [{ contactUserId: "alice" }]
     "../../components/AppTextInput": { AppTextInput: "TextInput" },
     "../../components/InfoTip": { InfoTip: "InfoTip" },
     "../../components/GuestJoinBanner": { GuestJoinBanner: "GuestJoinBanner" },
+    "../../components/ReactionPicker": { ReactionBar: "ReactionBar", ReactionPicker: "ReactionPicker" },
     "@expo/vector-icons/Ionicons": { default: "Ionicons" },
     "../../store/authStore": { useAuthStore: (select) => select({ token: "token", user }) },
     "../../store/contactStore": { useContactStore: (select) => select({ contacts }) },
     "../../hooks/useAppTheme": { useAppTheme: () => ({ colors: { text: "#eee", danger: "#f00" } }) },
     "../../hooks/useTranslation": { useTranslation: () => (key, params) => key + (params ? JSON.stringify(params) : "") },
     "../../api/forum": api,
+    "../../../../shared/forumTags": require("../../shared/forumTags"),
   });
   let createFab;
   const render = () => {
@@ -108,6 +110,12 @@ test("forum is leftmost, Messages stays initial, and My Data follows Contacts in
   assert.doesNotMatch(chat, /navigation\.navigate\("MyDataHome"\)/);
 });
 
+test("custom stack back buttons are hidden and guarded when there is no history", () => {
+  const navigation = fs.readFileSync(path.join(sourceRoot, "navigation", "AppStack.js"), "utf8");
+  assert.match(navigation, /headerLeft: \(\{ tintColor \}\) => navigation\.canGoBack\(\) \?/);
+  assert.match(navigation, /if \(navigation\.canGoBack\(\)\) navigation\.goBack\(\);/);
+});
+
 test("all forum copy is present in every supported locale", () => {
   const source = fs.readFileSync(path.join(sourceRoot, "i18n", "i18n.js"), "utf8");
   const ast = babel.parseSync(source, { babelrc: false, configFile: false });
@@ -120,6 +128,13 @@ test("all forum copy is present in every supported locale", () => {
   for (const locale of translations.properties) {
     const keys = new Set(locale.value.properties.map((property) => property.key.value));
     for (const key of used) assert.ok(keys.has(key), `${locale.key.name}: ${key}`);
+    const values = new Map(locale.value.properties.map((property) => [
+      property.key.value,
+      property.value.value,
+    ]));
+    for (const key of ["forum.empty", "forum.guestNotice"]) {
+      assert.doesNotMatch(values.get(key), /poll|vote|투표|投票/i, `${locale.key.name}: ${key}`);
+    }
   }
 });
 
@@ -136,8 +151,10 @@ test("forum list creates polls, opens details, paginates and surfaces failed loa
   let list = await f.open();
   assert.equal(list.props.data.length, 1);
   assert.equal(f.createFab().props.accessibilityLabel, "forum.create");
+  assert.equal(find(list.props.renderItem({ item: list.props.data[0] }),
+    (node) => node.props?.label === "forum.visibilityPublic").props.visibility, "public");
   f.createFab().props.onPress();
-  list.props.renderItem({ item: list.props.data[0] }).props.onPress();
+  find(list.props.renderItem({ item: list.props.data[0] }), (node) => node.props?.onPress)?.props.onPress();
   assert.deepEqual(plain(f.navigations), [
     ["navigate", "CreatePoll"], ["navigate", "Poll", { pollId: "poll-1" }],
   ]);
@@ -178,7 +195,7 @@ test("My Contacts is default, Public shows everyone, and contact changes update 
   assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["bob-poll"]);
   contacts.friends.push({ contactUserId: "stranger" });
   assert.deepEqual(plain(f.render().props.data.map((item) => item.id)), ["bob-poll", "stranger-poll"]);
-  assert.deepEqual(calls, [["token", 1, "loop"], ["token", 1, "public"], ["token", 1, "loop"]],
+  assert.deepEqual(calls, [["token", 1, "loop", false], ["token", 1, "public", false], ["token", 1, "loop", false]],
     "Tabs only send the scope, never private contacts");
 });
 
@@ -217,7 +234,7 @@ test("contact polls on later public pages remain discoverable after an empty fil
   list = f.render();
   assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["poll"]);
   assert.equal(list.props.ListFooterComponent, null);
-  assert.deepEqual(calls, [["token", 1, "loop"], ["token", 2, "loop"]]);
+  assert.deepEqual(calls, [["token", 1, "loop", false], ["token", 2, "loop", false]]);
 });
 
 test("no contacts has a distinct empty state and Public still shows all posts", async () => {
@@ -314,38 +331,117 @@ test("poll creation validates duplicate options and navigates to the persisted p
   let inputs = nodes(f.render()).filter((node) => node.type === "TextInput");
   inputs[0].props.onChangeText(" Which one? ");
   await button(f.render(), "forum.create").props.onPress();
-  assert.deepEqual(plain(created), [["token", "Which one?", ["forum.support"], "contacts"]]);
+  assert.deepEqual(plain(created), [["token", "Which one?", ["forum.support"], "contacts", ["general"]]]);
   created.length = 0;
   f.navigations.length = 0;
   button(f.render(), "forum.customChoices").props.onPress();
   inputs = nodes(f.render()).filter((node) => node.type === "TextInput");
-  inputs[1].props.onChangeText(" First ");
-  inputs[2].props.onChangeText("first");
+  inputs[2].props.onChangeText(" First ");
+  inputs[3].props.onChangeText("first");
   await button(f.render(), "forum.create").props.onPress();
   assert.equal(created.length, 0);
   inputs = nodes(f.render()).filter((node) => node.type === "TextInput");
-  inputs[2].props.onChangeText("Second");
+  inputs[3].props.onChangeText("Second");
   find(f.render(), (node) => node.props?.accessibilityRole === "radio" &&
     node.props.children?.props?.label === "forum.visibilityPublic").props.onPress();
   await button(f.render(), "forum.create").props.onPress();
-  assert.deepEqual(plain(created), [["token", "Which one?", ["First", "Second"], "public"]]);
+  assert.deepEqual(plain(created), [["token", "Which one?", ["First", "Second"], "public", ["general"]]]);
   assert.deepEqual(plain(f.navigations), [["replace", "Poll", { pollId: "poll" }]]);
 });
 
-test("authors can move a post between My Loop, Neighbor Loops and public", async () => {
+test("post visibility stays unchanged until the owner applies a choice in the compact editor", async () => {
   const visibilityCalls = [];
   const f = fixture("PollScreen", {
     getPoll: async () => ({ ...poll, visibility: "contacts", author: { id: "me", name: "Me" } }),
     setPollVisibility: async (...args) => { visibilityCalls.push(args); return { visibility: args[2] }; },
   });
-  const radio = (tree, text) => find(tree, (node) => node.props?.accessibilityRole === "radio" &&
-    node.props.children?.props?.label === text);
+  const radio = (tree, label) => find(tree, (node) => node.props?.accessibilityRole === "radio" &&
+    node.props.accessibilityLabel === label);
   let tree = await f.open();
-  await radio(tree, "forum.visibilityPublic").props.onPress();
-  assert.deepEqual(visibilityCalls, [["token", "poll", "public"]]);
+  assert.equal(radio(tree, "forum.visibilityPublic"), undefined, "Visibility choices are hidden until requested");
+  find(tree, (node) => node.props?.accessibilityLabel === "forum.editVisibility").props.onPress();
   tree = f.render();
-  await radio(tree, "forum.visibilityNetwork").props.onPress();
-  assert.deepEqual(visibilityCalls[1], ["token", "poll", "network"]);
+  assert.ok(find(tree, (node) => node.type === "Modal"));
+  radio(tree, "forum.visibilityPublic").props.onPress();
+  assert.equal(visibilityCalls.length, 0, "Picking a scope only changes the draft");
+  button(f.render(), "common.cancel").props.onPress();
+  tree = f.render();
+  assert.equal(find(tree, (node) => node.type === "Modal"), undefined);
+  find(tree, (node) => node.props?.accessibilityLabel === "forum.editVisibility").props.onPress();
+  tree = f.render();
+  radio(tree, "forum.visibilityNetwork").props.onPress();
+  await button(f.render(), "common.save").props.onPress();
+  tree = f.render();
+  assert.deepEqual(visibilityCalls, [["token", "poll", "network"]]);
+  assert.ok(find(tree, (node) => node.props?.label === "forum.visibilityNetwork"));
+});
+
+test("forum feed reactions toggle directly and update counts without opening the poll", async () => {
+  const calls = [];
+  const f = fixture("ForumScreen", {
+    listPolls: async () => ({ polls: [{ ...poll, reactions: [{ emoji: "❤️", count: 1, reactedByMe: false }] }], hasMore: false }),
+    reactToPoll: async (...args) => {
+      calls.push(args);
+      return { reactions: [{ emoji: "❤️", count: 2, reactedByMe: true }] };
+    },
+  });
+  let list = await f.open();
+  let bar = find(list.props.renderItem({ item: list.props.data[0] }), (node) => node.type === "ReactionBar");
+  assert.equal(bar.props.reactions[0].count, 1);
+  await bar.props.onSelect("❤️");
+  list = f.render();
+  bar = find(list.props.renderItem({ item: list.props.data[0] }), (node) => node.type === "ReactionBar");
+  assert.deepEqual(calls, [["token", "poll", "❤️"]]);
+  assert.deepEqual(plain(bar.props.reactions), [{ emoji: "❤️", count: 2, reactedByMe: true }]);
+});
+
+test("forum detail reactions work independently from voting and guests cannot react", async () => {
+  const calls = [];
+  let voteCalls = 0;
+  const member = fixture("PollScreen", {
+    getPoll: async () => ({ ...poll, reactions: [] }),
+    vote: async () => { voteCalls += 1; return { myOptionId: "first" }; },
+    reactToPoll: async (...args) => {
+      calls.push(args);
+      return { reactions: [{ emoji: "🔥", count: 1, reactedByMe: true }] };
+    },
+  });
+  let tree = await member.open();
+  let bar = find(tree, (node) => node.type === "ReactionBar");
+  await bar.props.onSelect("🔥");
+  tree = member.render();
+  bar = find(tree, (node) => node.type === "ReactionBar");
+  assert.deepEqual(calls, [["token", "poll", "🔥"]]);
+  assert.deepEqual(plain(bar.props.reactions), [{ emoji: "🔥", count: 1, reactedByMe: true }]);
+  assert.ok(button(tree, "forum.vote"), "The poll still waits for a separate vote");
+  assert.equal(voteCalls, 0);
+
+  const guest = fixture("PollScreen", {
+    getPoll: async () => ({ ...poll, visibility: "public", reactions: [] }),
+    listComments: async () => ({ comments: [], hasMore: false }),
+  }, {}, { id: "guest", member: false });
+  tree = await guest.open();
+  bar = find(tree, (node) => node.type === "ReactionBar");
+  assert.equal(bar.props.onAdd, undefined);
+  assert.equal(bar.props.onSelect, undefined);
+});
+
+test("visibility change errors remain visible in the editor without changing the post", async () => {
+  const f = fixture("PollScreen", {
+    getPoll: async () => ({ ...poll, visibility: "contacts", author: { id: "me", name: "Me" } }),
+    setPollVisibility: async () => { throw new Error("offline"); },
+  });
+  const radio = (nodeTree, label) => find(nodeTree, (node) => node.props?.accessibilityRole === "radio" &&
+    node.props.accessibilityLabel === label);
+  let tree = await f.open();
+  find(tree, (node) => node.props?.accessibilityLabel === "forum.editVisibility").props.onPress();
+  tree = f.render();
+  radio(tree, "forum.visibilityPublic").props.onPress();
+  await button(f.render(), "common.save").props.onPress();
+  tree = f.render();
+  assert.ok(find(tree, (node) => node.props?.children === "forum.visibilityFailed"));
+  assert.ok(find(tree, (node) => node.type === "Modal"));
+  assert.ok(find(tree, (node) => node.props?.label === "forum.visibilityContacts"));
 });
 
 test("Neighbor Loops tab lists only network posts and requests that scope", async () => {
@@ -363,24 +459,93 @@ test("Neighbor Loops tab lists only network posts and requests that scope", asyn
   assert.equal(calls.at(-1)[2], "network");
 });
 
-test("guests only get the Public tab, public-only posting and no voting", async () => {
+test("guests have no tabs, public-only posting and no voting", async () => {
   const guest = { id: "me", member: false };
   const calls = [];
-  const f = fixture("ForumScreen", { listPolls: async (...args) => { calls.push(args); return { polls: [poll], hasMore: false }; } }, {}, guest);
+  const f = fixture("ForumScreen", { listPolls: async (...args) => { calls.push(args); return {
+    polls: [poll, { ...poll, id: "guest-post", tags: ["not-invited"] }], hasMore: false,
+  }; } }, {}, guest);
   const list = await f.open();
   const tabs = nodes(list.props.ListHeaderComponent).filter((node) => node.props?.accessibilityRole === "tab");
-  assert.deepEqual(tabs.map((node) => node.props.children.props.label), ["forum.public"]);
+  assert.equal(tabs.length, 0);
+  assert.ok(find(list.props.ListHeaderComponent, (node) => node.props?.children === "forum.guestFeed"));
   assert.equal(calls[0][2], "public");
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["guest-post"]);
   const created = [];
   const create = fixture("CreatePollScreen", { createPoll: async (...args) => { created.push(args); return poll; } }, {}, guest);
   const tree = create.render();
+  assert.equal(find(tree, (node) => node.props?.accessibilityLabel === "forum.tags"), undefined);
+  assert.equal(button(tree, "forum.autoTags"), undefined);
+  assert.deepEqual(plain(find(tree, (node) => node.props?.tags)?.props.tags), ["not-invited"]);
   nodes(tree).filter((node) => node.type === "TextInput")[0].props.onChangeText("Hello");
   await button(create.render(), "forum.create").props.onPress();
   assert.equal(created[0][3], "public");
-  const detail = fixture("PollScreen", { getPoll: async () => ({ ...poll, visibility: "public" }) }, {}, guest);
-  const opened = await detail.open();
+  assert.equal(created[0][4], undefined);
+  const posted = [];
+  const detail = fixture("PollScreen", {
+    getPoll: async () => ({ ...poll, visibility: "public" }),
+    listComments: async () => ({ comments: [], hasMore: false }),
+    postComment: async (...args) => { posted.push(args); },
+  }, {}, guest);
+  let opened = await detail.open();
   assert.ok(find(opened, (node) => node.props?.children === "forum.guestNotice"));
   assert.equal(button(opened, "forum.vote"), undefined);
+  find(opened, (node) => node.props?.accessibilityLabel === "forum.commentPlaceholder").props.onChangeText("Hello!");
+  opened = detail.render();
+  await button(opened, "forum.postComment").props.onPress();
+  assert.deepEqual(posted, [["token", "poll", "Hello!"]]);
+});
+
+test("member guest filter refetches the selected scope and stays selected on pagination", async () => {
+  const calls = [];
+  const f = fixture("ForumScreen", { listPolls: async (...args) => {
+    calls.push(args);
+    return { polls: [poll, { ...poll, id: "guest-post", tags: ["not-invited"] }], hasMore: true };
+  } });
+  let list = await f.open();
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["poll"]);
+  const filter = find(list.props.ListHeaderComponent, (node) => node.props?.accessibilityRole === "checkbox");
+  assert.equal(filter.props.accessibilityState.checked, false);
+  filter.props.onPress();
+  list = await f.refocus();
+  assert.deepEqual(plain(list.props.data.map((item) => item.id)), ["poll", "guest-post"]);
+  assert.equal(find(list.props.ListHeaderComponent, (node) =>
+    node.props?.accessibilityRole === "checkbox").props.accessibilityState.checked, true);
+  await list.props.ListFooterComponent.props.onPress();
+  assert.deepEqual(calls, [["token", 1, "loop", false], ["token", 1, "loop", true], ["token", 2, "loop", true]]);
+});
+
+test("unavailable post links show a clear error without exposing content", async () => {
+  const f = fixture("PollScreen", { getPoll: async () => {
+    const error = new Error("Not found");
+    error.response = { status: 404 };
+    throw error;
+  } }, {}, { id: "me", member: false });
+  const tree = await f.open();
+  assert.ok(find(tree, (node) => node.props?.children === "forum.unavailable"));
+  assert.equal(find(tree, (node) => node.props?.children === poll.question), undefined);
+});
+test("post tagging suggests topics, preserves manual edits, rejects reserved tags and falls back to general", async () => {
+  const created = [];
+  const f = fixture("CreatePollScreen", { createPoll: async (...args) => { created.push(args); return poll; } });
+  const input = (label) => find(f.render(), (node) =>
+    node.type === "TextInput" && node.props.accessibilityLabel === label);
+  input("forum.question").props.onChangeText("A travel trip with great food");
+  assert.equal(input("forum.tags").props.value, "travel, food");
+  input("forum.tags").props.onChangeText("custom, 태그");
+  input("forum.question").props.onChangeText("Coding at work");
+  assert.equal(input("forum.tags").props.value, "custom, 태그");
+  await button(f.render(), "forum.create").props.onPress();
+  assert.deepEqual(plain(created.at(-1)[4]), ["custom", "태그"]);
+  input("forum.tags").props.onChangeText("not-invited");
+  await button(f.render(), "forum.create").props.onPress();
+  assert.equal(created.length, 1);
+  assert.ok(find(f.render(), (node) => node.props.children === "forum.invalidTags"));
+  button(f.render(), "forum.autoTags").props.onPress();
+  assert.equal(input("forum.tags").props.value, "technology, work");
+  input("forum.tags").props.onChangeText("");
+  await button(f.render(), "forum.create").props.onPress();
+  assert.deepEqual(plain(created.at(-1)[4]), ["general"]);
 });
 
 test("forum API helper wires token, pagination and request bodies", async () => {
@@ -395,10 +560,13 @@ test("forum API helper wires token, pagination and request bodies", async () => 
   await api.createPoll("token", "Question", ["A", "B"]);
   await api.setPollVisibility("token", "poll", "public");
   await api.vote("token", "poll", "option");
+  await api.reactToPoll("token", "poll", "❤️");
   await api.listComments("token", "poll", 3);
   await api.postComment("token", "poll", "Comment");
-  assert.deepEqual(plain(calls), [
-    ["GET", "/forum/polls", { headers: { Authorization: "Bearer token" }, params: { page: 2, scope: "public" } }],
+  assert.deepEqual(plain(calls.find(([, url]) => url.endsWith("/reactions")).slice(0, 3)),
+    ["POST", "/forum/polls/poll/reactions", { emoji: "❤️" }]);
+  assert.deepEqual(plain(calls.filter(([, url]) => !url.endsWith("/reactions"))), [
+    ["GET", "/forum/polls", { headers: { Authorization: "Bearer token" }, params: { page: 2, scope: "public", includeGuests: false } }],
     ["GET", "/forum/polls/poll", { headers: { Authorization: "Bearer token" } }],
     ["POST", "/forum/polls", { question: "Question", options: ["A", "B"], visibility: "contacts" }, { headers: { Authorization: "Bearer token" } }],
     ["PATCH", "/forum/polls/poll/visibility", { visibility: "public" }, { headers: { Authorization: plain(calls)[0][2].headers.Authorization } }],

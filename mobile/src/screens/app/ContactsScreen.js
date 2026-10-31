@@ -3,9 +3,7 @@ import { View, StyleSheet, SectionList, TouchableOpacity, ActivityIndicator, Ani
 import { AppText as Text } from "../../components/AppText";
 import { ContactIdentity } from "../../components/ContactIdentity";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState } from "../../components/EmptyState";
-import { GuestJoinBanner } from "../../components/GuestJoinBanner";
 import { SearchBar } from "../../components/SearchBar";
 import { FilterDropdown } from "../../components/FilterDropdown";
 import { useAuthStore } from "../../store/authStore";
@@ -34,8 +32,8 @@ export const ContactsScreen = ({ navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
-  const insets = useSafeAreaInsets();
   const token = useAuthStore((state) => state.token);
+  const isMember = useAuthStore((state) => state.user?.member !== false);
   const contacts = useContactStore((state) => state.contacts);
   const onlineUsers = useMessageStore((state) => state.onlineUsers);
   const presenceConnected = useMessageStore((state) => state.presenceConnected);
@@ -48,8 +46,8 @@ export const ContactsScreen = ({ navigation }) => {
   const [collapsedGroups, setCollapsedGroups] = useState({});
 
   useEffect(() => {
-    loadContacts(token);
-  }, [token]);
+    if (isMember) loadContacts(token);
+  }, [isMember, loadContacts, token]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -149,7 +147,7 @@ export const ContactsScreen = ({ navigation }) => {
 
   useEffect(() => {
     navigation.setOptions({
-      headerRight: () => (
+      headerRight: isMember ? () => (
         <View style={styles.headerActions}>
           <TouchableOpacity
             onPress={() => navigation.navigate("AddContact", { mode: "search" })}
@@ -183,9 +181,9 @@ export const ContactsScreen = ({ navigation }) => {
             />
           </TouchableOpacity>
         </View>
-      ),
+      ) : undefined,
     });
-  }, [allGroupsCollapsed, colors, navigation, sectionKeysKey, t]);
+  }, [allGroupsCollapsed, colors, isMember, navigation, sectionKeysKey, t]);
 
   const renderContactItem = ({ item }) => {
     const scaleAnim = new Animated.Value(1);
@@ -307,8 +305,7 @@ export const ContactsScreen = ({ navigation }) => {
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <GuestJoinBanner onPress={() => navigation.navigate("Forum", { screen: "JoinNetwork" })} />
+    <View style={styles.container}>
       <View style={styles.searchRow}>
         <SearchBar
           value={searchQuery}
@@ -316,15 +313,22 @@ export const ContactsScreen = ({ navigation }) => {
           placeholder={t("contacts.searchPlaceholder")}
           colors={colors}
           style={styles.searchBarFlex}
+          disabled={!isMember}
+          accessibilityHint={!isMember ? t("memberAccess.contacts") : undefined}
         />
         <FilterDropdown
           options={filterOptions}
           selectedKey={filterKey}
           onSelect={setFilterKey}
           colors={colors}
+          disabled={!isMember}
+          accessibilityHint={!isMember ? t("memberAccess.contacts") : undefined}
         />
       </View>
-      {loading && sections.length === 0 ? (
+      {!isMember ? (
+        <EmptyState icon="lock-closed-outline" title={t("memberAccess.title")}
+          message={t("memberAccess.contacts")} />
+      ) : loading && sections.length === 0 ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
@@ -356,12 +360,12 @@ export const ContactsScreen = ({ navigation }) => {
         />
       )}
 
-      <TouchableOpacity
+      {isMember && <TouchableOpacity
         style={styles.fab}
         onPress={() => navigation.navigate("AddContact")}
       >
         <Ionicons name="link" size={25} color="#fff" />
-      </TouchableOpacity>
+      </TouchableOpacity>}
     </View>
   );
 };

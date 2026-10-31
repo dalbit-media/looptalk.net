@@ -16,6 +16,7 @@ import { VideoMessageBubble } from "../../components/VideoMessageBubble";
 import { SearchBar } from "../../components/SearchBar";
 import { FilterChips } from "../../components/FilterChips";
 import { HighlightText } from "../../components/HighlightText";
+import { ReactionBar, ReactionPicker } from "../../components/ReactionPicker";
 import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useCallStore } from "../../store/callStore";
@@ -86,6 +87,8 @@ export const ChatScreen = ({ route, navigation }) => {
   const [quotedMessageId, setQuotedMessageId] = useState(null);
   const [jumpingToReply, setJumpingToReply] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [reactionTarget, setReactionTarget] = useState(null);
+  const [reactionSaving, setReactionSaving] = useState(false);
   const [searchActive, setSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFilter, setSearchFilter] = useState("all");
@@ -96,6 +99,7 @@ export const ChatScreen = ({ route, navigation }) => {
   const [laidOutConversationId, setLaidOutConversationId] = useState(null);
   const [contentConversationId, setContentConversationId] = useState(null);
   const [positionedConversationId, setPositionedConversationId] = useState(null);
+  const reactionSubmittingRef = useRef(false);
   const flatListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const isNearBottomRef = useRef(true);
@@ -109,8 +113,6 @@ export const ChatScreen = ({ route, navigation }) => {
   const messagesRef = useRef(messages);
   const isWeb = Platform.OS === "web";
   messagesRef.current = messages;
-
-  const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
   const conversation = conversations.find((item) => item.id === conversationId);
   const publicPeer =
@@ -697,23 +699,22 @@ export const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleReactPress = (item) => {
-    showAlert(
-      t("messages.react"),
-      undefined,
-      [
-        ...REACTION_EMOJIS.map((emoji) => ({
-          text: emoji,
-          onPress: async () => {
-            try {
-              await reactToMessage(conversationId, item.id, emoji, token);
-            } catch (error) {
-              showAlert(t("common.error"), t("messages.reactFailed"));
-            }
-          },
-        })),
-        { text: t("common.cancel"), style: "cancel" },
-      ]
-    );
+    setReactionTarget(item);
+  };
+
+  const handleReactionToggle = async (item, emoji, closePicker = false) => {
+    if (reactionSubmittingRef.current) return;
+    reactionSubmittingRef.current = true;
+    setReactionSaving(true);
+    try {
+      await reactToMessage(conversationId, item.id, emoji, token);
+      if (closePicker) setReactionTarget(null);
+    } catch (error) {
+      showAlert(t("common.error"), t("messages.reactFailed"));
+    } finally {
+      reactionSubmittingRef.current = false;
+      setReactionSaving(false);
+    }
   };
 
   const handleEditPress = (item) => {
@@ -1092,22 +1093,9 @@ export const ChatScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
               )}
 
-              {!!item.reactions?.length && (
-                <View style={styles.reactionsRow}>
-                  {Object.entries(
-                    item.reactions.reduce((acc, reaction) => {
-                      acc[reaction.emoji] = (acc[reaction.emoji] || 0) + 1;
-                      return acc;
-                    }, {})
-                  ).map(([emoji, count]) => (
-                    <View key={emoji} style={styles.reactionChip}>
-                      <Text style={styles.reactionChipText}>
-                        {emoji} {count > 1 ? count : ""}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
+              {!!item.reactions?.length && <ReactionBar reactions={item.reactions} userId={user.id}
+                colors={colors} disabled={reactionSaving}
+                onSelect={(emoji) => handleReactionToggle(item, emoji)} />}
             </>
           )}
 
@@ -1474,6 +1462,14 @@ export const ChatScreen = ({ route, navigation }) => {
         onClose={() => setDrawingVisible(false)}
         onSend={handleDrawingSend}
       />
+      <ReactionPicker visible={Boolean(reactionTarget)} title={t("messages.react")}
+        hint={t("messages.reactHint")} closeLabel={t("common.close")}
+        selected={reactionTarget?.reactions?.filter((reaction) => reaction.userId === user.id).map((reaction) => reaction.emoji)}
+        colors={colors} disabled={reactionSaving} onClose={() => setReactionTarget(null)}
+        onSelect={(emoji) => {
+          const current = messages.find((message) => message.id === reactionTarget?.id) || reactionTarget;
+          if (current) handleReactionToggle(current, emoji, true);
+        }} />
     </KeyboardAvoidingView>
   );
 };
@@ -1750,22 +1746,6 @@ const createStyles = (colors) => StyleSheet.create({
   },
   ownReplyPreviewText: {
     color: colors.onSentBubble,
-  },
-  reactionsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: 4,
-  },
-  reactionChip: {
-    backgroundColor: colors.surface,
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginRight: 4,
-    marginTop: 2,
-  },
-  reactionChipText: {
-    fontSize: 12,
   },
   contextBar: {
     flexDirection: "row",

@@ -18,6 +18,15 @@ const prismaArgs = [
   "prisma/schema.prisma",
 ];
 
+const generation = spawnSync(
+  process.execPath,
+  [prismaCli, "generate", "--schema", "prisma/schema.prisma"],
+  { cwd: serverDirectory, stdio: "inherit", env: process.env }
+);
+if (generation.error) throw generation.error;
+if (generation.status !== 0) process.exit(generation.status || 1);
+console.log(`Prisma client ready (${(performance.now() / 1000).toFixed(2)}s elapsed).`);
+
 // Snapshot the SQLite file before `db push` so a failed upgrade can be rolled back.
 const backupDatabase = () => {
   const url = process.env.DATABASE_URL || "";

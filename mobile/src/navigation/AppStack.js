@@ -1,7 +1,7 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { TouchableOpacity } from "react-native";
+import { TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { MessagesScreen } from "../screens/app/MessagesScreen";
@@ -19,16 +19,35 @@ import { GroupInfoScreen } from "../screens/app/GroupInfoScreen";
 import { useTranslation } from "../hooks/useTranslation";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { usePreferencesStore } from "../store/preferencesStore";
+import { useAuthStore } from "../store/authStore";
 import { getAppTextScale } from "../utils/chatTextSize";
 import { WebAppInstallButton } from "../components/WebAppInstallButton";
+import { GuestJoinBanner } from "../components/GuestJoinBanner";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
+const ROOT_SCREENS = new Set(["ForumHome", "MessagesList", "ContactsList", "MyDataHome", "SettingsHome"]);
+const TabScreenLayout = ({ children, route, navigation }) => {
+  const { colors } = useAppTheme();
+  if (!ROOT_SCREENS.has(route.name)) return children;
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+      <GuestJoinBanner onPress={() => route.name === "ForumHome"
+        ? navigation.navigate("JoinNetwork")
+        : navigation.navigate("Forum", { screen: "JoinNetwork" })} />
+      {children}
+    </View>
+  );
+};
+const renderTabScreenLayout = (props) => <TabScreenLayout {...props} />;
+
 const getBackButtonOptions = (navigation, t) => ({
-  headerLeft: ({ tintColor }) => (
+  headerLeft: ({ tintColor }) => navigation.canGoBack() ? (
     <TouchableOpacity
-      onPress={() => navigation.goBack()}
+      onPress={() => {
+        if (navigation.canGoBack()) navigation.goBack();
+      }}
       hitSlop={10}
       style={{
         minWidth: 44,
@@ -41,7 +60,7 @@ const getBackButtonOptions = (navigation, t) => ({
     >
       <Ionicons name="chevron-back" size={24} color={tintColor} />
     </TouchableOpacity>
-  ),
+  ) : null,
 });
 
 const MessagesStack = () => {
@@ -51,6 +70,7 @@ const MessagesStack = () => {
   const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
+      screenLayout={renderTabScreenLayout}
       screenOptions={{
         headerStyle: {
           backgroundColor: colors.header,
@@ -116,6 +136,7 @@ const ContactsStack = () => {
   const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
+      screenLayout={renderTabScreenLayout}
       screenOptions={{
         headerStyle: {
           backgroundColor: colors.header,
@@ -163,7 +184,7 @@ const MyDataStack = () => {
   const textSize = usePreferencesStore((state) => state.chatTextSize);
   const textScale = getAppTextScale(textSize);
   return (
-    <Stack.Navigator screenOptions={{
+    <Stack.Navigator screenLayout={renderTabScreenLayout} screenOptions={{
       headerStyle: { backgroundColor: colors.header },
       headerTintColor: colors.headerIcon,
       headerTitleStyle: { fontSize: 17 * textScale, fontWeight: "600", color: colors.headerText },
@@ -185,7 +206,7 @@ const ForumStack = () => {
   const textSize = usePreferencesStore((state) => state.chatTextSize);
   const textScale = getAppTextScale(textSize);
   return (
-    <Stack.Navigator screenOptions={{
+    <Stack.Navigator screenLayout={renderTabScreenLayout} screenOptions={{
       headerStyle: { backgroundColor: colors.header },
       headerTintColor: colors.headerIcon,
       headerTitleStyle: { fontSize: 17 * textScale, fontWeight: "600", color: colors.headerText },
@@ -216,6 +237,7 @@ const SettingsStack = () => {
   const textScale = getAppTextScale(textSize);
   return (
     <Stack.Navigator
+      screenLayout={renderTabScreenLayout}
       screenOptions={{
         headerStyle: { backgroundColor: colors.header },
         headerTintColor: colors.headerIcon,
@@ -271,6 +293,7 @@ export const AppStack = () => {
   const textSize = usePreferencesStore((state) => state.chatTextSize);
   const textScale = getAppTextScale(textSize);
   const insets = useSafeAreaInsets();
+  const isMember = useAuthStore((state) => state.user?.member !== false);
   const tabBarHeight = 84 + Math.round((textScale - 1) * 24) + insets.bottom;
   const tabBarBottomPadding = Math.max(insets.bottom, 10);
   return (
@@ -283,7 +306,9 @@ export const AppStack = () => {
           if (route.name === "Messages") {
             iconName = focused ? "chatbubble" : "chatbubble-outline";
           } else if (route.name === "Contacts") {
-            iconName = focused ? "people" : "people-outline";
+            iconName = isMember
+              ? (focused ? "people" : "people-outline")
+              : "lock-closed";
           } else if (route.name === "MyData") {
             iconName = focused ? "file-tray-full" : "file-tray-full-outline";
           } else if (route.name === "Forum") {

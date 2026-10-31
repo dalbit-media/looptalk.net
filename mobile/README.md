@@ -9,17 +9,36 @@ longer show a Data shortcut; the web installation action remains available.
 
 Every signed-in user can create a poll with 2–10 options. Each user can cast
 one final vote per poll. Results and their discussion unlock only after voting,
-including for the creator. Only voters may read or post comments. Pull to
+including for the creator. Invited members must vote to read or post comments;
+guests can comment without voting on public posts by non-invited authors. Pull to
 refresh to see updated results and comments; Load more retrieves older items.
 The server enforces these rules, including direct API requests.
 
 Inside Forum, My Contacts is selected by default and shows polls authored by
-saved contacts. Public shows polls from every user, including your own.
+saved contacts for invited members. Members hide posts from non-invited authors
+by default; the "Include not-invited posts" checkbox includes them within the
+selected scope. Guests have no scope tabs and see only public posts from
+non-invited authors. These posts carry the server-assigned `not-invited` tag,
+which is removed when their author joins a network.
+Topic tags are suggested locally from English, Korean, or Japanese post text.
+Invited authors can edit up to five comma-separated tags or restore automatic suggestions.
+Their empty tags fall back to `general`. Guest posts show only `not-invited`,
+including older posts; guests have no topic-tag controls. After joining, posts
+without topic tags fall back to `general`.
+Tags appear on feed cards and post details.
+Guests see the same compact invitation banner immediately below the header on
+all five tab home screens, outside scrolling content. It is hidden on detail and
+join screens and for members. Banner descriptions are single-line, with the full
+text available as an accessibility hint.
+Contacts and Chats both keep their search/filter row visible. Locked Contacts
+controls are disabled with invitation guidance and never load contact data.
+Chat search and filters are also disabled for guests; existing chats remain readable. Guests cannot open
+invited authors' posts through direct links.
 Contact filtering runs on the device over the paginated public feed; no contact
 IDs are sent to the server. Load more checks older posts even when the current
 pages contain no contact polls. Adding or removing a contact updates the filter.
-These tabs filter discovery only: all polls remain public to signed-in users,
-and results/comments still require voting.
+Member tabs filter discovery only; guest access remains restricted to the guest
+feed. Results require voting, and members' comments require voting.
 
 The creation and discussion screens explain that forum content and votes are
 server-stored and not end-to-end encrypted. Posts show public author names,
@@ -220,6 +239,10 @@ reserve a public username to be found by exact ID/username search; it is separat
 from the private profile name. Presence appears before the
 profile separator; the remaining settings follow below it. Registration dates
 are not displayed on profiles.
+Settings opens the operating system's app permission settings on iOS and Android.
+On web, Browser permissions shows instructions for changing this site's
+notification, camera, and microphone permissions in the browser; installed web
+apps use the same browser site settings.
 Online status comes from foreground activity on any connected device, not the
 account's `ACTIVE` status. Background/disconnect updates, reconnect snapshots,
 and one-minute foreground heartbeats keep presence consistent across Settings,

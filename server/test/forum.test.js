@@ -59,10 +59,33 @@ test("poll forum persistence, validation and participation access with isolated 
   }
   let poll, second;
 
+  await t.test("topic tags persist, normalize and validate while empty tags use general", async () => {
+    await prisma.user.create({ data: { id: "tag-author", username: "tag-author", displayName: "Tag author" } });
+    for (const tags of [null, "travel", [""], ["a".repeat(25)], ["not-invited"],
+      ["a", "b", "c", "d", "e", "f"]]) {
+      assert.equal((await request("/polls", "tag-author", "POST", {
+        question: "Tagged", options: ["Support"], tags,
+      })).status, 400);
+    }
+    for (const [tags, expected] of [[undefined, ["travel", "food"]], [[], ["general"]],
+      [[" CUSTOM ", "custom", "태그"], ["custom", "태그"]]]) {
+      const post = await request("/polls", "tag-author", "POST", {
+        question: "A travel trip with food", options: ["Support"], tags, visibility: "public",
+      });
+      assert.equal(post.status, 201);
+      assert.deepEqual(post.data.tags, expected);
+      assert.deepEqual((await request(`/polls/${post.data.id}`)).data.tags, expected);
+      assert.deepEqual(JSON.parse((await prisma.forumPoll.findUnique({ where: { id: post.data.id } })).tags), expected);
+      await prisma.forumPoll.delete({ where: { id: post.data.id } });
+    }
+    await prisma.user.delete({ where: { id: "tag-author" } });
+  });
+
   await t.test("all forum operations require authentication", async () => {
     for (const [url, method, body] of [
       ["/polls", "GET"], ["/polls", "POST", { question: "Question?", options: ["A", "B"] }],
       ["/polls/missing", "GET"], ["/polls/missing/vote", "POST", { optionId: "missing" }],
+      ["/polls/missing/reactions", "POST", { emoji: "❤️" }],
       ["/polls/missing/comments", "GET"], ["/polls/missing/comments", "POST", { content: "Hidden" }],
     ]) assert.equal((await request(url, null, method, body)).status, 401);
   });
@@ -107,6 +130,30 @@ test("poll forum persistence, validation and participation access with isolated 
       }
     }
     assert.equal(await prisma.forumComment.count(), 0);
+  });
+
+  await t.test("post reactions toggle independently from votes and expose only counts and own selection", async () => {
+    assert.deepEqual((await request(`/polls/${poll.id}`)).data.reactions, []);
+    for (const emoji of ["", "not-an-emoji", "👍👍", null]) {
+      assert.equal((await request(`/polls/${poll.id}/reactions`, "alice", "POST", { emoji })).status, 400);
+    }
+    assert.equal((await request("/polls/missing/reactions", "alice", "POST", { emoji: "👍" })).status, 404);
+    const add = await request(`/polls/${poll.id}/reactions`, "bob", "POST", { emoji: "❤️" });
+    assert.equal(add.status, 201);
+    assert.equal(add.data.action, "added");
+    assert.deepEqual(add.data.reactions, [{ emoji: "❤️", count: 1, reactedByMe: true }]);
+    assert.deepEqual((await request(`/polls/${poll.id}`, "alice")).data.reactions,
+      [{ emoji: "❤️", count: 1, reactedByMe: false }]);
+    assert.equal((await request(`/polls/${poll.id}`, "bob")).data.myOptionId, null, "Reactions do not cast a vote");
+    const list = (await request("/polls?scope=loop", "bob")).data.polls.find((item) => item.id === poll.id);
+    assert.deepEqual(list.reactions, [{ emoji: "❤️", count: 1, reactedByMe: true }]);
+    const second = await request(`/polls/${poll.id}/reactions`, "alice", "POST", { emoji: "❤️" });
+    assert.deepEqual(second.data.reactions, [{ emoji: "❤️", count: 2, reactedByMe: true }]);
+    const removed = await request(`/polls/${poll.id}/reactions`, "bob", "POST", { emoji: "❤️" });
+    assert.equal(removed.data.action, "removed");
+    assert.deepEqual(removed.data.reactions, [{ emoji: "❤️", count: 1, reactedByMe: false }]);
+    assert.equal(await prisma.forumVote.count({ where: { pollId: poll.id } }), 0);
+    assert.equal(await prisma.forumReaction.count({ where: { pollId: poll.id } }), 1);
   });
 
   await t.test("invalid options and cross-poll votes are rejected, including by the database", async () => {
@@ -192,20 +239,70 @@ test("poll forum persistence, validation and participation access with isolated 
     const listed = async (scope, user) => (await request(`/polls?scope=${scope}`, user)).data.polls.map((item) => item.id);
     assert.deepEqual((await listed("network", "bob")).filter((id) => [networkPoll.id, publicPoll.id].includes(id)), [networkPoll.id]);
     assert.ok(!(await listed("public", "bob")).includes(networkPoll.id));
-    assert.deepEqual(await listed("public", "guest"), [publicPoll.id]);
+    assert.deepEqual(await listed("public", "guest"), []);
     for (const scope of ["network", "loop"]) assert.equal((await request(`/polls?scope=${scope}`, "guest")).status, 403);
     assert.equal((await request(`/polls/${networkPoll.id}`, "guest")).status, 404);
-    assert.equal((await request(`/polls/${publicPoll.id}`, "guest")).status, 200);
+    assert.equal((await request(`/polls/${publicPoll.id}`, "guest")).status, 404);
     const option = publicPoll.options[0].id;
     assert.equal((await request(`/polls/${publicPoll.id}/vote`, "guest", "POST", { optionId: option })).status, 403);
-    assert.equal((await request(`/polls/${publicPoll.id}/comments`, "guest")).status, 403);
+    assert.equal((await request(`/polls/${publicPoll.id}/reactions`, "guest", "POST", { emoji: "👍" })).status, 403);
+    for (const id of [publicPoll.id, networkPoll.id, "missing"]) {
+      assert.equal((await request(`/polls/${id}/comments`, "guest")).status, 404);
+      assert.equal((await request(`/polls/${id}/comments`, "guest", "POST", { content: "Hidden" })).status, 404);
+    }
     assert.equal((await request("/polls", "guest", "POST", { question: "Q", options: ["A"] })).status, 403);
     assert.equal((await request("/polls", "guest", "POST", { question: "Q", options: ["A"], visibility: "network" })).status, 403);
     const guestPost = await request("/polls", "guest", "POST", { question: "Hello", options: ["Support"], visibility: "public" });
     assert.equal(guestPost.status, 201);
+    assert.deepEqual(guestPost.data.tags, ["not-invited"]);
+    assert.deepEqual(JSON.parse((await prisma.forumPoll.findUnique({ where: { id: guestPost.data.id } })).tags), []);
+    for (const tags of [[], ["general"], ["technology"], ["not-invited"]]) {
+      assert.equal((await request("/polls", "guest", "POST", {
+        question: "Tech", options: ["Support"], visibility: "public", tags,
+      })).status, 403);
+    }
+    const guestComment = await request(`/polls/${guestPost.data.id}/comments`, "guest", "POST", { content: " Hello! " });
+    assert.equal(guestComment.status, 201);
+    assert.equal(guestComment.data.content, "Hello!");
+    assert.equal((await request(`/polls/${guestPost.data.id}/comments`, "guest")).data.comments[0].id, guestComment.data.id);
+    assert.equal((await request(`/polls/${guestPost.data.id}/comments`, "guest", "POST", { content: "" })).status, 400);
+    await prisma.user.create({ data: { id: "comment-guest", username: "comment-guest", displayName: "Guest", isMember: false } });
+    assert.equal((await request(`/polls/${guestPost.data.id}/comments`, "comment-guest", "POST", { content: "Another guest" })).status, 201);
+    await prisma.user.delete({ where: { id: "comment-guest" } });
+    assert.equal((await request(`/polls/${guestPost.data.id}`, "guest")).status, 200);
+    assert.deepEqual(await listed("public", "guest"), [guestPost.data.id]);
+    assert.ok(!(await listed("public", "bob")).includes(guestPost.data.id));
+    assert.ok((await request("/polls?scope=public&includeGuests=true", "bob")).data.polls.some((item) => item.id === guestPost.data.id));
+    assert.deepEqual((await request("/polls?scope=public&includeGuests=true", "guest")).data.polls.map((item) => item.id), [guestPost.data.id]);
+    assert.equal((await request("/polls?includeGuests=invalid")).status, 400);
     assert.equal((await request(`/polls/${guestPost.data.id}/visibility`, "guest", "PATCH", { visibility: "contacts" })).status, 403);
+    await prisma.forumPoll.update({ where: { id: guestPost.data.id }, data: { tags: '["technology","general"]' } });
+    assert.deepEqual((await request(`/polls/${guestPost.data.id}`, "guest")).data.tags, ["not-invited"]);
+    await prisma.forumPoll.update({ where: { id: guestPost.data.id }, data: { tags: "[]" } });
+    await prisma.user.update({ where: { id: "guest" }, data: { isMember: true } });
+    assert.deepEqual((await request(`/polls/${guestPost.data.id}`)).data.tags, ["general"]);
+    assert.ok((await listed("public", "bob")).includes(guestPost.data.id));
     await prisma.user.delete({ where: { id: "guest" } });
     await prisma.forumPoll.deleteMany({ where: { id: { in: [networkPoll.id, publicPoll.id] } } });
+  });
+
+  await t.test("guest filtering happens before pagination and includes existing guest posts", async () => {
+    await prisma.user.create({ data: { id: "feed-guest", username: "feed-guest", displayName: "Guest", isMember: false } });
+    for (let i = 0; i < 25; i++) {
+      await prisma.forumPoll.create({ data: { authorId: "feed-guest", visibility: "public", question: `Guest ${i}` } });
+    }
+    const first = (await request("/polls?scope=public", "feed-guest")).data;
+    const next = (await request("/polls?scope=public&page=2", "feed-guest")).data;
+    assert.equal(first.polls.length, 20);
+    assert.equal(first.hasMore, true);
+    assert.equal(next.polls.length, 5);
+    assert.equal(next.hasMore, false);
+    assert.equal(new Set([...first.polls, ...next.polls].map((item) => item.id)).size, 25);
+    assert.ok(first.polls.every((item) => JSON.stringify(item.tags) === '["not-invited"]'));
+    const members = (await request("/polls?scope=public")).data;
+    assert.ok(members.polls.every((item) => !item.tags.includes("not-invited")));
+    assert.equal(members.hasMore, false);
+    await prisma.user.delete({ where: { id: "feed-guest" } });
   });
 
   await t.test("poll and comment pagination is bounded and stable, invalid pages and missing polls are explicit", async () => {
@@ -237,8 +334,8 @@ test("poll forum persistence, validation and participation access with isolated 
   });
 
   await t.test("additive migration preserves users and creates the exact forum schema", async () => {
-    const legacySchema = schema.replace(/^  forum(Polls|Votes|Comments).*\r?\n/gm, "").replace(/^  isMember .*\r?\n/m, "")
-      .replace(/model Forum(Poll|Option|Vote|Comment) \{[^}]+\}\r?\n/g, "");
+    const legacySchema = schema.replace(/^  forum(Polls|Votes|Reactions|Comments).*\r?\n/gm, "").replace(/^  isMember .*\r?\n/m, "")
+      .replace(/model Forum(Poll|Option|Vote|Reaction|Comment) \{[^}]+\}\r?\n/g, "");
     const legacyPath = path.join(directory, "legacy.prisma");
     await fs.writeFile(legacyPath, legacySchema);
     const url = `file:${path.join(directory, "legacy.db")}`;
@@ -255,17 +352,34 @@ test("poll forum persistence, validation and participation access with isolated 
         "20261029000000_forum_visibility", "migration.sql"), "utf8");
       const membershipSql = await fs.readFile(path.join(__dirname, "..", "prisma", "migrations",
         "20261030000000_user_membership", "migration.sql"), "utf8");
-      for (const statement of `${sql};${visibilitySql};${membershipSql}`.split(";").map((value) => value.trim()).filter(Boolean)) {
+      const reactionSql = await fs.readFile(path.join(__dirname, "..", "prisma", "migrations",
+        "20261031000000_forum_reactions", "migration.sql"), "utf8");
+      const tagsSql = await fs.readFile(path.join(__dirname, "..", "prisma", "migrations",
+        "20261031010000_forum_tags", "migration.sql"), "utf8");
+      for (const statement of `${sql};${visibilitySql};${membershipSql};${reactionSql}`.split(";").map((value) => value.trim()).filter(Boolean)) {
         await legacy.$executeRawUnsafe(statement);
       }
+      await legacy.$executeRawUnsafe(
+        'INSERT INTO "ForumPoll" ("id", "authorId", "question") VALUES (?, ?, ?)',
+        "retained-post", "retained", "Existing post",
+      );
+      for (const statement of tagsSql.split(";").map((value) => value.trim()).filter(Boolean)) {
+        await legacy.$executeRawUnsafe(statement);
+      }
+      const retainedPost = await legacy.forumPoll.findUnique({ where: { id: "retained-post" } });
+      assert.equal(retainedPost.question, "Existing post");
+      assert.deepEqual(JSON.parse(retainedPost.tags), ["general"]);
       assert.equal((await legacy.user.findUnique({ where: { id: "retained" } })).isMember, true);
       assert.equal((await legacy.user.findUnique({ where: { id: "retained" } })).displayName, "Unchanged");
       const created = await legacy.forumPoll.create({ data: {
         authorId: "retained", question: "Migrated?", options: { create: [{ text: "Yes", position: 0 }, { text: "No", position: 1 }] },
       }, include: { options: true } });
+      assert.deepEqual(JSON.parse(created.tags), ["general"]);
       await legacy.forumVote.create({ data: { pollId: created.id, optionId: created.options[0].id, userId: "retained" } });
+      await legacy.forumReaction.create({ data: { pollId: created.id, userId: "retained", emoji: "👍" } });
       await legacy.forumComment.create({ data: { pollId: created.id, authorId: "retained", content: "Works" } });
       assert.equal(await legacy.forumVote.count(), 1);
+      assert.equal(await legacy.forumReaction.count(), 1);
     } finally {
       await legacy.$disconnect();
     }
@@ -275,8 +389,9 @@ test("poll forum persistence, validation and participation access with isolated 
     await prisma.user.delete({ where: { id: "bob" } });
     assert.equal(await prisma.forumPoll.count({ where: { id: second.id } }), 0);
     assert.equal(await prisma.forumVote.count({ where: { userId: "bob" } }), 0);
+    assert.equal(await prisma.forumReaction.count({ where: { userId: "bob" } }), 0);
     assert.equal(await prisma.forumComment.count({ where: { authorId: "bob" } }), 0);
     await prisma.user.delete({ where: { id: "alice" } });
-    for (const model of ["forumPoll", "forumOption", "forumVote", "forumComment"]) assert.equal(await prisma[model].count(), 0);
+    for (const model of ["forumPoll", "forumOption", "forumVote", "forumReaction", "forumComment"]) assert.equal(await prisma[model].count(), 0);
   });
 });

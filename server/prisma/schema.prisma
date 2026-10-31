@@ -52,6 +52,7 @@ model User {
   reportsReceived  Report[] @relation("ReportSubject")
   forumPolls       ForumPoll[]
   forumVotes       ForumVote[]
+  forumReactions   ForumReaction[]
   forumComments    ForumComment[]
 
   @@index([username])
@@ -64,10 +65,12 @@ model ForumPoll {
   authorId  String
   question  String
   visibility String @default("contacts")
+  tags      String @default("[\"general\"]")
   createdAt DateTime @default(now())
   author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
   options   ForumOption[]
   votes     ForumVote[]
+  reactions ForumReaction[]
   comments  ForumComment[]
 
   @@index([createdAt, id])
@@ -98,6 +101,20 @@ model ForumVote {
   @@unique([pollId, userId])
   @@index([userId])
   @@index([optionId, pollId])
+}
+
+model ForumReaction {
+  id        String @id @default(cuid())
+  pollId    String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+  poll      ForumPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId, emoji])
+  @@index([pollId])
+  @@index([userId])
 }
 
 model ForumComment {

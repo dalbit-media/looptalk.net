@@ -7,6 +7,7 @@ import * as MessageAPI from "../../api/messages";
 import * as UserAPI from "../../api/users";
 import { SearchBar } from "../../components/SearchBar";
 import { InfoTip } from "../../components/InfoTip";
+import { MemberFeatureGate } from "../../components/MemberFeatureGate";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAuthStore } from "../../store/authStore";
@@ -21,6 +22,7 @@ export const AddContactScreen = ({ navigation, route }) => {
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
+  const isMember = useAuthStore((state) => state.user?.member !== false);
   const contacts = useContactStore((state) => state.contacts);
   const addContact = useContactStore((state) => state.addContact);
   const upsertConversation = useMessageStore((state) => state.upsertConversation);
@@ -60,6 +62,7 @@ export const AddContactScreen = ({ navigation, route }) => {
   }, [invitation]);
 
   useEffect(() => {
+    if (!isMember) return undefined;
     let active = true;
     InvitationsAPI.getInvitationStats(token)
       .then((nextStats) => {
@@ -69,13 +72,18 @@ export const AddContactScreen = ({ navigation, route }) => {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [isMember, token]);
 
   useEffect(() => () => {
     if (copyStatusTimeoutRef.current) clearTimeout(copyStatusTimeoutRef.current);
   }, []);
 
   useEffect(() => {
+    if (!isMember) {
+      setResults([]);
+      setSearching(false);
+      return undefined;
+    }
     const normalizedQuery = query.trim();
     if (mode !== "search" || normalizedQuery.length < 2) {
       setResults([]);
@@ -101,7 +109,7 @@ export const AddContactScreen = ({ navigation, route }) => {
       active = false;
       clearTimeout(timeout);
     };
-  }, [mode, query, token, t]);
+  }, [isMember, mode, query, token, t]);
 
   const shareInvitation = async (createdInvitation) => {
     await Share.share({
@@ -162,6 +170,17 @@ export const AddContactScreen = ({ navigation, route }) => {
   const existingContactIds = new Set(
     Object.values(contacts).flat().map((contact) => contact.contactUser.id)
   );
+
+  if (!isMember) {
+    return (
+      <View style={[styles.container, styles.gateContainer]}>
+        <MemberFeatureGate
+          message="memberAccess.invitations"
+          onJoinNetwork={() => navigation.navigate("Forum", { screen: "JoinNetwork" })}
+        />
+      </View>
+    );
+  }
 
   const connectAndChat = async (user) => {
     if (connectingUserId) return;

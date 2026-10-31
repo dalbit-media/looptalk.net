@@ -13,10 +13,12 @@ export const SearchBar = ({
   onSubmitEditing,
   style,
   rightAccessory,
+  disabled = false,
+  accessibilityHint,
 }) => {
   const styles = createStyles(colors);
   return (
-    <View style={[styles.container, style]}>
+    <View style={[styles.container, disabled && styles.disabled, style]}>
       <Ionicons name="search" size={18} color={colors.mutedText} />
       <TextInput
         style={styles.input}
@@ -24,13 +26,19 @@ export const SearchBar = ({
         onChangeText={onChangeText}
         placeholder={placeholder}
         placeholderTextColor={colors.mutedText}
-        autoFocus={autoFocus}
+        accessibilityLabel={placeholder}
+        accessibilityHint={accessibilityHint}
+        accessibilityState={{ disabled }}
+        editable={!disabled}
+        autoFocus={!disabled && autoFocus}
         onSubmitEditing={onSubmitEditing}
         returnKeyType="search"
       />
       {value ? (
         <TouchableOpacity
           onPress={() => onChangeText("")}
+          disabled={disabled}
+          accessibilityState={{ disabled }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityRole="button"
           accessibilityLabel="Clear search"
@@ -61,4 +69,5 @@ const createStyles = (colors) =>
       paddingVertical: 0,
       outlineStyle: "none",
     },
+    disabled: { opacity: 0.5 },
   });

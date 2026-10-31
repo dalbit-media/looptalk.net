@@ -199,6 +199,24 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     assert.equal(guestResult.status, 200);
     assert.equal(guestResult.data.user.member, false);
     assert.equal(guestResult.data.user.username, "guest-visitor");
+    const guestToken = guestResult.data.token;
+    const invitationCountBeforeGuestRequests = await prisma.invitation.count();
+    for (const [url, method, body] of [
+      ["/contacts", "GET"],
+      [`/contacts/${alice.id}`, "GET"],
+      ["/contacts", "POST", { contactUserId: alice.id, groupName: "Family 1" }],
+      ["/users/search?q=alice", "GET"],
+      ["/invitations", "GET"],
+      ["/invitations/stats", "GET"],
+      ["/invitations/create", "POST", {}],
+      [`/conversations/direct/${alice.id}`, "POST", {}],
+      ["/conversations", "POST", { userIds: [alice.id] }],
+    ]) {
+      const denied = await request(url, { method, token: guestToken, body });
+      assert.equal(denied.status, 403, `${method} ${url}`);
+      assert.equal(denied.data.code, "MEMBERSHIP_REQUIRED", `${method} ${url}`);
+    }
+    assert.equal(await prisma.invitation.count(), invitationCountBeforeGuestRequests);
     assert.equal((await register(bob, bobVault, "ZZZZZZZZZZ")).status, 400);
     await prisma.user.delete({ where: { id: guest.id } });
   });

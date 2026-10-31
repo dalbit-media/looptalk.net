@@ -14,11 +14,12 @@ export const GuestJoinBanner = ({ onPress }) => {
   if (!isGuest) return null;
   const styles = createStyles(colors);
   return (
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel={t("join.cta")} onPress={onPress} style={styles.banner}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={t("join.cta")}
+      accessibilityHint={t("join.bannerBody")} onPress={onPress} style={styles.banner}>
       <Ionicons name="ticket-outline" size={22} color={colors.primary} />
       <View style={styles.copy}>
-        <Text style={styles.title}>{t("join.bannerTitle")}</Text>
-        <Text style={styles.body}>{t("join.bannerBody")}</Text>
+        <Text style={styles.title} numberOfLines={1}>{t("join.bannerTitle")}</Text>
+        <Text style={styles.body} numberOfLines={1} ellipsizeMode="tail">{t("join.bannerBody")}</Text>
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
     </TouchableOpacity>
@@ -27,10 +28,10 @@ export const GuestJoinBanner = ({ onPress }) => {
 
 const createStyles = (colors) => StyleSheet.create({
   banner: {
-    flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-    padding: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.primarySoft,
+    flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginTop: 8, marginBottom: 8,
+    padding: 10, minHeight: 60, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.primarySoft,
   },
-  copy: { flex: 1, gap: 2 },
+  copy: { flex: 1, minWidth: 0, gap: 2 },
   title: { fontSize: 15, fontWeight: "700", color: colors.text },
   body: { fontSize: 13, lineHeight: 18, color: colors.secondaryText },
 });

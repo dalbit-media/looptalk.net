@@ -2,10 +2,11 @@ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const { normalizeTags, suggestTags } = require("../../../shared/forumTags");
 
 const router = express.Router();
 const PAGE_SIZE = 20;
-const publicAuthor = { id: true, publicUsername: true, publicDisplayName: true };
+const publicAuthor = { id: true, publicUsername: true, publicDisplayName: true, isMember: true };
 const authorIdentity = (author) => ({
   id: author.id,
   name: author.publicDisplayName || author.publicUsername || author.id,
@@ -23,20 +24,46 @@ const writeLimiter = rateLimit({
 });
 const VISIBILITIES = new Set(["contacts", "network", "public"]);
 const VISIBILITY_ERROR = "Visibility must be contacts, network or public";
+const REACTION_EMOJIS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"]);
 const memberOnly = (res) => res.status(403).json({ error: "Join with an invitation to participate", code: "MEMBERSHIP_REQUIRED" });
 const pollSelection = (userId) => ({
   id: true,
   question: true,
   visibility: true,
+  tags: true,
   createdAt: true,
   author: { select: publicAuthor },
   options: { orderBy: { position: "asc" }, select: { id: true, text: true } },
   votes: { where: { userId }, select: { optionId: true } },
 });
-const pollSummary = ({ votes, author, ...poll }) => ({
+const getReactionSummaries = async (polls, userId) => {
+  const pollIds = polls.map((poll) => poll.id);
+  if (!pollIds.length) return new Map();
+  const where = { pollId: { in: pollIds } };
+  const [counts, mine] = await Promise.all([
+    prisma.forumReaction.groupBy({ by: ["pollId", "emoji"], where, _count: { _all: true } }),
+    prisma.forumReaction.findMany({ where: { ...where, userId }, select: { pollId: true, emoji: true } }),
+  ]);
+  const selected = new Set(mine.map((reaction) => `${reaction.pollId}\u0000${reaction.emoji}`));
+  const summaries = new Map(pollIds.map((id) => [id, []]));
+  for (const item of counts) {
+    summaries.get(item.pollId).push({
+      emoji: item.emoji,
+      count: item._count._all,
+      reactedByMe: selected.has(`${item.pollId}\u0000${item.emoji}`),
+    });
+  }
+  for (const summary of summaries.values()) {
+    summary.sort((first, second) => second.count - first.count || first.emoji.localeCompare(second.emoji));
+  }
+  return summaries;
+};
+const pollSummary = ({ votes, author, tags, ...poll }) => ({
   ...poll,
+  tags: author.isMember ? normalizeTags(JSON.parse(tags)) : ["not-invited"],
   author: authorIdentity(author),
   myOptionId: votes[0]?.optionId || null,
+  reactions: [],
 });
 
 router.use(authMiddleware);
@@ -58,16 +85,27 @@ router.get("/polls", async (req, res) => {
   const scope = req.query.scope ?? "public";
   if (!["public", "network", "loop"].includes(scope)) return res.status(400).json({ error: "Invalid scope" });
   if (scope !== "public" && !req.isMember) return memberOnly(res);
+  const includeGuests = req.query.includeGuests ?? "false";
+  if (!["true", "false"].includes(includeGuests)) return res.status(400).json({ error: "Invalid guest filter" });
   try {
     // The server does not know contacts; "loop" returns every post and the device keeps those from the user's contacts.
     const polls = await prisma.forumPoll.findMany({
-      where: scope === "loop" ? undefined : { visibility: scope },
+      where: {
+        ...(scope === "loop" ? {} : { visibility: scope }),
+        ...(!req.isMember ? { author: { isMember: false } } :
+          includeGuests === "true" ? {} : { author: { isMember: true } }),
+      },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip,
       take: PAGE_SIZE + 1,
       select: pollSelection(req.userId),
     });
-    res.json({ polls: polls.slice(0, PAGE_SIZE).map(pollSummary), hasMore: polls.length > PAGE_SIZE });
+    const page = polls.slice(0, PAGE_SIZE);
+    const reactions = await getReactionSummaries(page, req.userId);
+    res.json({
+      polls: page.map((poll) => ({ ...pollSummary(poll), reactions: reactions.get(poll.id) || [] })),
+      hasMore: polls.length > PAGE_SIZE,
+    });
   } catch (error) {
     console.error("Forum list error:", error);
     res.status(500).json({ error: "Failed to load polls" });
@@ -75,13 +113,22 @@ router.get("/polls", async (req, res) => {
 });
 
 router.post("/polls", writeLimiter, async (req, res) => {
-  const { question, options, visibility = "contacts" } = req.body || {};
+  const { question, options, visibility = "contacts", tags } = req.body || {};
   if (!VISIBILITIES.has(visibility)) return res.status(400).json({ error: VISIBILITY_ERROR });
   if (!req.isMember && visibility !== "public") return memberOnly(res);
+  if (!req.isMember && tags !== undefined) {
+    return res.status(403).json({ error: "Join with an invitation to add topic tags", code: "MEMBERSHIP_REQUIRED" });
+  }
   if (!validText(question, 300) || !Array.isArray(options) || options.length < 1 || options.length > 10 ||
       options.some((option) => !validText(option, 120)) ||
       new Set(options.map((option) => option.trim().toLowerCase())).size !== options.length) {
     return res.status(400).json({ error: "Provide a question (1-300 characters) and 1-10 distinct options (1-120 characters each)" });
+  }
+  let normalizedTags;
+  try {
+    normalizedTags = !req.isMember ? [] : tags === undefined ? suggestTags(question) : normalizeTags(tags);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
   }
   try {
     const poll = await prisma.forumPoll.create({
@@ -89,6 +136,7 @@ router.post("/polls", writeLimiter, async (req, res) => {
         authorId: req.userId,
         question: question.trim(),
         visibility,
+        tags: JSON.stringify(normalizedTags),
         options: { create: options.map((text, position) => ({ text: text.trim(), position })) },
       },
       select: pollSelection(req.userId),
@@ -121,8 +169,11 @@ router.get("/polls/:id", async (req, res) => {
     const poll = await prisma.forumPoll.findUnique({
       where: { id: req.params.id }, select: pollSelection(req.userId),
     });
-    if (!poll || (!req.isMember && poll.visibility !== "public")) return res.status(404).json({ error: "Poll not found" });
+    if (!poll || (!req.isMember && (poll.visibility !== "public" || poll.author.isMember))) {
+      return res.status(404).json({ error: "Poll not found" });
+    }
     const summary = pollSummary(poll);
+    summary.reactions = (await getReactionSummaries([poll], req.userId)).get(poll.id) || [];
     if (summary.myOptionId) {
       const counts = await prisma.forumVote.groupBy({
         by: ["optionId"], where: { pollId: poll.id }, _count: { _all: true },
@@ -136,6 +187,32 @@ router.get("/polls/:id", async (req, res) => {
   } catch (error) {
     console.error("Forum detail error:", error);
     res.status(500).json({ error: "Failed to load poll" });
+  }
+});
+
+router.post("/polls/:id/reactions", writeLimiter, async (req, res) => {
+  if (!req.isMember) return memberOnly(res);
+  const { emoji } = req.body || {};
+  if (typeof emoji !== "string" || !REACTION_EMOJIS.has(emoji)) {
+    return res.status(400).json({ error: "Invalid reaction" });
+  }
+  try {
+    const poll = await prisma.forumPoll.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!poll) return res.status(404).json({ error: "Poll not found" });
+    const where = { pollId_userId_emoji: { pollId: poll.id, userId: req.userId, emoji } };
+    const existing = await prisma.forumReaction.findUnique({ where, select: { id: true } });
+    const action = existing ? "removed" : "added";
+    if (existing) {
+      await prisma.forumReaction.delete({ where: { id: existing.id } });
+    } else {
+      await prisma.forumReaction.create({ data: { pollId: poll.id, userId: req.userId, emoji } });
+    }
+    const reactions = (await getReactionSummaries([poll], req.userId)).get(poll.id) || [];
+    res.status(201).json({ action, reactions });
+  } catch (error) {
+    if (error.code === "P2002") return res.status(409).json({ error: "Reaction already exists" });
+    console.error("Forum reaction error:", error);
+    res.status(500).json({ error: "Failed to toggle reaction" });
   }
 });
 
@@ -160,10 +237,15 @@ router.post("/polls/:id/vote", writeLimiter, async (req, res) => {
 });
 
 const requireParticipant = async (req, res, next) => {
-  if (!req.isMember) return memberOnly(res);
   try {
-    const poll = await prisma.forumPoll.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!poll) return res.status(404).json({ error: "Poll not found" });
+    const poll = await prisma.forumPoll.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, visibility: true, author: { select: { isMember: true } } },
+    });
+    if (!poll || (!req.isMember && (poll.visibility !== "public" || poll.author.isMember))) {
+      return res.status(404).json({ error: "Poll not found" });
+    }
+    if (!req.isMember) return next();
     const vote = await prisma.forumVote.findUnique({
       where: { pollId_userId: { pollId: poll.id, userId: req.userId } }, select: { id: true },
     });

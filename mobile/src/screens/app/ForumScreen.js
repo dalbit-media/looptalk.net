@@ -1,20 +1,21 @@
 import React, { useCallback, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { AppText as Text } from "../../components/AppText";
 import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { InfoTip } from "../../components/InfoTip";
-import { GuestJoinBanner } from "../../components/GuestJoinBanner";
+import { ReactionBar, ReactionPicker } from "../../components/ReactionPicker";
 import { useAuthStore } from "../../store/authStore";
 import { useContactStore } from "../../store/contactStore";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import * as ForumAPI from "../../api/forum";
+import { normalizeTags, suggestTags } from "../../../../shared/forumTags";
 
-const Button = ({ label, onPress, disabled, styles, secondary }) => (
+const Button = ({ label, onPress, disabled, styles, secondary, buttonStyle }) => (
   <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: Boolean(disabled) }}
-    onPress={onPress} disabled={disabled} style={[styles.button, secondary && styles.buttonSecondary, disabled && styles.disabled]}>
+    onPress={onPress} disabled={disabled} style={[styles.button, secondary && styles.buttonSecondary, disabled && styles.disabled, buttonStyle]}>
     <Text style={[styles.buttonText, secondary && styles.buttonSecondaryText]}>{label}</Text>
   </TouchableOpacity>
 );
@@ -30,6 +31,23 @@ const TabLabel = ({ visibility, label, selected, styles, color }) => (
   </View>
 );
 
+const VisibilityBadge = ({ visibility, label, styles, colors }) => (
+  <View style={styles.visibilityBadge}>
+    <Ionicons name={VISIBILITY_ICONS[visibility] || VISIBILITY_ICONS.contacts} size={14} color={colors.secondaryText} accessible={false} />
+    <Text style={styles.visibilityBadgeText}>{label}</Text>
+  </View>
+);
+
+const PostTags = ({ tags, styles }) => (
+  <View style={styles.tags}>
+    {(tags || ["general"]).map((tag) => (
+      <View key={tag} style={[styles.tag, tag === "not-invited" && styles.guestTag]}>
+        <Text style={styles.tagText}>{`#${tag}`}</Text>
+      </View>
+    ))}
+  </View>
+);
+
 export const ForumScreen = ({ navigation }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
@@ -39,20 +57,25 @@ export const ForumScreen = ({ navigation }) => {
   const contacts = useContactStore((state) => state.contacts);
   const isMember = useAuthStore((state) => state.user?.member !== false);
   const [selectedTab, setTab] = useState("contacts");
+  const [includeGuests, setIncludeGuests] = useState(false);
   const tab = isMember ? selectedTab : "public";
   const [polls, setPolls] = useState([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [reactionTarget, setReactionTarget] = useState(null);
+  const [reactionSaving, setReactionSaving] = useState(false);
+  const [reactionError, setReactionError] = useState("");
   const request = useRef(0);
+  const listReactionInFlight = useRef(false);
 
   const load = useCallback(async (nextPage = 1) => {
     const current = ++request.current;
     setLoading(true);
     setError(false);
     try {
-      const data = await ForumAPI.listPolls(token, nextPage, tab === "contacts" ? "loop" : tab);
+      const data = await ForumAPI.listPolls(token, nextPage, tab === "contacts" ? "loop" : tab, isMember && includeGuests);
       if (current !== request.current) return;
       setPolls((previous) => nextPage === 1 ? data.polls :
         [...previous, ...data.polls.filter((poll) => !previous.some((item) => item.id === poll.id))]);
@@ -63,7 +86,7 @@ export const ForumScreen = ({ navigation }) => {
     } finally {
       if (current === request.current) setLoading(false);
     }
-  }, [token, tab]);
+  }, [token, tab, isMember, includeGuests]);
 
   useFocusEffect(useCallback(() => {
     load();
@@ -71,12 +94,34 @@ export const ForumScreen = ({ navigation }) => {
   }, [load]));
 
   const contactIds = new Set(Object.values(contacts).flat().map((contact) => contact.contactUserId));
-  const visiblePolls = tab === "contacts"
-    ? polls.filter((poll) => poll.author.id === myId || contactIds.has(poll.author.id))
-    : polls.filter((poll) => poll.visibility === tab);
+  const visiblePolls = polls.filter((poll) => {
+    const guestPost = poll.tags?.includes("not-invited") === true;
+    if (!isMember && !guestPost) return false;
+    if (isMember && !includeGuests && guestPost) return false;
+    return tab === "contacts"
+      ? poll.author.id === myId || contactIds.has(poll.author.id)
+      : poll.visibility === tab;
+  });
   const canLoadMore = hasMore && (tab !== "contacts" || contactIds.size > 0);
   const emptyKey = tab === "network" ? "forum.networkEmpty" : tab === "public" ? "forum.empty" :
     contactIds.size === 0 ? "forum.noContacts" : hasMore ? "forum.noContactsLoaded" : "forum.contactsEmpty";
+
+  const toggleListReaction = async (item, emoji) => {
+    if (listReactionInFlight.current) return;
+    listReactionInFlight.current = true;
+    setReactionSaving(true);
+    setReactionError("");
+    try {
+      const result = await ForumAPI.reactToPoll(token, item.id, emoji);
+      setPolls((previous) => previous.map((poll) => poll.id === item.id ? { ...poll, reactions: result.reactions } : poll));
+      setReactionTarget(null);
+    } catch {
+      setReactionError(t("forum.reactionFailed"));
+    } finally {
+      listReactionInFlight.current = false;
+      setReactionSaving(false);
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -84,9 +129,9 @@ export const ForumScreen = ({ navigation }) => {
       data={visiblePolls} keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load()} />}
       ListHeaderComponent={<View style={styles.section}>
-        <GuestJoinBanner onPress={() => navigation.navigate("JoinNetwork")} />
+        {isMember ? <>
         <View accessibilityRole="tablist" style={styles.tabs}>
-          {(isMember ? ["contacts", "network", "public"] : ["public"]).map((key) => (
+          {["contacts", "network", "public"].map((key) => (
             <TouchableOpacity key={key} accessibilityRole="tab" accessibilityState={{ selected: tab === key }}
               onPress={() => { if (tab !== key) { setPolls([]); setHasMore(false); setTab(key); } }}
               style={[styles.tab, tab === key && styles.tabSelected]}>
@@ -95,25 +140,51 @@ export const ForumScreen = ({ navigation }) => {
             </TouchableOpacity>
           ))}
         </View>
+        <TouchableOpacity accessibilityRole="checkbox" accessibilityLabel={t("forum.includeGuests")}
+          accessibilityState={{ checked: includeGuests }} style={styles.filter}
+          onPress={() => { setPolls([]); setHasMore(false); setIncludeGuests((value) => !value); }}>
+          <Ionicons name={includeGuests ? "checkbox" : "square-outline"} size={20} color={colors.primary} />
+          <Text style={styles.body}>{t("forum.includeGuests")}</Text>
+        </TouchableOpacity>
+        </> : <Text style={styles.notice}>{t("forum.guestFeed")}</Text>}
         {error && <Text accessibilityRole="alert" style={styles.error}>{t("forum.loadFailed")}</Text>}
         {error && <Button secondary styles={styles} disabled={loading} label={t("forum.retry")} onPress={() => load()} />}
+        {!!reactionError && <Text accessibilityRole="alert" style={styles.error}>{reactionError}</Text>}
       </View>}
       ListEmptyComponent={!loading && !error ? <Text style={styles.notice}>{t(emptyKey)}</Text> : null}
       ListFooterComponent={canLoadMore ? <Button secondary styles={styles} disabled={loading}
         label={t("forum.loadMore")} onPress={() => load(page + 1)} /> : null}
       renderItem={({ item }) => (
-        <TouchableOpacity accessibilityRole="button" style={styles.card}
-          onPress={() => navigation.navigate("Poll", { pollId: item.id })}>
-          <Text style={styles.title}>{item.question}</Text>
-          <Text style={styles.meta}>{item.author.name} · {new Date(item.createdAt).toLocaleDateString()}{item.visibility !== "public" ? ` · ${t(VISIBILITY_LABELS[item.visibility] || VISIBILITY_LABELS.contacts)}` : ""}</Text>
-          {item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
-        </TouchableOpacity>
+        <View style={[styles.card, styles.pollCard]}>
+          <TouchableOpacity accessibilityRole="button" style={styles.pollTap}
+            onPress={() => navigation.navigate("Poll", { pollId: item.id })}>
+            <View style={styles.pollByline}>
+              <Text style={[styles.meta, styles.grow]} numberOfLines={1}>
+                {item.author.name} · {new Date(item.createdAt).toLocaleDateString()}
+              </Text>
+              <VisibilityBadge visibility={item.visibility} label={t(VISIBILITY_LABELS[item.visibility] || VISIBILITY_LABELS.contacts)}
+                styles={styles} colors={colors} />
+            </View>
+            <Text style={styles.title}>{item.question}</Text>
+            <PostTags tags={item.tags} styles={styles} />
+            {item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
+          </TouchableOpacity>
+          <ReactionBar reactions={item.reactions} userId={myId} colors={colors}
+            addLabel={t("forum.react")} disabled={!isMember || reactionSaving}
+            onSelect={isMember ? (emoji) => toggleListReaction(item, emoji) : undefined}
+            onAdd={isMember ? () => { setReactionTarget(item); setReactionError(""); } : undefined} />
+        </View>
       )}
     />
     <TouchableOpacity accessibilityRole="button" accessibilityLabel={t("forum.create")} style={styles.fab}
       onPress={() => navigation.navigate("CreatePoll")}>
       <Ionicons name="add" size={28} color={colors.onAction} />
     </TouchableOpacity>
+    <ReactionPicker visible={Boolean(reactionTarget)} title={t("forum.react")}
+      hint={t("messages.reactHint")} closeLabel={t("common.close")}
+      selected={reactionTarget?.reactions?.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)}
+      colors={colors} disabled={reactionSaving} onClose={() => setReactionTarget(null)}
+      onSelect={(emoji) => reactionTarget && toggleListReaction(reactionTarget, emoji)} />
     </View>
   );
 };
@@ -124,9 +195,13 @@ export const CreatePollScreen = ({ navigation }) => {
   const styles = createStyles(colors);
   const token = useAuthStore((state) => state.token);
   const [question, setQuestion] = useState("");
+  const [manualTags, setManualTags] = useState(null);
+  const isMember = useAuthStore((state) => state.user?.member !== false);
+  const suggestedTags = isMember ? suggestTags(question) : [];
+  const tagsText = manualTags === null ? suggestedTags.join(", ") : manualTags;
+  const previewTags = tagsText.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean);
   const [options, setOptions] = useState(["", ""]);
   const [custom, setCustom] = useState(false);
-  const isMember = useAuthStore((state) => state.user?.member !== false);
   const [selectedVisibility, setVisibility] = useState("contacts");
   const visibility = isMember ? selectedVisibility : "public";
   const [saving, setSaving] = useState(false);
@@ -141,11 +216,18 @@ export const CreatePollScreen = ({ navigation }) => {
       setError(t("forum.invalidPoll"));
       return;
     }
+    let tags;
+    try {
+      if (isMember) tags = normalizeTags(tagsText.split(",").map((tag) => tag.trim()).filter(Boolean));
+    } catch {
+      setError(t("forum.invalidTags"));
+      return;
+    }
     submitting.current = true;
     setSaving(true);
     setError("");
     try {
-      const poll = await ForumAPI.createPoll(token, question.trim(), trimmed, visibility);
+      const poll = await ForumAPI.createPoll(token, question.trim(), trimmed, visibility, tags);
       navigation.replace("Poll", { pollId: poll.id });
     } catch {
       setError(t("forum.createFailed"));
@@ -160,6 +242,15 @@ export const CreatePollScreen = ({ navigation }) => {
         <Text style={styles.title}>{t("forum.question")}</Text>
         <TextInput style={styles.input} accessibilityLabel={t("forum.question")} value={question}
           onChangeText={setQuestion} maxLength={300} multiline editable={!saving} />
+        {isMember ? <>
+          <Text style={styles.body}>{t("forum.tags")}</Text>
+          <Text style={styles.meta}>{t("forum.tagsHint")}</Text>
+          <TextInput style={styles.input} accessibilityLabel={t("forum.tags")} value={tagsText}
+            onChangeText={setManualTags} editable={!saving} autoCapitalize="none" autoCorrect={false} />
+          <PostTags tags={previewTags.length ? [...new Set(previewTags)] : ["general"]} styles={styles} />
+          {manualTags !== null && <Button secondary styles={styles} disabled={saving} label={t("forum.autoTags")}
+            onPress={() => setManualTags(null)} />}
+        </> : <PostTags tags={["not-invited"]} styles={styles} />}
         {custom ? <>
           {options.map((option, index) => (
             <View key={index} style={styles.section}>
@@ -217,8 +308,15 @@ export const PollScreen = ({ route }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [visibilityEditorOpen, setVisibilityEditorOpen] = useState(false);
+  const [pendingVisibility, setPendingVisibility] = useState(null);
+  const [visibilityError, setVisibilityError] = useState("");
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+  const [reactionSaving, setReactionSaving] = useState(false);
+  const [reactionError, setReactionError] = useState("");
   const request = useRef(0);
   const submitting = useRef(false);
+  const reacting = useRef(false);
 
   const load = useCallback(async () => {
     const current = ++request.current;
@@ -228,7 +326,7 @@ export const PollScreen = ({ route }) => {
       const detail = await ForumAPI.getPoll(token, pollId);
       if (current !== request.current) return;
       setPoll(detail);
-      if (detail.myOptionId) {
+      if (!isMember || detail.myOptionId) {
         const data = await ForumAPI.listComments(token, pollId);
         if (current !== request.current) return;
         setComments(data.comments);
@@ -238,12 +336,17 @@ export const PollScreen = ({ route }) => {
         setComments([]);
         setHasMore(false);
       }
-    } catch {
-      if (current === request.current) setError(t("forum.loadFailed"));
+    } catch (failure) {
+      if (current === request.current) {
+        setPoll(null);
+        setComments([]);
+        setHasMore(false);
+        setError(t(failure.response?.status === 404 ? "forum.unavailable" : "forum.loadFailed"));
+      }
     } finally {
       if (current === request.current) setLoading(false);
     }
-  }, [token, pollId, t]);
+  }, [token, pollId, t, isMember]);
 
   useFocusEffect(useCallback(() => {
     setPoll(null);
@@ -274,18 +377,40 @@ export const PollScreen = ({ route }) => {
   };
 
   const submitVisibility = async (next) => {
-    if (submitting.current || !poll || next === poll.visibility) return;
+    if (submitting.current || !poll || !next) return;
+    if (next === poll.visibility) {
+      setVisibilityEditorOpen(false);
+      return;
+    }
     submitting.current = true;
     setSaving(true);
-    setError("");
+    setVisibilityError("");
     try {
       const result = await ForumAPI.setPollVisibility(token, pollId, next);
       setPoll((previous) => ({ ...previous, visibility: result.visibility }));
+      setVisibilityEditorOpen(false);
     } catch {
-      setError(t("forum.visibilityFailed"));
+      setVisibilityError(t("forum.visibilityFailed"));
     } finally {
       submitting.current = false;
       setSaving(false);
+    }
+  };
+
+  const togglePollReaction = async (emoji, closePicker = false) => {
+    if (reacting.current || !poll) return;
+    reacting.current = true;
+    setReactionSaving(true);
+    setReactionError("");
+    try {
+      const result = await ForumAPI.reactToPoll(token, pollId, emoji);
+      setPoll((previous) => ({ ...previous, reactions: result.reactions }));
+      if (closePicker) setReactionPickerOpen(false);
+    } catch {
+      setReactionError(t("forum.reactionFailed"));
+    } finally {
+      reacting.current = false;
+      setReactionSaving(false);
     }
   };
 
@@ -340,17 +465,68 @@ export const PollScreen = ({ route }) => {
             <Text style={[styles.title, styles.grow]}>{poll.question}</Text>
             <InfoTip align="right" text={t("forum.rules")} />
           </View>
-          <Text style={styles.meta}>{poll.author.name} · {new Date(poll.createdAt).toLocaleString()}</Text>
-          {poll.author.id === myId && isMember ? <View accessibilityRole="radiogroup" style={styles.visibility}>
-            {["contacts", "network", "public"].map((key) => (
-              <TouchableOpacity key={key} accessibilityRole="radio" accessibilityState={{ checked: poll.visibility === key, disabled: saving || loading }}
-                disabled={saving || loading} onPress={() => submitVisibility(key)}
-                style={[styles.visibilityOption, poll.visibility === key && styles.tabSelected]}>
-                <TabLabel visibility={key} label={t(VISIBILITY_LABELS[key])} selected={poll.visibility === key} styles={styles}
-                  color={poll.visibility === key ? colors.navigationAccent : colors.secondaryText} />
-              </TouchableOpacity>
-            ))}
-          </View> : <Text style={styles.meta}>{t(VISIBILITY_LABELS[poll.visibility] || VISIBILITY_LABELS.contacts)}</Text>}
+          <View style={styles.postByline}>
+            <Text style={[styles.meta, styles.grow]} numberOfLines={1}>
+              {poll.author.name} · {new Date(poll.createdAt).toLocaleString()}
+            </Text>
+            <VisibilityBadge visibility={poll.visibility} label={t(VISIBILITY_LABELS[poll.visibility] || VISIBILITY_LABELS.contacts)}
+              styles={styles} colors={colors} />
+            {poll.author.id === myId && isMember && <TouchableOpacity accessibilityRole="button"
+              accessibilityLabel={t("forum.editVisibility")} accessibilityHint={t("forum.visibilityEditHint")}
+              accessibilityState={{ disabled: saving || loading }}
+              disabled={saving || loading}
+              onPress={() => {
+                setPendingVisibility(poll.visibility);
+                setVisibilityError("");
+                setVisibilityEditorOpen(true);
+              }}
+              style={styles.visibilityEditorButton}>
+              <Ionicons name="eye-outline" size={18} color={colors.secondaryText} />
+            </TouchableOpacity>}
+          </View>
+          <PostTags tags={poll.tags} styles={styles} />
+          <ReactionBar reactions={poll.reactions} userId={myId} colors={colors}
+            addLabel={t("forum.react")} disabled={!isMember || reactionSaving || loading}
+            onSelect={isMember ? (emoji) => togglePollReaction(emoji) : undefined}
+            onAdd={isMember ? () => { setReactionError(""); setReactionPickerOpen(true); } : undefined} />
+          {reactionError ? <Text accessibilityRole="alert" style={styles.error}>{reactionError}</Text> : null}
+          <ReactionPicker visible={reactionPickerOpen} title={t("forum.react")}
+            hint={t("messages.reactHint")} closeLabel={t("common.close")}
+            selected={poll.reactions?.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)}
+            colors={colors} disabled={reactionSaving} onClose={() => setReactionPickerOpen(false)}
+            onSelect={(emoji) => togglePollReaction(emoji, true)} />
+          {visibilityEditorOpen && <Modal visible transparent animationType="fade"
+            onRequestClose={() => { if (!saving) setVisibilityEditorOpen(false); }}>
+            <View style={styles.modalBackdrop}>
+              <View style={styles.visibilityModal} accessibilityViewIsModal accessibilityRole="dialog">
+                <Text style={styles.modalTitle}>{t("forum.editVisibility")}</Text>
+                <Text style={styles.notice}>{t("forum.visibilityEditHint")}</Text>
+                <View accessibilityRole="radiogroup" style={styles.visibilityChoices}>
+                  {(isMember ? ["contacts", "network", "public"] : ["public"]).map((key) => (
+                    <TouchableOpacity key={key} accessibilityRole="radio"
+                      accessibilityLabel={t(VISIBILITY_LABELS[key])}
+                      accessibilityState={{ checked: pendingVisibility === key, disabled: saving || loading }}
+                      disabled={saving || loading}
+                      onPress={() => { setPendingVisibility(key); setVisibilityError(""); }}
+                      style={[styles.visibilityChoice, pendingVisibility === key && styles.visibilityChoiceSelected]}>
+                      <View style={styles.visibilityChoiceLabel}>
+                        <Ionicons name={VISIBILITY_ICONS[key]} size={20} color={pendingVisibility === key ? colors.navigationAccent : colors.secondaryText} />
+                        <Text style={[styles.tabText, pendingVisibility === key && styles.tabTextSelected]}>{t(VISIBILITY_LABELS[key])}</Text>
+                      </View>
+                      {pendingVisibility === key && <Ionicons name="checkmark-circle" size={20} color={colors.navigationAccent} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {visibilityError ? <Text accessibilityRole="alert" style={styles.error}>{visibilityError}</Text> : null}
+                <View style={styles.modalActions}>
+                  <Button secondary styles={styles} buttonStyle={styles.modalButton} disabled={saving}
+                    label={t("common.cancel")} onPress={() => setVisibilityEditorOpen(false)} />
+                  <Button styles={styles} buttonStyle={styles.modalButton} disabled={saving || loading || !pendingVisibility}
+                    label={t("common.save")} onPress={() => submitVisibility(pendingVisibility)} />
+                </View>
+              </View>
+            </View>
+          </Modal>}
           {poll.options.length === 1 && !poll.myOptionId ? null : poll.options.map((option) => {
             const count = poll.results?.find((result) => result.optionId === option.id)?.votes;
             const percent = poll.totalVotes ? Math.round(count / poll.totalVotes * 100) : 0;
@@ -377,7 +553,8 @@ export const PollScreen = ({ route }) => {
               ? <Button styles={styles} disabled={saving || loading} label={`👍 ${poll.options[0].text}`}
                 onPress={() => submitVote(poll.options[0].id)} />
               : <Button styles={styles} disabled={!selection || saving || loading} label={t("forum.vote")} onPress={submitVote} />}
-          </View> : <>
+          </View> : null}
+          {(!isMember || poll.myOptionId) && <>
             {poll.results && <Text style={styles.notice}>{t("forum.totalVotes", { count: poll.totalVotes })}</Text>}
             <View style={styles.titleRow}>
               <Text style={styles.title}>{t("forum.comments")}</Text>
@@ -402,6 +579,11 @@ export const PollScreen = ({ route }) => {
 };
 
 const createStyles = (colors) => StyleSheet.create({
+  tags: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10, backgroundColor: colors.primarySoft },
+  guestTag: { borderWidth: 1, borderColor: colors.border },
+  tagText: { color: colors.secondaryText, fontSize: 12, fontWeight: "600" },
+  filter: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 },
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { padding: 16, gap: 12, width: "100%", maxWidth: 800, alignSelf: "center", flexGrow: 1 },
   section: { gap: 10, marginBottom: 12 },
@@ -411,11 +593,24 @@ const createStyles = (colors) => StyleSheet.create({
   tabLabel: { alignItems: "center", gap: 2 },
   tabText: { color: colors.secondaryText, fontWeight: "600", fontSize: 13, textAlign: "center" },
   tabTextSelected: { color: colors.navigationAccent },
-  actions: { flexDirection: "row", alignItems: "center", gap: 8, zIndex: 1000 },
+  pollCard: { gap: 8, padding: 14 },
+  pollTap: { gap: 10 },
+  pollByline: { flexDirection: "row", alignItems: "center", gap: 8 },
+  postByline: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  visibilityBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: colors.input },
+  visibilityBadgeText: { color: colors.secondaryText, fontSize: 11, fontWeight: "600" },
+  visibilityEditorButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.input },
   titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, zIndex: 1000 },
   grow: { flex: 1 },
-  visibility: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: colors.border },
-  visibilityOption: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 3, borderBottomColor: "transparent", marginBottom: -1 },
+  modalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20, backgroundColor: "rgba(0,0,0,0.5)" },
+  visibilityModal: { width: "100%", maxWidth: 480, gap: 14, padding: 20, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  modalTitle: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  visibilityChoices: { gap: 8 },
+  visibilityChoice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 52, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
+  visibilityChoiceLabel: { flexDirection: "row", alignItems: "center", gap: 10 },
+  visibilityChoiceSelected: { borderColor: colors.navigationAccent, backgroundColor: colors.primarySoft },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  modalButton: { flex: 1, marginVertical: 0 },
   title: { color: colors.text, fontSize: 20, fontWeight: "600" },
   body: { color: colors.text },
   meta: { color: colors.secondaryText, fontSize: 13 },

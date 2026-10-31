@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../db/client");
 const authMiddleware = require("../middleware/auth");
+const requireMember = require("../middleware/requireMember");
 const { secureTransaction } = require("../utils/secureRelay");
 
 const router = express.Router();
@@ -69,7 +70,7 @@ router.post("/profiles", authMiddleware, async (req, res) => {
 });
 
 // Search users (must be declared before the dynamic /:id route)
-router.get("/search", authMiddleware, async (req, res) => {
+router.get("/search", authMiddleware, requireMember, async (req, res) => {
   try {
     if (typeof req.query.q !== "string") return res.json([]);
     const query = req.query.q.trim().replace(/^@/, "");
