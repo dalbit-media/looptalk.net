@@ -1,11 +1,11 @@
 import { getWebPushKey } from "../api/auth";
 import { getDesktopBridge, isDesktopApp } from "./desktopApp";
+import { webNotificationSupport } from "./webNotificationSupport";
 
 const SERVICE_WORKER_URL = "/app/push-sw.js";
 const SERVICE_WORKER_SCOPE = "/app/";
 
-const supported = () =>
-  typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const supported = () => webNotificationSupport() === "ready";
 
 const urlBase64ToUint8Array = (value) => {
   const padded = value + "=".repeat((4 - (value.length % 4)) % 4);
@@ -14,7 +14,7 @@ const urlBase64ToUint8Array = (value) => {
 };
 
 export const requestPushPermission = async () => {
-  if (!supported()) return "unsupported";
+  if (!isDesktopApp() && !supported()) return webNotificationSupport();
   return Notification.requestPermission();
 };
 
@@ -22,8 +22,30 @@ export const requestPushPermission = async () => {
 export const getCallPushToken = async () => {
   if (isDesktopApp()) return null;
   if (!supported()) throw new Error("Push notifications are unavailable in this browser");
-  const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: SERVICE_WORKER_SCOPE });
-  await navigator.serviceWorker.ready;
+  let registration;
+  try {
+    registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: SERVICE_WORKER_SCOPE });
+    if (!registration.active) {
+      await new Promise((resolve, reject) => {
+        const worker = registration.installing || registration.waiting;
+        if (!worker) return reject(new Error("No push worker was installed"));
+        const finish = (error) => {
+          clearTimeout(timeout);
+          worker.removeEventListener("statechange", changed);
+          error ? reject(error) : resolve();
+        };
+        const changed = () => {
+          if (worker.state === "activated") finish();
+          else if (worker.state === "redundant") finish(new Error("Push worker installation failed"));
+        };
+        const timeout = setTimeout(() => finish(new Error("Push worker activation timed out")), 15000);
+        worker.addEventListener("statechange", changed);
+        changed();
+      });
+    }
+  } catch (cause) {
+    throw new Error("Could not activate the notification service worker", { cause });
+  }
   const { publicKey } = await getWebPushKey();
   const subscription = (await registration.pushManager.getSubscription()) ||
     (await registration.pushManager.subscribe({

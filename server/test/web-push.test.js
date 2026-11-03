@@ -14,3 +14,24 @@ test("service worker handles push and click events", () => {
   assert.match(source, /addEventListener\("push"/);
   assert.match(source, /addEventListener\("notificationclick"/);
 });
+
+test("Next.js fallback serves real JavaScript at the browser push worker URL without an Expo export", async () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const vm = require("node:vm");
+  const root = path.resolve(__dirname, "..", "..");
+  const filename = path.join(root, "app", "app", "push-sw.js", "route.js");
+  const { code } = require("@babel/core").transformSync(fs.readFileSync(filename, "utf8"), {
+    babelrc: false, configFile: false, plugins: ["@babel/plugin-transform-modules-commonjs"],
+  });
+  const module = { exports: {} };
+  vm.runInNewContext(code, {
+    module, exports: module.exports, require, Response, process: { cwd: () => root },
+  }, { filename });
+  const response = await module.exports.GET();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /application\/javascript/);
+  assert.equal(response.headers.get("cache-control"), "no-cache");
+  assert.equal(response.headers.get("service-worker-allowed"), "/app/");
+  assert.equal(await response.text(), fs.readFileSync(path.join(root, "mobile", "web", "push-sw.js"), "utf8"));
+});

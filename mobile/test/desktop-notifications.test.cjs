@@ -95,6 +95,7 @@ test("the desktop app uses the standard permission prompt and never subscribes t
   const notifications = compile("utils/callNotifications.web.js", {
     "../api/auth": { getWebPushKey: async () => assert.fail("desktop must not use Web Push") },
     "./desktopApp": { getDesktopBridge: () => recordingBridge(), isDesktopApp: () => true },
+    "./webNotificationSupport": { webNotificationSupport: () => "ready" },
   }, {
     window: { PushManager: class {}, Notification: {} },
     navigator: { serviceWorker: {} },

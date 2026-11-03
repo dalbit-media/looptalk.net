@@ -8,6 +8,8 @@ const babel = require("@babel/core");
 const fixture = (platform, linking) => {
   const alerts = [];
   const errors = [];
+  const states = [];
+  let stateIndex = 0;
   const filename = path.join(__dirname, "..", "src", "screens", "app", "SettingsScreen.js");
   const { code } = babel.transformSync(fs.readFileSync(filename, "utf8"), {
     babelrc: false,
@@ -18,7 +20,11 @@ const fixture = (platform, linking) => {
     ],
   });
   const mocks = {
-    react: { useEffect: () => {}, useState: (value) => [value, () => {}] },
+    react: { useEffect: () => {}, useState: (value) => {
+      const index = stateIndex++;
+      if (!(index in states)) states[index] = value;
+      return [states[index], (next) => { states[index] = next; }];
+    } },
     "react/jsx-runtime": require("react/jsx-runtime"),
     "react-native": {
       ...Object.fromEntries(["ActivityIndicator", "Switch", "TouchableOpacity", "View", "ScrollView"]
@@ -29,6 +35,7 @@ const fixture = (platform, linking) => {
     },
     "@expo/vector-icons/Ionicons": { default: "Ionicons" },
     "../../components/UserProfileHeader": { UserProfileHeader: "UserProfileHeader" },
+    "../../components/NotificationSetup": { NotificationSetup: "NotificationSetup" },
     "../../components/AppText": { AppText: "Text" },
     "../../api/auth": {},
     "../../hooks/useAppTheme": { useAppTheme: () => ({ colors: {} }) },
@@ -52,7 +59,8 @@ const fixture = (platform, linking) => {
       return mocks[name];
     },
   }, { filename });
-  const tree = module.exports.SettingsScreen({ navigation: {} });
+  const render = () => { stateIndex = 0; return module.exports.SettingsScreen({ navigation: {} }); };
+  const tree = render();
   const nodes = (element) => {
     if (Array.isArray(element)) return element.flatMap(nodes);
     if (!element || typeof element !== "object") return [];
@@ -63,7 +71,7 @@ const fixture = (platform, linking) => {
     node.type === "TouchableOpacity" &&
     nodes(node).some((child) => child.props?.children === label));
   assert.ok(button, `Permission button for ${platform}`);
-  return { press: button.props.onPress, alerts, errors, tree, nodes };
+  return { press: button.props.onPress, alerts, errors, tree, nodes, render };
 };
 
 test("build numbers display as v.01, v.02 and keep growing past two digits", () => {
@@ -92,6 +100,16 @@ test("web permission button explains site settings without the unavailable nativ
   assert.equal(screen.errors.length, 0);
 });
 
+test("web notification switch opens the guided setup before requesting any browser permissions", async () => {
+  const screen = fixture("web", {});
+  const toggle = screen.nodes(screen.tree).find((node) => node.type === "Switch");
+  await toggle.props.onValueChange(true);
+  const guide = screen.nodes(screen.render()).find((node) => node.type === "NotificationSetup");
+  assert.ok(guide);
+  assert.equal(screen.alerts.length, 0);
+  guide.props.onClose();
+  assert.equal(screen.nodes(screen.render()).some((node) => node.type === "NotificationSetup"), false);
+});
 for (const platform of ["ios", "android"]) {
   test(`${platform} permission button opens native settings`, async () => {
     let opens = 0;

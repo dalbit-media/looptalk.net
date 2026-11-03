@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Switch, TouchableOpacity, View, ScrollView } from "react-native";
 import { UserProfileHeader } from "../../components/UserProfileHeader";
+import { NotificationSetup } from "../../components/NotificationSetup";
 import { AppText as Text } from "../../components/AppText";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as AuthAPI from "../../api/auth";
@@ -38,6 +39,7 @@ export const SettingsScreen = ({ navigation }) => {
 
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [externalLinksExpanded, setExternalLinksExpanded] = useState(false);
+  const [showNotificationSetup, setShowNotificationSetup] = useState(false);
 
   // Declining the desktop app's notification prompt turns the switch off to match what the OS will show.
   useEffect(() => {
@@ -47,11 +49,16 @@ export const SettingsScreen = ({ navigation }) => {
   }, [notificationsEnabled, setNotificationsEnabled]);
 
   const handleNotificationsChange = async (enabled) => {
+    if (enabled && Platform.OS === "web" && !isDesktopApp()) {
+      setShowNotificationSetup(true);
+      return;
+    }
     if (!enabled) {
       try {
         // Desktop app notifications are local; this endpoint disables push on every device.
         if (!isDesktopApp()) await AuthAPI.disableDeviceTokens(token);
       } catch (error) {
+        console.error("Could not disable notifications:", error);
         showAlert(t("common.error"), t("settings.notificationsFailed"));
       } finally {
         await setNotificationsEnabled(false);
@@ -65,6 +72,7 @@ export const SettingsScreen = ({ navigation }) => {
         showAlert(t("common.error"), t("settings.notificationsDenied"));
       }
     } catch (error) {
+      console.error("Could not enable notifications:", error);
       showAlert(t("common.error"), t("settings.notificationsFailed"));
     }
   };
@@ -149,6 +157,7 @@ export const SettingsScreen = ({ navigation }) => {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      {showNotificationSetup && <NotificationSetup onClose={() => setShowNotificationSetup(false)} />}
       <UserProfileHeader user={user} editable />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.account")}</Text>

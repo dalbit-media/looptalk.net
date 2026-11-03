@@ -424,6 +424,18 @@ Implemented:
 - Direct voice/video calling, browser screen sharing, and group administration
 - User/message reports, blocking, and in-app account deletion
 
+On the web app, notification setup and optional web-app installation share one
+banner row. Choose **Turn on notifications**, follow the permission steps, and
+wait for the connection confirmation. The same guide is available from the
+notification switch in Settings. Blocked permissions must be changed in the
+browser's site settings; on iPhone/iPad (16.4+), add LoopTalk to the Home Screen
+and launch it there before enabling notifications. Desktop browsers do not
+require installation. HTTPS is required.
+
+Both the Expo export and the Next.js fallback serve `/app/push-sw.js` as
+JavaScript (not the app's HTML page), with no-cache headers so worker updates
+can take effect.
+
 Personal Notes is created automatically and pinned above other chats. Notes and
 attachments use the existing encrypted delivery and device-local history; only
 the owner's registered devices receive them. Web drawings export strokes directly
