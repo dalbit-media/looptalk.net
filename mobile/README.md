@@ -336,11 +336,9 @@ Google 소셜 인증은 다음 선택적 변수도 사용합니다.
 - EAS 프로젝트 `@eddiec2025/looptalk`가 연결되어 있으며 프로젝트 ID는
 	`app.json`에 저장됩니다.
 - Android 운영 키스토어는 EAS에 생성되어 있습니다.
-- `looptalk.app` 운영 API, EAS 운영 환경 변수, Sentry 프로젝트 및 iOS 서명은
-	아직 구성해야 합니다.
-- 운영 API가 HTTPS로 배포된 후 `EXPO_PUBLIC_API_URL`과
-	`EXPO_PUBLIC_SENTRY_DSN`을 EAS `production` 환경에 설정하세요. 필요한 경우
-	Google OAuth 클라이언트 ID와 Sentry 소스맵 자격 증명도 추가합니다.
+- `looptalk.net` 운영 API는 HTTPS로 제공 중입니다. iOS 서명은 아직 구성해야 합니다.
+- 운영 빌드는 기본적으로 `https://looptalk.net`을 사용합니다(`EXPO_PUBLIC_API_URL`로 변경 가능).
+	`EXPO_PUBLIC_SENTRY_DSN`, Google OAuth 클라이언트 ID, Sentry 소스맵 자격 증명은 선택 사항입니다.
 - iOS 자격 증명을 구성한 다음 `eas build --platform all --profile production`을
 	실행하고 실제 기기 검증을 완료하기 전에는 스토어에 제출하지 마세요.
 
@@ -430,11 +428,9 @@ Googleソーシャル認証では、次の任意変数も使用します。
 - EASプロジェクト`@eddiec2025/looptalk`はリンク済みで、プロジェクトIDは
 	`app.json`に保存されています。
 - Android本番キーストアはEASに作成済みです。
-- `looptalk.app`本番API、EAS本番環境変数、Sentryプロジェクト、iOS署名は
-	まだ設定が必要です。
-- 本番APIをHTTPSで配備した後、`EXPO_PUBLIC_API_URL`と
-	`EXPO_PUBLIC_SENTRY_DSN`をEASの`production`環境へ設定してください。
-	必要に応じてGoogle OAuthクライアントIDとSentryソースマップ資格情報も追加します。
+- `looptalk.net`本番APIはHTTPSで稼働中です。iOS署名はまだ設定が必要です。
+- 本番ビルドは既定で`https://looptalk.net`を使用します（`EXPO_PUBLIC_API_URL`で変更可能）。
+	`EXPO_PUBLIC_SENTRY_DSN`、Google OAuthクライアントID、Sentryソースマップ資格情報は任意です。
 - iOS資格情報を設定して`eas build --platform all --profile production`を実行し、
 	実機検証を完了するまではストアへ提出しないでください。
 
@@ -527,12 +523,11 @@ Google social authentication also uses these optional variables:
 - EAS project `@eddiec2025/looptalk` is linked; its project ID is persisted in
 	`app.json`.
 - The Android production keystore has been generated and stored in EAS.
-- The `looptalk.app` production API, EAS production variables, Sentry project,
-	and iOS signing still require configuration.
-- After the production API is live on HTTPS, set `EXPO_PUBLIC_API_URL` and
-	`EXPO_PUBLIC_SENTRY_DSN` in the EAS `production` environment. Add Google
-	OAuth client IDs and Sentry source-map credentials when those providers are
-	enabled.
+- The `looptalk.net` production API is live over HTTPS. EAS production variables,
+	the Sentry project, and iOS signing still require configuration.
+- Production builds default to `https://looptalk.net` (override with
+	`EXPO_PUBLIC_API_URL`). `EXPO_PUBLIC_SENTRY_DSN`, Google OAuth client IDs and
+	Sentry source-map credentials are optional EAS `production` values.
 - Configure iOS credentials, run
 	`eas build --platform all --profile production`, and complete physical-device
 	certification before submitting either binary.

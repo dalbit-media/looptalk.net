@@ -33,6 +33,7 @@ export const createOwnerVault = async (identity, profile, imported = {}) => {
     version: 1, revision: 1, profile: { ...profile },
     contacts: imported.contacts || [], invitations: imported.invitations || [],
     preferences: imported.preferences || {}, conversationNames: imported.conversationNames || {},
+    ...(imported.accountSetup ? { accountSetup: imported.accountSetup } : {}),
   });
   return { data: initial, vault: encryptOwnerValue(identity, "vault", initial, getRandomBytes) };
 };

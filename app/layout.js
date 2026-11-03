@@ -1,4 +1,5 @@
 import Script from "next/script";
+import { siteOrigin } from "./_lib/siteOrigin";
 import "./site.css";
 
 export const metadata = {
@@ -10,7 +11,7 @@ export const metadata = {
     ],
     apple: "/site/app-icon-180.png",
   },
-  metadataBase: new URL(process.env.PUBLIC_URL || "http://localhost:3000"),
+  metadataBase: new URL(siteOrigin()),
 };
 
 export const viewport = { themeColor: "#f4f1e8" };

@@ -20,6 +20,7 @@ import { showAlert } from "../utils/showAlert";
 import { t } from "../i18n/i18n";
 import { randomUUID } from "expo-crypto";
 import { removePrivateMedia } from "../utils/privateMedia";
+import { notifyDesktopMessage } from "../utils/desktopNotifications";
 
 let outboxFlushPromise = null;
 let detachPresenceLifecycle = null;
@@ -285,6 +286,9 @@ export const useMessageStore = create((set, get) => ({
       message.senderId !== activeUserId
     ) {
       get().markConversationRead(message.conversationId);
+    }
+    if (isNewMessage && message.senderId !== activeUserId) {
+      notifyDesktopMessage(message, { isOpenConversation: currentConversation?.id === message.conversationId });
     }
   },
 

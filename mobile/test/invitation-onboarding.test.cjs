@@ -129,11 +129,11 @@ test("automatic welcome is visibly labeled and existing navigation no longer nam
   assert.ok(!app.includes('conversationId: welcomeConversationId, name: "LoopTalk"'));
 });
 
-test("welcome onboarding opens the inbox once without opening or reading the chat", () => {
+test("welcome onboarding opens the inviter chat once so the first message can be answered", () => {
   const app = fs.readFileSync(path.resolve(__dirname, "../App.js"), "utf8");
-  assert.doesNotMatch(app, /\bopenPendingWelcomeConversation\b/);
-  assert.match(app, /onStateChange=\{\(\) => \{\s*openPendingWelcomeInbox\(\);/);
-  const start = app.indexOf("const openPendingWelcomeInbox = ");
+  assert.doesNotMatch(app, /\bopenPendingWelcomeConversation\b|\bopenPendingWelcomeInbox\b/);
+  assert.match(app, /onStateChange=\{\(\) => \{\s*openPendingWelcomeChat\(\);/);
+  const start = app.indexOf("const openPendingWelcomeChat = ");
   const end = app.indexOf("\nconst openPendingMessageNotification", start);
   assert.ok(start >= 0 && end > start);
   const navigations = [];
@@ -142,7 +142,7 @@ test("welcome onboarding opens the inbox once without opening or reading the cha
     token: "token", welcomeConversationId: "normal-chat",
     clearWelcomeConversation: () => { state.welcomeConversationId = null; },
   };
-  const run = vm.runInNewContext(`${app.slice(start, end)}\nopenPendingWelcomeInbox;`, {
+  const run = vm.runInNewContext(`${app.slice(start, end)}\nopenPendingWelcomeChat;`, {
     useAuthStore: { getState: () => state },
     navigationRef: {
       isReady: () => ready,
@@ -156,7 +156,7 @@ test("welcome onboarding opens the inbox once without opening or reading the cha
   run();
   run();
   assert.deepEqual(JSON.parse(JSON.stringify(navigations)), [
-    ["Messages", { screen: "MessagesList" }],
+    ["Messages", { screen: "Chat", initial: false, params: { conversationId: "normal-chat" } }],
   ]);
   assert.equal(state.welcomeConversationId, null);
 });
@@ -186,11 +186,10 @@ test("the site launcher opens a centered, screen-limited popup", () => {
     /window\.openLoopTalkClient\(\)/);
 });
 
-test("invitation signup guides install and notification permission, then enables web push", () => {
+test("invitation accept is one tap: notification prompt during the tap, then web push", () => {
   const read = (file) => fs.readFileSync(path.resolve(__dirname, file), "utf8");
   const register = read("../src/screens/auth/RegisterScreen.js");
-  assert.match(register, /invitationCode && Platform\.OS === "web" \? <InvitationSetup \/>/);
-  assert.match(register, /Notification\.permission === "granted"[\s\S]*enableWebPush\(\)/);
-  const setup = read("../src/components/InvitationSetup.js");
-  for (const key of ["invite.install", "invite.allow", "invite.acceptHint"]) assert.ok(setup.includes(key));
+  assert.match(register, /requestPushPermission\(\)[\s\S]*await acceptInvitation\(invitationCode\);\s*if \(await permission === "granted"\) enableWebPush\(\)/);
+  assert.match(register, /t\("invite\.acceptButton"\)/);
+  assert.ok(!fs.existsSync(path.resolve(__dirname, "../src/components/InvitationSetup.js")));
 });

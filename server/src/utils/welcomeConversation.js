@@ -8,7 +8,7 @@ const LOOPTALK_USER_ID = "looptalk-system";
 const INVITATION_WELCOME_MESSAGE =
   "루프톡에 오신 것을 환영해요! 아래 입력창에서 답장해 보세요. + 버튼으로 사진·파일을 보내고, 통화 버튼으로 음성·영상 통화를 시작할 수 있어요.";
 
-const createInvitationWelcome = async (tx, inviterId, inviteeId) => {
+const createInvitationWelcome = async (tx, inviterId, inviteeId, message) => {
   const inviter = await tx.user.findUnique({ where: { id: inviterId }, select: { id: true, status: true } });
   if (!inviter || inviter.status === "SYSTEM" || inviterId === inviteeId) return null;
   const createdAt = new Date();
@@ -17,7 +17,7 @@ const createInvitationWelcome = async (tx, inviterId, inviteeId) => {
       kind: "CHAT", isGroupChat: false, lastMessageAt: createdAt,
       participants: { create: [{ userId: inviterId }, { userId: inviteeId }] },
       messages: { create: {
-        senderId: inviterId, messageType: "TEXT", content: INVITATION_WELCOME_MESSAGE,
+        senderId: inviterId, messageType: "TEXT", content: message || INVITATION_WELCOME_MESSAGE,
         automaticWelcome: true, createdAt,
       } },
     },

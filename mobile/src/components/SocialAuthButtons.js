@@ -67,15 +67,18 @@ const GoogleButton = ({ submit, disabled, busy, styles, colors, label }) => {
 };
 
 // Apple and Google are offered first; the identity is linked solely so the account can be recovered.
-export const SocialAuthButtons = ({ mode = "register", invitationCode, displayName, disabled, onError, onBusyChange }) => {
+export const SocialAuthButtons = ({ mode = "register", title, invitationCode, displayName, disabled, onError, onBusyChange }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const socialRegister = useAuthStore((state) => state.socialRegister);
   const socialRecover = useAuthStore((state) => state.socialRecover);
+  const linkSocial = useAuthStore((state) => state.linkSocial);
+  const linked = useAuthStore((state) => state.accountSetup?.linkedProviders) || [];
   const [busy, setBusy] = useState(null);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const recover = mode === "recover";
+  const link = mode === "link";
 
   useEffect(() => {
     if (Platform.OS !== "ios") return;
@@ -88,6 +91,7 @@ export const SocialAuthButtons = ({ mode = "register", invitationCode, displayNa
     onError?.("");
     try {
       if (recover) await socialRecover({ provider, idToken });
+      else if (link) await linkSocial({ provider, idToken });
       else await socialRegister({ provider, idToken, displayName: displayName || providerName, invitationCode });
     } catch (error) {
       onError?.(t(errorKey(error)));
@@ -111,20 +115,28 @@ export const SocialAuthButtons = ({ mode = "register", invitationCode, displayNa
   };
 
   const off = disabled || busy !== null;
-  const verb = recover ? "auth.recoverWith" : "auth.continueWith";
+  const verb = recover ? "auth.recoverWith" : link ? "auth.linkWith" : "auth.continueWith";
   if (!appleAvailable && !googleConfigured) return null;
+  // A linked provider shows as done instead of offering to link it again.
+  const providerButton = (provider, button) => linked.includes(provider) && link ? (
+    <View key={provider} style={styles.noteRow}>
+      <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+      <Text style={styles.providerText}>{t(`auth.linked${provider === "apple" ? "Apple" : "Google"}`)}</Text>
+    </View>
+  ) : button;
 
   return (
     <View style={styles.container}>
-      {appleAvailable ? (
+      {title ? <Text style={styles.title}>{title}</Text> : null}
+      {appleAvailable ? providerButton("apple", (
         <ProviderButton
           icon="logo-apple" label={t(`${verb}Apple`)} styles={styles} colors={colors}
           onPress={handleApple} disabled={off} loading={busy === "apple"}
         />
-      ) : null}
-      {googleConfigured ? (
+      )) : null}
+      {googleConfigured ? providerButton("google", (
         <GoogleButton submit={submit} disabled={off} busy={busy} styles={styles} colors={colors} label={t(`${verb}Google`)} />
-      ) : null}
+      )) : null}
       <View style={styles.noteRow}>
         <Ionicons name="shield-checkmark-outline" size={16} color={colors.mutedText} />
         <Text style={styles.note}>{t(recover ? "auth.socialRecoverNote" : "auth.socialRecoveryNote")}</Text>
@@ -135,6 +147,7 @@ export const SocialAuthButtons = ({ mode = "register", invitationCode, displayNa
 
 const createStyles = (colors) => StyleSheet.create({
   container: { gap: 12 },
+  title: { color: colors.text, fontSize: 16, fontWeight: "700" },
   providerButton: {
     minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
     borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface,

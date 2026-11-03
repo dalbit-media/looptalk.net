@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, Share, StyleSheet, TouchableOpacity, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
+import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as InvitationsAPI from "../../api/invitations";
 import * as MessageAPI from "../../api/messages";
@@ -34,6 +35,8 @@ export const AddContactScreen = ({ navigation, route }) => {
   const [connectingUserId, setConnectingUserId] = useState(null);
   const [creating, setCreating] = useState(false);
   const [invitation, setInvitation] = useState(null);
+  const [inviteeName, setInviteeName] = useState("");
+  const [firstMessage, setFirstMessage] = useState(() => t("contacts.defaultInvitationMessage"));
   const [stats, setStats] = useState({
     linksShared: 0,
     acceptedUsers: 0,
@@ -143,8 +146,11 @@ export const AddContactScreen = ({ navigation, route }) => {
     if (creating) return;
     setCreating(true);
     try {
-      const createdInvitation = await InvitationsAPI.createInvitation(token, language);
+      const createdInvitation = await InvitationsAPI.createInvitation(token, language, {
+        inviteeDisplayName: inviteeName, message: firstMessage,
+      });
       showInvitationActions(createdInvitation);
+      setInviteeName("");
     } catch (error) {
       const serverMessage = error.response?.data?.error;
       showAlert(t("common.error"), serverMessage || t("settings.invitationFailed"));
@@ -238,6 +244,32 @@ export const AddContactScreen = ({ navigation, route }) => {
           <Text style={styles.title}>{t("contacts.createInvitationLink")}</Text>
           <Text style={styles.description}>{t("contacts.invitationNameDisclosure")}</Text>
           <Text style={styles.description}>{t("contacts.invitationWelcomeDisclosure")}</Text>
+
+          {!invitation && (
+            <View style={styles.inviteFields}>
+              <TextInput
+                style={styles.input}
+                placeholder={t("contacts.inviteeNamePlaceholder")}
+                accessibilityLabel={t("contacts.inviteeNamePlaceholder")}
+                placeholderTextColor={colors.mutedText}
+                value={inviteeName}
+                onChangeText={setInviteeName}
+                maxLength={100}
+                editable={!creating}
+              />
+              <TextInput
+                style={[styles.input, styles.messageInput]}
+                placeholder={t("contacts.firstMessagePlaceholder")}
+                accessibilityLabel={t("contacts.firstMessagePlaceholder")}
+                placeholderTextColor={colors.mutedText}
+                value={firstMessage}
+                onChangeText={setFirstMessage}
+                multiline
+                maxLength={1000}
+                editable={!creating}
+              />
+            </View>
+          )}
 
           {invitation && (
             <>
@@ -392,6 +424,12 @@ export const AddContactScreen = ({ navigation, route }) => {
 };
 
 const createStyles = (colors) => StyleSheet.create({
+  inviteFields: { alignSelf: "stretch", gap: 10, marginTop: 12 },
+  input: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14,
+    fontSize: 16, color: colors.text, backgroundColor: colors.input,
+  },
+  messageInput: { minHeight: 96, textAlignVertical: "top" },
   container: {
     flex: 1,
     backgroundColor: colors.surface,

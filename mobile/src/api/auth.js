@@ -10,7 +10,7 @@ export const getCredentialParameters = async (identifier) => {
   return response.data;
 };
 
-export const register = async (identifier, credentialSalt, publicKey, vault, invitationCode, displayName, social) => {
+export const register = async (identifier, credentialSalt, publicKey, vault, invitationCode, displayName, social, wrapper) => {
   const response = await api.post("/auth/register", {
     identifier,
     credentialSalt,
@@ -19,9 +19,16 @@ export const register = async (identifier, credentialSalt, publicKey, vault, inv
     invitationCode,
     ...(displayName === undefined ? {} : { displayName }),
     ...(social ? { social } : {}),
+    ...(wrapper || {}),
   });
   return response.data;
 };
+
+const authorized = (token) => ({ headers: { Authorization: ["Bearer", token].join(" ") } });
+
+export const changeCredentials = async (body, token) => (await api.post("/auth/credentials", body, authorized(token))).data;
+
+export const linkSocial = async (body, token) => (await api.post("/auth/social-link", body, authorized(token))).data;
 
 export const socialRecover = async (provider, idToken, publicKey, vault) => {
   const response = await api.post("/auth/social-recover", { provider, idToken, publicKey, vault });

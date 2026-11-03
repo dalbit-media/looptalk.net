@@ -102,9 +102,13 @@ Run `npm run db:setup` after upgrading to create the telemetry table.
 ## Signup welcome and feedback
 
 Invited registration atomically creates a normal two-member `CHAT` with the
-surviving inviter and one fixed `TEXT` attributed to that inviter with
-`automaticWelcome: true`. This clearly labeled onboarding notice is the only
-server-readable automatic message; ordinary replies still require E2EE.
+surviving inviter and one `TEXT` attributed to that inviter with
+`automaticWelcome: true`. The text is the inviter's optional first message
+(`message`, up to 1000 characters, set at `/api/invitations/create`) or a fixed
+default. It is stored server-readable on the invitation only until redemption
+(then cleared), is never shown on the public invitation page or lookup API, and
+is the only server-readable automatic message; ordinary replies still require E2EE.
+An optional `inviteeDisplayName` becomes the invitee's public display name.
 No plaintext Contact row is created. The authenticated
 `GET /api/auth/invitation-onboarding` endpoint lets registration/login/startup
 import the inviter first into the invitee's encrypted owner vault. A durable
@@ -113,8 +117,16 @@ Anonymous/bootstrap invitations and deleted inviters produce no synthetic sender
 Invitation creation first registers the inviter's encryption device so the
 invitee can reply even while the inviter is offline. An older inviter without
 any registered device must open an updated client before encrypted delivery.
-Apply `20261017070000_invitation_welcome` (or the existing additive `db:push`
-workflow) and regenerate Prisma before starting the upgraded server.
+Apply `20261017070000_invitation_welcome` and `20261103000000_invitation_onboarding`
+(or the existing additive `db:push` workflow) and regenerate Prisma before starting the upgraded server.
+
+One-tap acceptance (`/app/register?code=…&accept=1`) creates a random account key
+plus generated username/password credentials that only *wrap* that key
+(`credentialPublicKey`, `wrappedAccountKey`). Login with the credential key
+returns the wrapped key for the client to unwrap. `POST /api/auth/credentials`
+(account-key proof required) replaces the wrapper so the old password stops
+working; older password-derived accounts get `409 CREDENTIALS_FIXED`.
+`POST /api/auth/social-link` attaches Google/Apple recovery to a signed-in account.
 Operational invitation issuer/redemption IDs are retained.
 Social and plaintext-password registration are disabled.
 Existing legacy welcome/support history remains readable; new private accounts
@@ -153,14 +165,15 @@ non-cacheable and does not send referral URLs as referrers.
 
 ## Credential accounts (phase 1)
 
-Provision `USER_DATA_ENCRYPTION_KEY` as a persistent, secret, canonical base64 encoding
-of 32 random bytes before starting **any** environment. `.env.example` deliberately
-contains no usable key. Do not replace a deployed key without migrating ciphertext
-and keyed indexes; losing it prevents credential lookup. Startup fails closed if absent.
-For a local checkout run `npm run privacy:key --prefix server` from the repository
-root. This appends a secure key only if the entry is absent, never overwrites or
-prints it, and rejects invalid existing values (including the empty example
-placeholder; remove that placeholder line before setup). Existing valid process
+`USER_DATA_ENCRYPTION_KEY` is a persistent, secret, canonical base64 encoding of 32
+random bytes. The server generates it automatically for a new database (see
+Environment) and stores it beside the database; you may instead provide it
+explicitly. Do not replace a deployed key without migrating ciphertext
+and keyed indexes; losing it prevents credential lookup. Startup fails closed if an
+existing database has no key. `npm run privacy:key --prefix server` still writes a
+key into `server/.env` for setups that prefer it: it appends a secure key only if the
+entry is absent, never overwrites or prints it, and rejects invalid existing values.
+Existing valid process
 environment configuration is honored without writing it to disk. `.env` is
 gitignored; file permissions are 0600 on supporting systems. Then run
 `npm run prisma:generate --prefix server` and `npm run db:push --prefix server`.
@@ -323,24 +336,31 @@ Socket.io 및 `/app/` 웹 클라이언트를 제공합니다. 브라우저 클�
 
 ### 환경 변수
 
-시작 시 필수:
+시작 시 필수 값은 없습니다. 첫 실행 때 서버가 `JWT_SECRET`, `USER_DATA_ENCRYPTION_KEY`,
+웹 푸시 `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`를 생성해 SQLite 파일 옆의
+`<데이터베이스 파일>.secrets.json`(권한 600)에 저장합니다. 이 파일을 데이터베이스와 함께
+백업하세요. 환경 변수로 지정한 값이 항상 우선하므로 기존 배포는 그대로 동작합니다.
+암호화 키는 새 빈 데이터베이스에만 생성되며, 키가 없는 기존 데이터베이스는 시작을 거부합니다.
+
+운영 환경에서 설정:
+
+- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: 앱 링크 서명 식별자
+- `TURN_URLS`, `TURN_SECRET`: 통화 릴레이 설정
+- `ADMIN_USER_IDS`: 신고를 검토할 운영자
+
+선택 항목(전체 목록은 `.env.example` 참고):
 
 - `DATABASE_URL`: SQLite 파일 URL. 기본값은 `file:./looptalk.db`
-- `JWT_SECRET`: 32자 이상의 강력한 JWT 서명 비밀 값
+- `PUBLIC_URL`: 운영 환경 기본값 `https://looptalk.net`
+- `CORS_ORIGIN`: 추가로 허용할 웹 출처(동일 출처는 설정 불필요)
+- `SENTRY_DSN`, `TRUST_PROXY`
 
-선택적 서비스 설정:
+소셜 로그인은 `APPLE_CLIENT_IDS`/`GOOGLE_CLIENT_IDS`로 토큰을 검증합니다. 지정하지 않으면
+Apple은 번들 ID `com.looptalk.app`, Google은 클라이언트 빌드에 사용한
+`EXPO_PUBLIC_GOOGLE_{WEB,IOS,ANDROID}_CLIENT_ID`를 사용합니다. `""`로 지정하면 해당
+공급자가 비활성화됩니다(HTTP 503). 레거시 `POST /api/auth/social`만 HTTP 426을 반환합니다.
 
-- `CORS_ORIGIN`: 쉼표로 구분한 허용 웹 출처
-- `PUBLIC_URL`: 초대 링크에 사용하는 외부 접근 가능 주소
-- `TURN_URLS`, `TURN_SECRET`: 통화 릴레이 설정
-- `ADMIN_USER_IDS`, `SENTRY_DSN`: 운영 및 모니터링 소유권
-- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: 앱 링크 서명 식별자
-
-소셜 로그인은 비활성화되어 있습니다(HTTP 426). 서버용 Google/Apple 토큰 검증
-라이브러리와 클라이언트 ID 설정은 필요하지 않습니다.
-
-모든 실행에 `.env.example`을 사용하세요. 예제 값은 실행 전에 실제 비밀 값과
-서비스 주소로 교체해야 합니다.
+`.env.example`은 기본값을 바꿀 때만 `.env`로 복사하세요.
 
 ### 데이터 소유권
 
@@ -400,12 +420,12 @@ Prisma 클라이언트를 생성하면 `npm run check`가 실패합니다.
 
 ### 운영 환경
 
-현재 `looptalk.app`은 운영 서버를 제공하지 않으므로 네이티브 운영 빌드를 만들기
-전에 다음 순서로 배포해야 합니다.
+`looptalk.net`은 HTTPS 운영 서버를 제공합니다. 새로 배포할 때는 네이티브 운영 빌드를
+만들기 전에 다음 순서를 따릅니다.
 
 1. SQLite 데이터베이스와 `/data/uploads`를 보존하는 `/data` 영구 볼륨 및 백업을 준비합니다.
-2. SQLite `DATABASE_URL`, 강력한 `JWT_SECRET`, `PUBLIC_URL`, `CORS_ORIGIN`,
-    관리자, Sentry, 앱 링크 서명 및 공급자 설정을 구성합니다.
+2. 앱 링크 서명(`APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`), TURN, 관리자를 설정합니다.
+    비밀 값은 첫 실행 때 자동 생성되어 데이터베이스 옆에 저장됩니다.
 3. 통화 릴레이용 Coturn을 배포합니다. SQLite 사용 중에는 서버를 단일 인스턴스로 운영합니다.
 4. 루트 `Dockerfile`을 HTTPS 역방향 프록시 뒤에 배포합니다. 컨테이너 시작 시
     Prisma가 현재 스키마를 SQLite 데이터베이스에 반영합니다.
@@ -460,24 +480,31 @@ API、Socket.io、`/app/` Webクライアントを提供します。ブラウザ
 
 ### 環境変数
 
-起動時に必須:
+起動時に必須の値はありません。初回起動時にサーバーが`JWT_SECRET`、`USER_DATA_ENCRYPTION_KEY`、
+Webプッシュの`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`を生成し、SQLiteファイルの横の
+`<データベースファイル>.secrets.json`（権限600）に保存します。このファイルはデータベースと一緒に
+バックアップしてください。環境変数の値が常に優先されるため、既存の配備はそのまま動作します。
+暗号化キーは新しい空のデータベースにのみ生成され、キーのない既存データベースは起動を拒否します。
+
+本番で設定:
+
+- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: アプリリンク署名識別子
+- `TURN_URLS`, `TURN_SECRET`: 通話リレー設定
+- `ADMIN_USER_IDS`: 通報を確認する運営者
+
+任意（全一覧は`.env.example`を参照）:
 
 - `DATABASE_URL`: SQLiteファイルURL。既定値は`file:./looptalk.db`
-- `JWT_SECRET`: 32文字以上の強力なJWT署名シークレット
+- `PUBLIC_URL`: 本番の既定値は`https://looptalk.net`
+- `CORS_ORIGIN`: 追加で許可するWebオリジン（同一オリジンは設定不要）
+- `SENTRY_DSN`, `TRUST_PROXY`
 
-任意のサービス設定:
+ソーシャルログインは`APPLE_CLIENT_IDS`/`GOOGLE_CLIENT_IDS`でトークンを検証します。未設定の場合、
+Appleはバンドル ID`com.looptalk.app`、Googleはクライアントのビルドに使った
+`EXPO_PUBLIC_GOOGLE_{WEB,IOS,ANDROID}_CLIENT_ID`を使用します。`""`を指定すると
+そのプロバイダーは無効になります（HTTP 503）。レガシーの`POST /api/auth/social`のみHTTP 426を返します。
 
-- `CORS_ORIGIN`: カンマ区切りの許可Webオリジン
-- `PUBLIC_URL`: 招待リンクに使用する外部公開オリジン
-- `TURN_URLS`, `TURN_SECRET`: 通話リレー設定
-- `ADMIN_USER_IDS`, `SENTRY_DSN`: 運用および監視の所有者
-- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: アプリリンク署名識別子
-
-ソーシャルログインは無効です（HTTP 426）。サーバー用Google/Appleトークン検証
-ライブラリとクライアントIDの設定は不要です。
-
-すべての実行で`.env.example`を使用します。実行前に例示値を実際の
-シークレットとサービスURLへ置き換えてください。
+`.env.example`は既定値を変更する場合のみ`.env`へコピーしてください。
 
 ### データ所有権
 
@@ -536,12 +563,12 @@ Prismaにはアカウント・会話・配信情報、一時的な暗号文、�
 
 ### 本番環境
 
-現在、`looptalk.app`は本番サーバーを提供していないため、ネイティブ本番ビルド
+`looptalk.net`はHTTPSの本番サーバーを提供しています。新規配備では、ネイティブ本番ビルド
 より先に次の順序で配備してください。
 
 1. SQLiteデータベースと`/data/uploads`を保持する`/data`永続ボリュームおよびバックアップを準備します。
-2. SQLite `DATABASE_URL`、強力な`JWT_SECRET`、`PUBLIC_URL`、`CORS_ORIGIN`、
-    管理者、Sentry、アプリリンク署名、認証プロバイダー設定を構成します。
+2. アプリリンク署名（`APPLE_TEAM_ID`、`ANDROID_CERT_SHA256`）、TURN、管理者を設定します。
+    シークレットは初回起動時に自動生成され、データベースの横に保存されます。
 3. 通話リレー用Coturnを配備します。SQLite使用中はサーバーを1インスタンスで運用します。
 4. ルート`Dockerfile`をHTTPSリバースプロキシの背後へ配備します。コンテナ起動時に
     Prismaが現在のSQLiteスキーマを反映します。
@@ -643,30 +670,41 @@ Startup and `db:push` no longer auto-accept destructive schema changes.
 
 ### Environment
 
-Required at startup:
+Nothing is required at startup. On first start the server generates `JWT_SECRET`,
+`USER_DATA_ENCRYPTION_KEY` and the web-push `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`
+pair and stores them in `<database file>.secrets.json` (mode 600) beside the SQLite
+database. Back that file up with the database. Explicit environment values always
+take precedence, so existing deployments keep their secrets. The encryption key is
+generated only for a new, empty database; an existing database without its key
+fails closed instead of silently getting a new one.
 
-- `JWT_SECRET`: strong JWT signing secret with at least 32 characters in
-  production; local development uses a development-only default
+Set for production:
 
-Optional service settings:
+- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: app-link signing identifiers
+- `TURN_URLS`, `TURN_SECRET`: call relay configuration
+- `ADMIN_USER_IDS`: moderators allowed to review abuse reports
+
+Optional overrides (see `.env.example` for the full list):
 
 - `DATABASE_URL`: SQLite file URL; defaults to `file:./looptalk.db`
-- `CORS_ORIGIN`: comma-separated allowed web origins
-- `PUBLIC_URL`: externally reachable origin used in invitation links
-- `TURN_URLS`, `TURN_SECRET`: call relay configuration
-- `ADMIN_USER_IDS`, `SENTRY_DSN`: operational and monitoring ownership
-- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`: app-link signing identifiers
-
-Common optional settings:
-
+- `PUBLIC_URL`: public origin; defaults to `https://looptalk.net` in production
+- `CORS_ORIGIN`: extra comma-separated web origins; same-origin needs nothing
+- `SENTRY_DSN`; `RELEASE_VERSION` defaults to `server/package.json` `version`
+- `TRUST_PROXY`: number of reverse proxies in front of the server
 - `WEB_CLIENT_URL`: web client frame URL, defaults to same-origin `/app/`
+- `DESKTOP_DOWNLOAD_BASE_URL`: HTTPS folder holding the desktop installers
+  served by `/download/desktop/{windows,mac,linux,linux-deb}`; defaults to the
+  latest GitHub release of this repository
 
-Social sign-in is disabled (HTTP 426). Server Google/Apple token-verification
-libraries and client-ID settings are not required.
+Social sign-in for owner-encrypted accounts (social registration,
+`/api/auth/social-recover`, `/api/auth/social-link`) verifies identity tokens
+against `APPLE_CLIENT_IDS` and `GOOGLE_CLIENT_IDS` (comma-separated audiences).
+When unset, Apple uses the bundle ID `com.looptalk.app` and Google uses the
+`EXPO_PUBLIC_GOOGLE_{WEB,IOS,ANDROID}_CLIENT_ID` values the clients are built with;
+set a variable to `""` to disable that provider (HTTP 503). Only the legacy
+`POST /api/auth/social` returns HTTP 426.
 
-Copy `.env.example` to `.env` for server runs. `DATABASE_URL` may be omitted
-for local development; replace the example secrets and service URLs before
-starting the server.
+Copy `.env.example` to `.env` only to override defaults.
 
 ### Data Ownership
 
@@ -691,7 +729,10 @@ open/preview pages, and health require `Authorization: Bearer <token>`.
 | `POST` | `/api/auth/register` | Register a public key and encrypted vault with bootstrap/invitation rules |
 | `POST` | `/api/auth/challenge` | Obtain a single-use Ed25519 login challenge |
 | `POST` | `/api/auth/login` | Authenticate by opaque account ID and Ed25519 signature |
-| `POST` | `/api/auth/social` | Disabled (HTTP 426) |
+| `POST` | `/api/auth/social` | Legacy social login; disabled (HTTP 426) |
+| `POST` | `/api/auth/social-recover` | Recover a wrapped account key with a verified Apple/Google identity |
+| `POST` | `/api/auth/social-link` | Attach Apple/Google recovery to the signed-in account |
+| `POST` | `/api/auth/credentials` | Replace generated invitation credentials (account-key proof required) |
 | `GET` | `/api/auth/me` | Return the authenticated user |
 | `POST` | `/api/auth/device-token` | Register a push token |
 | `DELETE` | `/api/auth/device-token` | Disable the user's push tokens |
@@ -748,14 +789,13 @@ Clients authenticate with `auth.token`. Supported client events are
 
 ### Production
 
-`looptalk.app` does not currently serve the production backend. Deploy it
-before creating native production binaries, in this order:
+`looptalk.net` serves the production backend over HTTPS. A new deployment
+follows this order before creating native production binaries:
 
 1. Provision a persistent `/data` volume for the SQLite database and uploads,
     and test automated backups and restores.
-2. Configure the SQLite `DATABASE_URL`, a strong `JWT_SECRET`, `PUBLIC_URL`,
-    `CORS_ORIGIN`, moderation, Sentry, app-link signing, and identity-provider
-    settings.
+2. Set app-link signing (`APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`), TURN and
+    moderators. Secrets are generated on first start and kept beside the database.
 3. Deploy Coturn for call relay. Use one server instance while SQLite is
     configured.
 4. Deploy the root `Dockerfile` behind an HTTPS reverse proxy. The current
@@ -774,7 +814,7 @@ password registration. `POST /api/auth/register` accepts only
 `{publicKey,vault,invitationCode?}`. The canonical padded-base64 public key is
 32 bytes; the account ID is `u_` followed by the lowercase hex encoding of the
 first 16 bytes of SHA-512 of that raw key. Opaque account IDs are the only public
-profile handles. Legacy plaintext registration, social sign-in, profile/contact
+profile handles. Legacy plaintext registration, legacy `POST /api/auth/social`, profile/contact
 writes, readable conversation names, and profile uploads return HTTP 426.
 
 `POST /api/auth/challenge {accountId}` returns `{challengeId,challenge}`.
@@ -831,7 +871,7 @@ with an explanatory reason. The public invitation map shows actual users and
 recorded invitation links with four-character user-ID suffixes. Redemption
 atomically marks a capability spent and records its issuer,
 accepted account, and acceptance time. Personal contact data remains encrypted;
-the fixed inviter welcome is the explicit server-readable onboarding exception.
+the inviter's first message is the explicit server-readable onboarding exception.
 
 Legacy data is not silently deleted or migrated. `/api/auth/legacy-login` accepts
 existing password credentials and issues a 15-minute migration-only token, usable
@@ -843,7 +883,7 @@ username with the derived account ID, clears old profile/password/social columns
 and returns a normal session plus `accountId` and `legacyHistoryRetained:true`.
 Historical contacts, messages, uploads, reports and invitation relationships are
 retained, not retroactively encrypted. Passwordless legacy social accounts need a
-separate verified recovery/migration procedure; new social sign-in is disabled.
+separate verified recovery/migration procedure; legacy social login stays disabled.
 Existing issued JWTs are not retroactively revoked by this migration.
 
 Routing is not anonymous: membership, account/device public keys, push tokens,

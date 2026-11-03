@@ -11,6 +11,7 @@ import { useAuthStore } from "../../store/authStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useContactStore } from "../../store/contactStore";
 import { contactDisplayNames, resolveDisplayName } from "../../utils/contactDisplayName";
+import { getMessagePreview } from "../../utils/messagePreview";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { API_URL } from "../../config/environment";
@@ -21,17 +22,6 @@ const getPeerName = (conversation, userId, names) => {
     (participant) => participant.user?.id !== userId
   )?.user;
   return resolveDisplayName(names, peer) || null;
-};
-
-const getMessagePreview = (message, t) => {
-  if (!message) return t("messages.noMessagesYet");
-  if (message.deletedAt) return t("messages.messageDeleted");
-  if (message.content) return message.content;
-  if (message.messageType === "FILE") return message.fileName || t("messages.file");
-  if (message.messageType === "IMAGE" || message.messageType === "DRAWING") return t("messages.imageCaption");
-  if (message.messageType === "VIDEO") return t("messages.videoCaption");
-  if (message.messageType === "VOICE") return t("messages.voiceCaption");
-  return t("messages.noMessagesYet");
 };
 
 export const MessagesScreen = ({ navigation }) => {
@@ -106,7 +96,7 @@ export const MessagesScreen = ({ navigation }) => {
 
   const renderConversationItem = ({ item }) => {
     const lastMessage = item.messages?.[0];
-    const subtitle = getMessagePreview(lastMessage, t);
+    const subtitle = getMessagePreview(lastMessage, t) || t("messages.noMessagesYet");
     const timestamp = lastMessage
       ? new Date(lastMessage.createdAt).toLocaleDateString()
       : "";

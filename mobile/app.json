@@ -19,9 +19,10 @@
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "associatedDomains": [
-        "applinks:looptalk.app"
+        "applinks:looptalk.net"
       ],
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": true,
         "UIBackgroundModes": [
           "audio",
           "remote-notification"
@@ -60,7 +61,7 @@
           "data": [
             {
               "scheme": "https",
-              "host": "looptalk.app",
+              "host": "looptalk.net",
               "pathPrefix": "/app/register"
             }
           ],

@@ -1,11 +1,14 @@
 import { Platform } from "react-native";
+import { isDesktopApp } from "./desktopApp";
 
 let deferredInstallPrompt = null;
 const INSTALLED_KEY = "looptalk.webAppInstalled";
 const INSTALLATION_KEY = "looptalk.webAppInstallationId";
 const listeners = new Set();
 const isWeb = Platform.OS === "web" && typeof window !== "undefined";
-let installed = false;
+// The packaged desktop app is already installed.
+const isDesktopShell = isWeb && isDesktopApp();
+let installed = isDesktopShell;
 
 const readStorage = (key) => {
   try {
@@ -33,7 +36,7 @@ const markInstalled = () => {
   listeners.forEach((listener) => listener());
 };
 
-if (isWeb) {
+if (isWeb && !isDesktopShell) {
   const standalone = window.matchMedia("(display-mode: standalone)");
   installed = standalone.matches || window.navigator.standalone === true ||
     readStorage(INSTALLED_KEY) === "true";
@@ -105,7 +108,24 @@ export const getWebAppInstallHelp = () => {
   return "browser";
 };
 
+// Desktop browsers get the packaged app, whose notifications and start-at-login do not depend on browser settings.
+export const getDesktopDownloadPlatform = () => {
+  if (!isWeb || isDesktopShell) return null;
+  const { userAgent = "", platform = "", maxTouchPoints = 0, userAgentData } = window.navigator;
+  if (userAgentData?.mobile || /Android|iPhone|iPad|iPod|Mobile|CrOS/i.test(userAgent)) return null;
+  const os = `${userAgentData?.platform || ""} ${platform} ${userAgent}`;
+  if (/Win/i.test(os)) return "windows";
+  if (/Mac/i.test(os)) return maxTouchPoints > 1 ? null : "mac";
+  if (/Linux|X11/i.test(os)) return "linux";
+  return null;
+};
+
 export const installWebApp = async () => {
+  const desktopPlatform = getDesktopDownloadPlatform();
+  if (desktopPlatform) {
+    window.location.assign(`/download/desktop/${desktopPlatform}`);
+    return "download";
+  }
   if (!isWeb || installed) return "unavailable";
   if (deferredInstallPrompt) {
     const prompt = deferredInstallPrompt;

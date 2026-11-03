@@ -1,5 +1,7 @@
+import { siteOrigin } from "./_lib/siteOrigin";
+
 export default function robots() {
-  const origin = (process.env.PUBLIC_URL || "http://localhost:3000").replace(/\/$/, "");
+  const origin = siteOrigin();
   return {
     rules: { userAgent: "*", allow: "/", disallow: ["/admin", "/api/"] },
     sitemap: `${origin}/sitemap.xml`,

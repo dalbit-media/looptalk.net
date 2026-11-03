@@ -264,6 +264,7 @@ test("encrypted preference sync failures notify the owner without applying a fal
       },
       "../i18n/i18n": { getDeviceLanguage: () => "ko", setLanguage() {}, t: (key) => key },
       "../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
+      "../utils/desktopApp": { isDesktopApp: () => false },
       "../utils/ownerVault": {
         getOwnerIdentity: () => ({ accountId: "private" }),
         readOwnerVault: () => ({ preferences: {} }),
@@ -292,6 +293,7 @@ test("preference storage read failures keep startup usable and report defaults",
       },
       "../i18n/i18n": { getDeviceLanguage: () => "ko", setLanguage() {}, t: (key) => key },
       "../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
+      "../utils/desktopApp": { isDesktopApp: () => false },
       "../utils/ownerVault": {
         getOwnerIdentity: () => null,
         readOwnerVault: () => ({ preferences: {} }),
@@ -304,4 +306,32 @@ test("preference storage read failures keep startup usable and report defaults",
     assert.equal(store.getState().notificationsEnabled, true);
     assert.equal(alerts.length, 1);
     assert.equal(alerts[0][1], "privacy.preferenceLoadFailed");
+});
+
+test("the desktop app enables notifications by default but keeps an explicit choice", async () => {
+  const loadStore = (saved, vaultPreferences) => load("store/preferencesStore.js", {
+    "@react-native-async-storage/async-storage": {
+      getItem: async (key) => (key === "notificationsEnabled" ? saved : null),
+      setItem: async () => {},
+    },
+    "../i18n/i18n": { getDeviceLanguage: () => "ko", setLanguage() {}, t: (key) => key },
+    "../utils/showAlert": { showAlert() {} },
+    "../utils/desktopApp": { isDesktopApp: () => true },
+    "../utils/ownerVault": {
+      getOwnerIdentity: () => null,
+      readOwnerVault: () => ({ preferences: vaultPreferences }),
+      updateOwnerVault: async () => {},
+    },
+  }).usePreferencesStore;
+  const fresh = loadStore(null, {});
+  assert.equal(fresh.getState().notificationsEnabled, true);
+  await fresh.getState().initialize();
+  assert.equal(fresh.getState().notificationsEnabled, true);
+  fresh.getState().loadOwnerPreferences();
+  assert.equal(fresh.getState().notificationsEnabled, true);
+  const optedOut = loadStore("false", { notificationsEnabled: false });
+  await optedOut.getState().initialize();
+  assert.equal(optedOut.getState().notificationsEnabled, false);
+  optedOut.getState().loadOwnerPreferences();
+  assert.equal(optedOut.getState().notificationsEnabled, false);
 });

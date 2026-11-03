@@ -48,6 +48,7 @@ const setupStore = (options = {}) => {
   let savedToken = options.token || null;
   let owner = options.identity || null;
   let generation = 0;
+  let vaultData = {};
   const profile = { displayName: "Private Name", bio: "Private Bio" };
   const runtime = {};
   for (const name of ["messageStore", "contactStore", "callStore", "alertStore", "preferencesStore"]) {
@@ -99,6 +100,11 @@ const setupStore = (options = {}) => {
         return options.response || response;
       },
       getCurrentUser: async () => { events.push(["me"]); return response.user; },
+      changeCredentials: async (body, token) => {
+        events.push(["changeCredentials", body, token]);
+        return { user: { ...response.user, username: body.identifier } };
+      },
+      linkSocial: async (body, token) => { events.push(["linkSocial", body, token]); return { provider: body.provider }; },
     },
     "../api/users": {
       getOwnerVault: async () => { events.push(["vault"]); return { vault, revision: 1 }; },
@@ -117,13 +123,26 @@ const setupStore = (options = {}) => {
       createAccountIdentity: async () => identity,
       generateUsername: () => "brave-otter-123",
       createCredentialIdentity: async (value, secret, credentialSalt) => {
+        if (options.credential) {
+          events.push(["credential", value, secret]);
+          return options.credential;
+        }
         assert.equal(value, identifier);
         assert.equal(secret, password);
         assert.equal(credentialSalt, salt);
         return identity;
       },
+      generatePassword: () => "abcd-efgh-jkmn-pqrs",
+      wrapAccountKey: (credential, account) => {
+        events.push(["wrap", credential.accountId, account.accountId]);
+        return "wrapped-key";
+      },
+      unwrapAccountKey: (credential, wrapped) => {
+        events.push(["unwrap", credential.accountId, wrapped]);
+        return identity;
+      },
       signAccountChallenge: (key, challenge) => {
-        assert.equal(key, identity.recoveryKey);
+        assert.ok([identity.recoveryKey, options.credential?.recoveryKey].includes(key));
         assert.equal(challenge, "base64-challenge");
         return "signature";
       },
@@ -136,7 +155,14 @@ const setupStore = (options = {}) => {
         events.push(["lock", forgetIdentity]);
       },
       updateVaultSessionToken: (token) => { events.push(["vaultToken", token]); },
-      createOwnerVault: async (_identity, value) => { events.push(["createVault", value]); return { vault, data: { profile: value } }; },
+      createOwnerVault: async (_identity, value, imported = {}) => {
+        events.push(["createVault", value]);
+        vaultData = { ...imported, profile: value };
+        return { vault, data: vaultData };
+      },
+      readOwnerVault: () => vaultData,
+      getOwnerIdentity: () => owner,
+      updateOwnerVault: async (update) => { vaultData = update(vaultData); events.push(["updateVault"]); },
       unlockOwnerVault: async () => {
         if (options.corrupt) throw new Error("Invalid encrypted data");
         events.push(["unlock"]);
@@ -336,6 +362,49 @@ test("login normalizes the contact, derives with the exact password and sends on
   assert.equal(owner().userId, "u_random");
   assert.equal(owner().accountId, identity.accountId);
   assert.equal(store.getState().user.displayName, "Private Name");
+});
+
+test("accepting an invitation opens a random account unlocked by generated, replaceable credentials", async () => {
+  const credential = { accountId: "credential-id", publicKey: "credential-public", recoveryKey: "loop2.credential" };
+  const { store, events, owner } = setupStore({ credential });
+  await store.getState().acceptInvitation("7AC4M9K2XE");
+  assert.deepEqual(events.find(([name]) => name === "credential"), ["credential", "brave-otter-123", "abcd-efgh-jkmn-pqrs"]);
+  assert.deepEqual(events.find(([name]) => name === "wrap"), ["wrap", "credential-id", identity.accountId]);
+  assert.deepEqual(JSON.parse(JSON.stringify(events.find(([name]) => name === "register"))), [
+    "register", "brave-otter-123", salt, identity.publicKey, vault, "7AC4M9K2XE", null, null,
+    { credentialPublicKey: "credential-public", wrappedAccountKey: "wrapped-key" },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(events.find(([name]) => name === "createVault"))), ["createVault", {}]);
+  assert.equal(owner().accountId, identity.accountId);
+  assert.deepEqual(JSON.parse(JSON.stringify(store.getState().accountSetup)), {
+    generated: { username: "brave-otter-123", password: "abcd-efgh-jkmn-pqrs" }, wrapped: true, linkedProviders: [],
+  });
+});
+
+test("login through a credential wrapper unwraps the stable account key", async () => {
+  const credential = { accountId: "credential-id", publicKey: "credential-public", recoveryKey: "loop2.credential" };
+  const { store, events, owner } = setupStore({ credential, response: { ...response, wrappedAccountKey: "wrapped-key" } });
+  await store.getState().login(identifier, password);
+  assert.deepEqual(events.find(([name]) => name === "login"), ["login", "credential-id", "challenge-id", "signature"]);
+  assert.deepEqual(events.find(([name]) => name === "unwrap"), ["unwrap", "credential-id", "wrapped-key"]);
+  assert.equal(owner().accountId, identity.accountId);
+});
+
+test("changing credentials rewraps the account key, proves ownership and forgets the generated password", async () => {
+  const credential = { accountId: "credential-id", publicKey: "credential-public", recoveryKey: "loop2.credential" };
+  const { store, events } = setupStore({ credential });
+  await store.getState().acceptInvitation("7AC4M9K2XE");
+  await store.getState().changeCredentials(identifier, password);
+  const [, body, token] = events.find(([name]) => name === "changeCredentials");
+  assert.equal(token, "token");
+  assert.deepEqual({ ...body }, {
+    identifier, credentialSalt: salt, credentialPublicKey: "credential-public", wrappedAccountKey: "wrapped-key",
+    challengeId: "challenge-id", signature: "signature",
+  });
+  assert.equal(store.getState().accountSetup.generated, null);
+  assert.equal(store.getState().user.username, identifier);
+  await store.getState().linkSocial({ provider: "google", idToken: "id-token" });
+  assert.deepEqual([...store.getState().accountSetup.linkedProviders], ["google"]);
 });
 
 test("signup publishes the name and immediately opens a random-ID account without key backup", async () => {

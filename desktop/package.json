@@ -1,0 +1,70 @@
+{
+  "name": "looptalk-desktop",
+  "productName": "LoopTalk",
+  "version": "1.0.0",
+  "description": "LoopTalk desktop messenger",
+  "author": "Dalbit Media <admin@looptalk.net>",
+  "homepage": "https://looptalk.net",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "private": true,
+  "main": "src/main.js",
+  "looptalkUrl": "https://looptalk.net/app/",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "net.looptalk.desktop",
+    "productName": "LoopTalk",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "LoopTalk-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LoopTalk"
+    },
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "target": [{ "target": "dmg", "arch": ["universal"] }],
+      "artifactName": "LoopTalk.${ext}",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "LoopTalk uses the camera for video calls.",
+        "NSMicrophoneUsageDescription": "LoopTalk uses the microphone for calls and voice messages."
+      }
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "artifactName": "LoopTalk.${ext}",
+      "category": "Network;InstantMessaging",
+      "maintainer": "Dalbit Media <admin@looptalk.net>"
+    }
+  }
+}

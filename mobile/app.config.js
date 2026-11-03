@@ -1,18 +1,13 @@
 module.exports = ({ config }) => {
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim()?.replace(/\/+$/, "");
+  const isProductionBuild = process.env.EAS_BUILD_PROFILE === "production";
+  const apiUrl = (process.env.EXPO_PUBLIC_API_URL?.trim() ||
+    (isProductionBuild ? "https://looptalk.net" : ""))?.replace(/\/+$/, "");
   const projectId =
     process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim() || config.extra?.eas?.projectId;
-  const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN?.trim();
-  const isProductionBuild = process.env.EAS_BUILD_PROFILE === "production";
 
   if (isProductionBuild) {
-    const missing = [
-      ["EXPO_PUBLIC_API_URL", apiUrl],
-      ["EXPO_PUBLIC_EAS_PROJECT_ID", projectId],
-      ["EXPO_PUBLIC_SENTRY_DSN", sentryDsn],
-    ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) {
-      throw new Error(`Missing production build variables: ${missing.join(", ")}`);
+    if (!projectId) {
+      throw new Error("Missing production build variables: EXPO_PUBLIC_EAS_PROJECT_ID");
     }
     if (!apiUrl.startsWith("https://")) {
       throw new Error("EXPO_PUBLIC_API_URL must use HTTPS for production builds");

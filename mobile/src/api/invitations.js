@@ -14,13 +14,17 @@ const invitationStats = (invitations) => {
   };
 };
 
-export const createInvitation = async (token, language) => {
+export const createInvitation = async (token, language, { inviteeDisplayName, message } = {}) => {
   const displayName = readOwnerVault().profile.displayName;
   const identity = getOwnerIdentity();
   await ensureSecureDevice(identity.userId || identity.accountId, token);
+  const optional = (key, value) => (value?.trim() ? { [key]: value.trim() } : {});
   const response = await api.post(
     "/invitations/create",
-    { language, ...(displayName?.trim() ? { inviterDisplayName: displayName.trim() } : {}) },
+    {
+      language, ...optional("inviterDisplayName", displayName),
+      ...optional("inviteeDisplayName", inviteeDisplayName), ...optional("message", message),
+    },
     {
       headers: { Authorization: `Bearer ${token}` },
     }

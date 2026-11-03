@@ -1,36 +1,16 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect } from "react";
 import { Platform, TouchableOpacity } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/authStore";
-import { useTranslation } from "../hooks/useTranslation";
 import { useAppTheme } from "../hooks/useAppTheme";
-import { showAlert } from "../utils/showAlert";
-import {
-  detectRelatedWebApp,
-  getWebAppInstallationId,
-  getWebAppInstallHelp,
-  installWebApp,
-  isWebAppInstalled,
-  subscribeWebAppInstallation,
-} from "../utils/webAppInstall";
+import { useAppInstall } from "../hooks/useAppInstall";
+import { getWebAppInstallationId } from "../utils/webAppInstall";
 
 export const WebAppInstallButton = () => {
-  const t = useTranslation();
   const { colors } = useAppTheme();
   const token = useAuthStore((state) => state.token);
-  const installed = useSyncExternalStore(
-    subscribeWebAppInstallation, isWebAppInstalled, () => false
-  );
-  const [installing, setInstalling] = useState(false);
-  const prompting = useRef(false);
-
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    detectRelatedWebApp().catch((error) =>
-      console.error("Could not detect installed web app:", error)
-    );
-  }, []);
+  const { installed, available, installing, install, label, hint } = useAppInstall();
 
   useEffect(() => {
     if (Platform.OS !== "web" || !installed || !token) return;
@@ -42,7 +22,7 @@ export const WebAppInstallButton = () => {
       try {
         await api.post("/telemetry/web-app-install", {
           installationId: getWebAppInstallationId(),
-        }, { headers: { Authorization: `Bearer ${token}` } });
+        }, { headers: { Authorization: ["Bearer", token].join(" ") } });
         reported = true;
       } catch (error) {
         console.error("Could not record web app installation:", error);
@@ -59,40 +39,15 @@ export const WebAppInstallButton = () => {
     };
   }, [installed, token]);
 
-  if (Platform.OS !== "web" || installed) return null;
-
-  const handleInstall = async () => {
-    if (prompting.current) return;
-    prompting.current = true;
-    setInstalling(true);
-    try {
-      const result = await installWebApp();
-      if (result === "manual") {
-        const help = getWebAppInstallHelp();
-        showAlert(t("settings.installApp"), t(
-          help === "https"
-            ? "messages.installRequiresHttps"
-            : help === "ios"
-              ? "messages.installIosInstructions"
-              : "messages.installInstructions"
-        ));
-      }
-    } catch (error) {
-      console.error("Could not install web app:", error);
-      showAlert(t("common.error"), t("messages.installFailed"));
-    } finally {
-      prompting.current = false;
-      setInstalling(false);
-    }
-  };
+  if (!available) return null;
 
   return (
     <TouchableOpacity
-      onPress={handleInstall}
+      onPress={install}
       disabled={installing}
       accessibilityRole="button"
-      accessibilityLabel={t("settings.installApp")}
-      accessibilityHint={t("settings.installAppDescription")}
+      accessibilityLabel={label}
+      accessibilityHint={hint}
       style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}
     >
       <Ionicons name="download-outline" size={24} color={colors.headerIcon} />

@@ -7,10 +7,13 @@ const PROVIDERS = {
   google: {
     column: "googleId", audiences: "GOOGLE_CLIENT_IDS", jwks: "https://www.googleapis.com/oauth2/v3/certs",
     issuers: ["https://accounts.google.com", "accounts.google.com"],
+    // Unset means "the Google client IDs the bundled web/native clients were built with".
+    defaults: (environment) => ["WEB", "IOS", "ANDROID"].map((platform) => environment[`EXPO_PUBLIC_GOOGLE_${platform}_CLIENT_ID`]),
   },
   apple: {
     column: "appleId", audiences: "APPLE_CLIENT_IDS", jwks: "https://appleid.apple.com/auth/keys",
     issuers: ["https://appleid.apple.com"],
+    defaults: () => ["com.looptalk.app"],
   },
 };
 const KEY_TTL_MS = 60 * 60 * 1000;
@@ -33,7 +36,10 @@ const loadKeys = async (provider, force) => {
   return keys;
 };
 
-const audiencesFor = (config) => (process.env[config.audiences] || "").split(",").map((value) => value.trim()).filter(Boolean);
+// An explicitly empty variable disables the provider; an unset one uses its defaults.
+const audiencesFor = (config, environment = process.env) => (
+  environment[config.audiences] === undefined ? config.defaults(environment) : environment[config.audiences].split(",")
+).map((value) => value?.trim()).filter(Boolean);
 
 // Returns an opaque, keyed hash of the provider account so no provider identity is stored in clear text.
 const verifySocialToken = async (provider, idToken) => {
@@ -62,6 +68,7 @@ const verifySocialToken = async (provider, idToken) => {
 };
 
 module.exports = {
+  audiencesFor,
   verifySocialToken,
   setKeyFetcher: (fetcher) => { fetchKeys = fetcher; cache.clear(); },
 };

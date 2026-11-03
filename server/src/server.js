@@ -8,11 +8,12 @@ const { createCorsPolicy } = require("./utils/corsPolicy");
 const { readAppState } = require("./utils/appState");
 
 validateEnvironment();
+const RELEASE_VERSION = process.env.RELEASE_VERSION || require("../package.json").version;
 const Sentry = process.env.SENTRY_DSN ? require("@sentry/node") : null;
 Sentry?.init({
   dsn: process.env.SENTRY_DSN,
   enabled: Boolean(process.env.SENTRY_DSN),
-  release: process.env.RELEASE_VERSION || "looptalk-server@1.0.0",
+  release: process.env.RELEASE_VERSION || `looptalk-server@${RELEASE_VERSION}`,
   sendDefaultPii: false,
 });
 
@@ -212,12 +213,13 @@ app.use("/api/link-preview", require("./routes/linkPreview"));
 app.use("/api/calls", require("./routes/calls"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/forum", require("./routes/forum"));
+app.use("/download/desktop", require("./routes/desktopDownload").createDesktopDownloadRouter());
 
 // Health check
 app.get("/health", (req, res) => {
   res.set("Cache-Control", "no-store").json({
     status: "ok",
-    version: process.env.RELEASE_VERSION || "1.0.0",
+    version: RELEASE_VERSION,
     timestamp: new Date().toISOString(),
   });
 });

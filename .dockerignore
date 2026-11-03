@@ -13,3 +13,4 @@ mobile/.expo/web-dist
 server/prisma/dev.db*
 server/uploads/*
 *.log
+desktop

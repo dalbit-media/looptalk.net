@@ -14,6 +14,7 @@ import { ProfileScreen } from "../screens/app/ProfileScreen";
 import { JoinNetworkScreen } from "../screens/app/JoinNetworkScreen";
 import { AddContactScreen } from "../screens/app/AddContactScreen";
 import { MyInvitationsScreen } from "../screens/app/MyInvitationsScreen";
+import { AccountSetupScreen } from "../screens/app/AccountSetupScreen";
 import { CreateGroupScreen } from "../screens/app/CreateGroupScreen";
 import { GroupInfoScreen } from "../screens/app/GroupInfoScreen";
 import { useTranslation } from "../hooks/useTranslation";
@@ -23,6 +24,7 @@ import { useAuthStore } from "../store/authStore";
 import { getAppTextScale } from "../utils/chatTextSize";
 import { WebAppInstallButton } from "../components/WebAppInstallButton";
 import { GuestJoinBanner } from "../components/GuestJoinBanner";
+import { AccountSetupBanner } from "../components/AccountSetupBanner";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -36,6 +38,9 @@ const TabScreenLayout = ({ children, route, navigation }) => {
       <GuestJoinBanner onPress={() => route.name === "ForumHome"
         ? navigation.navigate("JoinNetwork")
         : navigation.navigate("Forum", { screen: "JoinNetwork" })} />
+      <AccountSetupBanner onPress={() => route.name === "SettingsHome"
+        ? navigation.navigate("AccountSetup")
+        : navigation.navigate("Settings", { screen: "AccountSetup" })} />
       {children}
     </View>
   );
@@ -272,6 +277,14 @@ const SettingsStack = () => {
         component={MyInvitationsScreen}
         options={({ navigation }) => ({
           title: t("settings.myInvitations"),
+          ...getBackButtonOptions(navigation, t),
+        })}
+      />
+      <Stack.Screen
+        name="AccountSetup"
+        component={AccountSetupScreen}
+        options={({ navigation }) => ({
+          title: t("setup.title"),
           ...getBackButtonOptions(navigation, t),
         })}
       />

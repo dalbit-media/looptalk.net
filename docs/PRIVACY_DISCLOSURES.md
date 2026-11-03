@@ -31,10 +31,10 @@ answers are not yet confirmed. / 이 목록은 초안이며 운영 공급자, �
 
 - Data is not sold.
 - Data is not used for third-party advertising or cross-company tracking.
-- Account deletion is available in Settings and at `https://looptalk.app/account-deletion`.
+- Account deletion is available in Settings and at `https://looptalk.net/account-deletion`.
 - Transport encryption is required in production.
 - Users can block and report user-generated content.
-- Private/group deliveries use E2EE, including attachments and operations. Invited signup creates one fixed, clearly labeled automatic welcome attributed to the inviter in a normal direct chat. Only this onboarding notice is server-readable; replies use E2EE. The inviter becomes the first contact in the invitee's encrypted vault, not a plaintext Contact row. Bootstrap/anonymous invitations create no welcome. Legacy records retain their actual existing status. See [protocol and limits](ENCRYPTED_MESSAGING.md).
+- Private/group deliveries use E2EE, including attachments and operations. Invited signup creates one clearly labeled invitation message attributed to the inviter in a normal direct chat: the inviter's optional first message (disclosed as server-readable when creating the link, hidden from the public invitation page, and cleared from the invitation once redeemed) or a fixed default. Only this onboarding message is server-readable; replies use E2EE. The inviter becomes the first contact in the invitee's encrypted vault, not a plaintext Contact row. Bootstrap/anonymous invitations create no welcome. Legacy records retain their actual existing status. See [protocol and limits](ENCRYPTED_MESSAGING.md).
 - Receipt-triggered deletion removes live queued ciphertext, not necessarily SQLite journals or backups.
 - Private-account local records/media and archive exports are encrypted. Native playback/sharing may create temporary decrypted media in cache while unlocked; lock cleans it, but crashes/OS copies need separate review. New devices do not recover flushed messages. Credential login restores the encrypted owner vault, not another device's local history. No email/SMS password reset is implemented in phase one.
 - Device keys use TOFU with optional out-of-band safety-code comparison; the protocol has no forward secrecy.

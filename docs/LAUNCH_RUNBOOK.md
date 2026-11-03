@@ -35,25 +35,36 @@ EASプロジェクト`@eddiec2025/looptalk`のリンクとAndroid署名は完了
 - [ ] Apple Developer and App Store Connect access for `com.looptalk.app`
 - [ ] Google Play Console access for `com.looptalk.app`
 - [x] Expo/EAS project linked as `@eddiec2025/looptalk`
-- [ ] Replace the current parked `looptalk.app` DNS target and route HTTPS traffic to the LoopTalk container
-- [ ] `support@looptalk.app`, `privacy@looptalk.app`, and `legal@looptalk.app` receive mail
+- [ ] Replace the current parked `looptalk.net` DNS target and route HTTPS traffic to the LoopTalk container
+- [ ] `support@looptalk.net`, `privacy@looptalk.net`, and `legal@looptalk.net` receive mail
 - [ ] Persistent `/data` volume for the SQLite database and uploads, with tested backups and restore
 - [ ] Coturn deployment with UDP, TCP, and TLS listeners
 - [ ] Sentry organization/projects for server and client
 
-## 2. Server Secrets
+## 2. Server Configuration
 
-Start from `server/.env.example`. Set every production gate:
+Nothing is required to start. On first start the server generates `JWT_SECRET`,
+`USER_DATA_ENCRYPTION_KEY` and the web-push VAPID pair and stores them in
+`/data/looptalk.db.secrets.json` beside the database; back it up with the database.
+Values already set in the environment keep taking precedence.
 
-- `DATABASE_URL`, `JWT_SECRET`, `PUBLIC_URL`, `CORS_ORIGIN`
+Set for production:
+
+- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256` (app links; `/.well-known` returns 404 until set)
 - `TURN_URLS`, `TURN_SECRET`
-- `ADMIN_USER_IDS`, `SENTRY_DSN`, `RELEASE_VERSION`
-- `APPLE_TEAM_ID`, `ANDROID_CERT_SHA256`
-- `EXPO_ACCESS_TOKEN`
-- `UPLOAD_DIR=/data/uploads`
+- `ADMIN_USER_IDS`
+- Optional: `SENTRY_DSN`, `TRUST_PROXY`, `EXPO_ACCESS_TOKEN`
 
-Social sign-in is disabled (HTTP 426); do not provision server Google/Apple
-token-verification dependencies or client IDs for this release.
+The Docker image already sets `DATABASE_URL`, `UPLOAD_DIR` and `PORT`; `PUBLIC_URL`
+defaults to `https://looptalk.net` and `RELEASE_VERSION` to the server package version.
+
+Social sign-in (registration, `/api/auth/social-recover`, `/api/auth/social-link`)
+verifies identity tokens against `APPLE_CLIENT_IDS`/`GOOGLE_CLIENT_IDS`. Unset, Apple
+uses the bundle ID `com.looptalk.app` and Google uses the
+`EXPO_PUBLIC_GOOGLE_{WEB,IOS,ANDROID}_CLIENT_ID` values, so only the Google client IDs
+need configuring (once, shared by server and web build). Set a variable to `""` to
+disable a provider (HTTP 503). Only the legacy `POST /api/auth/social` returns 426.
+App Store Guideline 4.8 requires Sign in with Apple to work whenever Google sign-in is offered.
 
 Deploy the root `Dockerfile` as a single server instance. It builds the Next.js
 website and browser client, generates the SQLite Prisma client, synchronizes
@@ -75,28 +86,24 @@ wiped.
 Verify after deployment:
 
 ```bash
-curl -f https://looptalk.app/health
-curl -f https://looptalk.app/ready
-curl -f https://looptalk.app/privacy
-curl -f https://looptalk.app/terms
-curl -f https://looptalk.app/support
-curl -f https://looptalk.app/account-deletion
-curl -f https://looptalk.app/.well-known/apple-app-site-association
-curl -f https://looptalk.app/.well-known/assetlinks.json
-SMOKE_API_URL=https://looptalk.app npm run smoke:release --prefix server
+curl -f https://looptalk.net/health
+curl -f https://looptalk.net/ready
+curl -f https://looptalk.net/privacy
+curl -f https://looptalk.net/terms
+curl -f https://looptalk.net/support
+curl -f https://looptalk.net/account-deletion
+curl -f https://looptalk.net/.well-known/apple-app-site-association
+curl -f https://looptalk.net/.well-known/assetlinks.json
+SMOKE_API_URL=https://looptalk.net npm run smoke:release --prefix server
 ```
 
 ## 3. EAS Secrets and Builds
 
-Do not set `EXPO_PUBLIC_API_URL` until the production `/health` and `/ready`
-checks pass over HTTPS. The EAS `production` environment is currently empty.
+Production builds default to `https://looptalk.net`; `EXPO_PUBLIC_API_URL` only
+overrides it. Optional EAS `production` values:
 
-Set these EAS environment values for `production`:
-
-- `EXPO_PUBLIC_API_URL=https://looptalk.app`
-- `EXPO_PUBLIC_SENTRY_DSN`
-- Google OAuth client IDs
-- `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` for source maps
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID` (enables Google sign-in; set the same values on the server)
+- `EXPO_PUBLIC_SENTRY_DSN`, plus `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_PROJECT` for source maps
 
 Then run:
 
@@ -108,15 +115,16 @@ npx eas-cli@latest credentials --platform ios
 npx eas-cli@latest build --platform all --profile production
 ```
 
-Android signing is already configured. `app.config.js` intentionally rejects a
-production build when the HTTPS API, linked EAS project, or Sentry DSN is
-missing. Do not submit either binary until Section 4 passes.
+Android signing is already configured. `app.config.js` rejects a production
+build without a linked EAS project or with a non-HTTPS API override. Do not submit
+either binary until Section 4 passes.
 
 ## 4. Physical Device Gate
 
 Test the signed production build, not Expo Go, on at least one current and one older supported iPhone and Android device:
 
 - [ ] Email/phone registration, invitation acceptance, Apple login, and Google login
+- [ ] One-tap invitation: Accept lands in chat with the first message; Account setup changes username/password and links Apple/Google
 - [ ] Account deletion followed by failed login/token reuse
 - [ ] Direct/group text, image, video, voice, drawing, file, reply, edit, delete, reactions
 - [ ] Offline send, reconnect retry, duplicate prevention, read state, and pagination
@@ -150,7 +158,7 @@ for real screen-picker, physical-device, relay-only, load, or long-call testing.
 
 ## 5. Store Submission
 
-Use `docs/STORE_LISTING.md` and `docs/PRIVACY_DISCLOSURES.md` for listing text and forms. Upload real-device screenshots, provide an invitation-enabled review account, and explain invitation access in review notes. Complete Android foreground-service/phone permission declarations for calling.
+Use `docs/STORE_LISTING.md` and `docs/PRIVACY_DISCLOSURES.md` for listing text and forms. Upload real-device screenshots, provide an invitation-enabled review account, and explain invitation access in review notes. Complete Android foreground-service/phone permission declarations for calling. Answer App Store Connect export compliance (the app declares `ITSAppUsesNonExemptEncryption`), and provide a fresh invitation link in the review notes.
 
 After all earlier sections pass:
 

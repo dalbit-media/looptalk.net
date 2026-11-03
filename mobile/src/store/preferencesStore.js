@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { getDeviceLanguage, setLanguage, t } from "../i18n/i18n";
 import { showAlert } from "../utils/showAlert";
 import { getOwnerIdentity, readOwnerVault, updateOwnerVault } from "../utils/ownerVault";
+import { isDesktopApp } from "../utils/desktopApp";
 
 const LANGUAGE_KEY = "language";
 const THEME_KEY = "themeMode";
@@ -11,6 +12,8 @@ const NOTIFICATIONS_KEY = "notificationsEnabled";
 const SUPPORTED_LANGUAGES = ["ko"];
 const THEME_MODES = ["system", "light", "dark"];
 const CHAT_TEXT_SIZES = ["standard", "large", "extraLarge"];
+// The desktop app asks for notification permission on first launch, so its notifications start enabled.
+const defaultNotificationsEnabled = () => isDesktopApp();
 const persistPreference = async (key, value) => {
   if (getOwnerIdentity()) {
     await updateOwnerVault((current) => ({
@@ -33,18 +36,19 @@ export const usePreferencesStore = create((set) => ({
   language: getDeviceLanguage(),
   themeMode: "system",
   chatTextSize: "standard",
-  notificationsEnabled: false,
+  notificationsEnabled: defaultNotificationsEnabled(),
   loadOwnerPreferences: () => {
     const preferences = readOwnerVault().preferences;
     set({
       themeMode: THEME_MODES.includes(preferences[THEME_KEY]) ? preferences[THEME_KEY] : "system",
       chatTextSize: CHAT_TEXT_SIZES.includes(preferences[CHAT_TEXT_SIZE_KEY])
         ? preferences[CHAT_TEXT_SIZE_KEY] : "standard",
-      notificationsEnabled: preferences[NOTIFICATIONS_KEY] === true,
+      notificationsEnabled: typeof preferences[NOTIFICATIONS_KEY] === "boolean"
+        ? preferences[NOTIFICATIONS_KEY] : defaultNotificationsEnabled(),
     });
   },
   resetOwnerPreferences: () => set({
-    themeMode: "system", chatTextSize: "standard", notificationsEnabled: false,
+    themeMode: "system", chatTextSize: "standard", notificationsEnabled: defaultNotificationsEnabled(),
   }),
 
   initialize: async () => {
@@ -74,7 +78,9 @@ export const usePreferencesStore = create((set) => ({
     const chatTextSize = CHAT_TEXT_SIZES.includes(savedChatTextSize)
       ? savedChatTextSize
       : "standard";
-    const notificationsEnabled = savedNotifications === "true";
+    const notificationsEnabled = savedNotifications === null
+      ? defaultNotificationsEnabled()
+      : savedNotifications === "true";
 
     setLanguage(language);
     set({ language, themeMode, chatTextSize, notificationsEnabled });

@@ -1,22 +1,25 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { AppText as Text } from "../../components/AppText";
 import { useAuthStore } from "../../store/authStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { registerDeviceToken } from "../../api/auth";
-import { getCallPushToken } from "../../utils/callNotifications";
-import { InvitationSetup } from "../../components/InvitationSetup";
+import { getInvitationInfo } from "../../api/invitations";
+import { getCallPushToken, requestPushPermission } from "../../utils/callNotifications";
 import { SocialAuthButtons } from "../../components/SocialAuthButtons";
+import { TermsNotice } from "../../components/TermsNotice";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { generateUsername, normalizeIdentifier, isUsername } from "../../utils/accountPrivacy";
 
 const enableWebPush = async () => {
   const deviceToken = await getCallPushToken();
-  await registerDeviceToken(deviceToken, "web", useAuthStore.getState().token);
+  if (deviceToken) await registerDeviceToken(deviceToken, "web", useAuthStore.getState().token);
   await usePreferencesStore.getState().setNotificationsEnabled(true);
 };
+const webNotificationPermission = () =>
+  Platform.OS === "web" && typeof Notification !== "undefined" ? Notification.permission : null;
 
 export const RegisterScreen = ({ route, navigation }) => {
   const t = useTranslation();
@@ -31,7 +34,49 @@ export const RegisterScreen = ({ route, navigation }) => {
   const [socialError, setSocialError] = useState("");
   const [socialBusy, setSocialBusy] = useState(false);
   const invitationCode = route.params?.invitationCode || route.params?.code;
+  const [usePassword, setUsePassword] = useState(!invitationCode);
+  const [inviterName, setInviterName] = useState(null);
+  const autoAccepted = useRef(false);
   const register = useAuthStore((state) => state.register);
+  const acceptInvitation = useAuthStore((state) => state.acceptInvitation);
+
+  const failureKey = (error) => error.response?.status === 409
+    ? "auth.userExists"
+    : invitationCode && (error.response?.status === 400 || error.response?.status === 403)
+      ? "auth.invalidInvitation"
+      : error.request && !error.response
+        ? "auth.serverUnavailable"
+        : "privacy.registrationFailed";
+
+  const handleAccept = async () => {
+    if (loading || socialBusy) return;
+    setErrorMessage("");
+    setLoading(true);
+    // Asked during the tap so browsers treat the notification prompt as user-initiated.
+    const permission = webNotificationPermission() === "default"
+      ? requestPushPermission().catch(() => "default") : webNotificationPermission();
+    try {
+      await acceptInvitation(invitationCode);
+      if (await permission === "granted") enableWebPush().catch(() => {});
+    } catch (error) {
+      setErrorMessage(t(failureKey(error)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!invitationCode) return;
+    getInvitationInfo(invitationCode)
+      .then((info) => setInviterName(info.inviter?.displayName || null))
+      .catch(() => {});
+    // The invitation landing page's Accept button already was the user's decision.
+    if (route.params?.accept && !autoAccepted.current) {
+      autoAccepted.current = true;
+      handleAccept();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invitationCode]);
 
   const handleRegister = async () => {
     if (loading || socialBusy) return;
@@ -55,26 +100,17 @@ export const RegisterScreen = ({ route, navigation }) => {
     if (name.length > 100) {
       setErrorMessage(t("auth.displayNameTooLong"));
       return;
-    }    setErrorMessage("");
+    }
+    setErrorMessage("");
     setLoading(true);
     try {
       await register(normalized, password, name, invitationCode);
-      if (Platform.OS === "web" && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        enableWebPush().catch(() => {});
-      }
+      if (webNotificationPermission() === "granted") enableWebPush().catch(() => {});
       setPassword("");
       setConfirmPassword("");
       setDisplayName("");
     } catch (error) {
-      setErrorMessage(t(
-        error.response?.status === 409
-          ? "auth.userExists"
-          : invitationCode && (error.response?.status === 400 || error.response?.status === 403)
-          ? "auth.invalidInvitation"
-          : error.request && !error.response
-            ? "auth.serverUnavailable"
-            : "privacy.registrationFailed"
-      ));
+      setErrorMessage(t(failureKey(error)));
     } finally {
       setLoading(false);
     }
@@ -83,8 +119,24 @@ export const RegisterScreen = ({ route, navigation }) => {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>{t("auth.createAccount")}</Text>
-        {invitationCode && Platform.OS === "web" ? <InvitationSetup /> : null}
+        <Text style={styles.title}>{t(invitationCode ? "invite.acceptTitle" : "auth.createAccount")}</Text>
+        {invitationCode ? (
+          <>
+            <Text style={styles.notice}>
+              {inviterName ? t("invite.acceptFrom", { name: inviterName }) : t("invite.acceptBody")}
+            </Text>
+            <TouchableOpacity
+              style={[styles.button, (loading || socialBusy) && styles.disabled]}
+              disabled={loading || socialBusy}
+              onPress={handleAccept}
+              accessibilityRole="button"
+            >
+              {loading && !usePassword ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t("invite.acceptButton")}</Text>}
+            </TouchableOpacity>
+            <Text style={styles.hint}>{t("invite.acceptHint")}</Text>
+            {!usePassword && errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{errorMessage}</Text> : null}
+          </>
+        ) : null}
         <SocialAuthButtons
           mode="register"
           invitationCode={invitationCode}
@@ -94,11 +146,17 @@ export const RegisterScreen = ({ route, navigation }) => {
           onBusyChange={setSocialBusy}
         />
         {socialError ? <Text accessibilityRole="alert" style={styles.error}>{socialError}</Text> : null}
-        <View style={styles.dividerRow}>
-          <View style={styles.divider} />
-          <Text style={styles.dividerText}>{t("auth.orUsePassword")}</Text>
-          <View style={styles.divider} />
-        </View>
+        {!usePassword ? (
+          <TouchableOpacity onPress={() => setUsePassword(true)} disabled={loading} accessibilityRole="button">
+            <Text style={styles.link}>{t("invite.choosePassword")}</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.divider} />
+              <Text style={styles.dividerText}>{t("auth.orUsePassword")}</Text>
+              <View style={styles.divider} />
+            </View>
             <Text style={styles.notice}>{t("auth.credentialNotice")}</Text>
             <TextInput
               style={styles.input}
@@ -169,9 +227,12 @@ export const RegisterScreen = ({ route, navigation }) => {
             >
               {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t("auth.registerButton")}</Text>}
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate("Login")} disabled={loading}>
-              <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
-            </TouchableOpacity>
+          </>
+        )}
+        <TermsNotice />
+        <TouchableOpacity onPress={() => navigation.navigate("Login")} disabled={loading}>
+          <Text style={styles.link}>{t("auth.alreadyHaveAccount")}</Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -182,6 +243,7 @@ const createStyles = (colors) => StyleSheet.create({
   content: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 20 },
   title: { fontSize: 28, fontWeight: "700", color: colors.text },
   notice: { fontSize: 15, lineHeight: 23, color: colors.secondaryText },
+  hint: { fontSize: 13, lineHeight: 19, color: colors.mutedText, textAlign: "center" },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 16, fontSize: 16, color: colors.text, backgroundColor: colors.input },
   button: { backgroundColor: colors.action, padding: 16, borderRadius: 12, alignItems: "center" },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },

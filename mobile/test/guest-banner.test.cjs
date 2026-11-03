@@ -38,6 +38,7 @@ test("all tab homes share a fixed banner before content; child screens have no b
     "../store/authStore": auth(false),
     "../utils/chatTextSize": { getAppTextScale: () => 1 },
     "../components/GuestJoinBanner": { GuestJoinBanner: "GuestJoinBanner" },
+    "../components/AccountSetupBanner": { AccountSetupBanner: "AccountSetupBanner" },
   });
   const tabs = AppStack().props.children;
   const homes = { Forum: "ForumHome", Messages: "MessagesList", Contacts: "ContactsList",
@@ -50,12 +51,16 @@ test("all tab homes share a fixed banner before content; child screens have no b
     const wrapper = stack.props.screenLayout(props);
     const layout = wrapper.type(wrapper.props);
     assert.equal(layout.type, "View");
-    const [banner, content] = layout.props.children;
+    const [banner, setup, content] = layout.props.children;
     assert.equal(banner.type, "GuestJoinBanner");
+    assert.equal(setup.type, "AccountSetupBanner");
     assert.equal(content, "content");
     banner.props.onPress();
-    assert.deepEqual(JSON.parse(JSON.stringify(navigations)), tab.props.name === "Forum" ? [["JoinNetwork"]]
-      : [["Forum", { screen: "JoinNetwork" }]]);
+    setup.props.onPress();
+    assert.deepEqual(JSON.parse(JSON.stringify(navigations)), [
+      tab.props.name === "Forum" ? ["JoinNetwork"] : ["Forum", { screen: "JoinNetwork" }],
+      tab.props.name === "Settings" ? ["AccountSetup"] : ["Settings", { screen: "AccountSetup" }],
+    ]);
     const detail = stack.props.screenLayout({ ...props, route: { name: "JoinNetwork" } });
     assert.equal(detail.type(detail.props), "content");
   }
@@ -71,15 +76,18 @@ test("banner hides for members and limits guest title/body to one line", () => {
     "../store/authStore": auth(true),
   };
   assert.equal(load("components/GuestJoinBanner.js", mocks).GuestJoinBanner({}), null);
-  const banner = load("components/GuestJoinBanner.js", {
-    ...mocks, "../store/authStore": auth(false),
-  }).GuestJoinBanner({});
+  const module = load("components/GuestJoinBanner.js", { ...mocks, "../store/authStore": auth(false) });
+  const element = module.GuestJoinBanner({});
+  assert.equal(element.type, module.Banner);
+  const row = element.type(element.props);
+  assert.equal(row.props.style.marginTop, 8);
+  assert.equal(row.props.style.marginHorizontal, 16);
+  const [banner, dismiss] = row.props.children;
+  assert.equal(dismiss, null);
   const copy = banner.props.children[1];
   for (const text of copy.props.children) assert.equal(text.props.numberOfLines, 1);
   assert.equal(copy.props.children[1].props.ellipsizeMode, "tail");
   assert.equal(banner.props.accessibilityHint, "join.bannerBody");
-  assert.equal(banner.props.style.marginTop, 8);
-  assert.equal(banner.props.style.marginHorizontal, 16);
 });
 
 const nodes = (element) => {

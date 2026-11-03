@@ -341,7 +341,7 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
       const response = await fetch(`${origin}/api/invitations/open/${code}`);
       const landing = await response.text();
       assert.match(landing, /id="accept"/);
-      assert.match(landing, new RegExp(`<a id="accept" href="[^"]*/app/register\\?code=${code}" target="_blank" rel="noopener noreferrer">`));
+      assert.match(landing, new RegExp(`<a id="accept" href="[^"]*/app/register\\?code=${code}&amp;accept=1" target="_blank" rel="noopener noreferrer">`));
       assert.doesNotMatch(landing, /looptalk:\/\/|openLoopTalkClient|site\/site\.js/);
       const script = landing.match(/<script nonce="test-invitation-nonce">([\s\S]*?)<\/script>/)[1];
       vm.runInNewContext(script, {
@@ -779,7 +779,7 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
     setKeyFetcher(async () => [jwk]);
     process.env.GOOGLE_CLIENT_IDS = "google-client, other-client";
-    delete process.env.APPLE_CLIENT_IDS;
+    process.env.APPLE_CLIENT_IDS = "";
     const sign = (sub, overrides = {}) => jwt.sign({ sub }, privateKey, {
       algorithm: "RS256", keyid: "test-key", issuer: "https://accounts.google.com",
       audience: "google-client", expiresIn: 300, ...overrides,
@@ -818,7 +818,75 @@ test("owner-encrypted accounts and opaque routing with isolated SQLite", { timeo
     } finally {
       setKeyFetcher(async () => { throw new Error("unconfigured"); });
       delete process.env.GOOGLE_CLIENT_IDS;
+      delete process.env.APPLE_CLIENT_IDS;
     }
+  });
+  await t.test("one-tap invitations carry a hidden first message and replaceable wrapped credentials", async () => {
+    const tooLong = await request("/invitations/create", {
+      method: "POST", token: bobToken, body: { message: "x".repeat(1001) },
+    });
+    assert.equal(tooLong.status, 400);
+    const created = await request("/invitations/create", {
+      method: "POST", token: bobToken, body: { inviteeDisplayName: "Dana", message: "Hi Dana!\nReply here." },
+    });
+    assert.equal(created.status, 201);
+    const info = await request(`/invitations/${created.data.code}`);
+    assert.ok(!JSON.stringify(info.data).includes("Reply here"));
+    assert.ok(!(await (await fetch(`${origin}/api/invitations/open/${created.data.code}`)).text()).includes("Reply here"));
+
+    const dana = identity();
+    const generated = credentialIdentity("calm-otter-4821", "abcd-efgh-jkmn-pqrs");
+    const wrappedAccountKey = vault();
+    dana.identifier = generated.identifier;
+    dana.credentialSalt = generated.credentialSalt;
+    assert.equal((await register(dana, vault(), created.data.code, {
+      credentialPublicKey: "short", wrappedAccountKey,
+    })).status, 400);
+    const joined = await register(dana, vault(), created.data.code, {
+      credentialPublicKey: generated.publicKey, wrappedAccountKey,
+    });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.data.user.username, "calm-otter-4821");
+    assert.equal((await prisma.user.findUnique({ where: { id: dana.id } })).publicDisplayName, "Dana");
+    const welcome = await prisma.message.findFirst({ where: { conversationId: joined.data.welcomeConversationId } });
+    assert.equal(welcome.content, "Hi Dana!\nReply here.");
+    assert.equal(welcome.senderId, bob.id);
+    assert.equal((await prisma.privateInvitation.findUnique({ where: { code: created.data.code } })).message, null);
+
+    const viaGenerated = await login(generated, (await challenge(generated)).data);
+    assert.equal(viaGenerated.status, 200);
+    assert.equal(viaGenerated.data.user.id, dana.id);
+    assert.equal(viaGenerated.data.accountId, dana.accountId);
+    assert.deepEqual(viaGenerated.data.wrappedAccountKey, wrappedAccountKey);
+    const viaDevice = await login(dana, (await challenge(dana)).data);
+    assert.equal(viaDevice.status, 200);
+    assert.equal(viaDevice.data.wrappedAccountKey, undefined);
+
+    const chosen = credentialIdentity("dana-chosen", "my own password");
+    const change = async (person, signer, extra = {}) => {
+      const proof = (await challenge(signer)).data;
+      return request("/auth/credentials", { method: "POST", token: person.token, body: {
+        identifier: chosen.identifier, credentialSalt: chosen.credentialSalt,
+        credentialPublicKey: chosen.publicKey, wrappedAccountKey: vault(), challengeId: proof.challengeId,
+        signature: crypto.sign(null, Buffer.from(proof.challenge, "base64"), signer.privateKey).toString("base64"),
+        ...extra,
+      } });
+    };
+    dana.token = joined.data.token;
+    assert.equal((await change(dana, generated)).status, 401);
+    const changed = await change(dana, dana);
+    assert.equal(changed.status, 200);
+    assert.equal(changed.data.user.username, "dana-chosen");
+    assert.equal((await login(generated, (await challenge(generated)).data)).status, 401);
+    assert.equal((await login(chosen, (await challenge(chosen)).data)).status, 200);
+    assert.equal((await request("/auth/credential-parameters", {
+      method: "POST", body: { identifier: "dana-chosen" },
+    })).data.salt, chosen.credentialSalt);
+
+    alice.token = aliceToken;
+    const fixed = await change(alice, alice, { identifier: "alice-renamed" });
+    assert.equal(fixed.status, 409);
+    assert.equal(fixed.data.code, "CREDENTIALS_FIXED");
   });
   await t.test("device tokens and account deletion still work", async () => {
     assert.equal((await request("/auth/device-token", { method: "POST", token: bobToken,

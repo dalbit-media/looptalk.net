@@ -18,7 +18,7 @@ const fixture = (platform, linking) => {
     ],
   });
   const mocks = {
-    react: { useState: (value) => [value, () => {}] },
+    react: { useEffect: () => {}, useState: (value) => [value, () => {}] },
     "react/jsx-runtime": require("react/jsx-runtime"),
     "react-native": {
       ...Object.fromEntries(["ActivityIndicator", "Switch", "TouchableOpacity", "View", "ScrollView"]
@@ -38,6 +38,7 @@ const fixture = (platform, linking) => {
     "../../i18n/i18n": { t: (key) => key },
     "../../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
     "../../utils/callNotifications": {},
+    "../../utils/desktopApp": { isDesktopApp: () => false },
     "../../utils/chatTextSize": { getChatMessageFontSize: () => 16 },
     "../../config/environment": { API_URL: "https://example.test" },
   };

@@ -166,7 +166,7 @@ API는 `/api/invitations/map`이며 1분 캐시와 동시 요청 병합을 적�
 검사는 해결이 필요합니다. EAS 프로젝트 `@eddiec2025/looptalk`가 연결되어 있고 Android
 운영 키스토어도 EAS에 생성되어 있습니다.
 
-남은 작업은 외부 운영 작업입니다. `looptalk.app`에 HTTPS 서버를 배포하고 SQLite
+남은 작업은 외부 운영 작업입니다. `looptalk.net`의 HTTPS 서버는 운영 중이며, SQLite
 데이터베이스와 업로드를 위한 영구 볼륨, 백업, Coturn, Sentry 및 운영 이메일을
 구성해야 합니다. 현재 데이터베이스는 SQLite이므로 단일 서버 인스턴스를 사용해야 합니다.
 서버 설치 절차와 대규모(최대 1억 명) 확장 아키텍처는
@@ -244,6 +244,7 @@ Prisma 스키마를 확인합니다. 클라이언트 검사는 Expo Doctor를 �
 ### 문서
 
 - [모바일 앱 안내서](mobile/README.md)
+- [데스크톱 앱 안내서](desktop/README.md)
 - [서버 및 API 안내서](server/README.md)
 - [라이선스](LICENSE)
 
@@ -290,7 +291,7 @@ Socket.ioサーバーで構築された招待制メッセンジャーです。�
 報告しているため、モバイル依存関係の検査は要対応です。EASプロジェクト`@eddiec2025/looptalk`はリンク済みで、
 Android本番キーストアもEASに作成済みです。
 
-残りは外部運用作業です。`looptalk.app`へHTTPSサーバーを配備し、SQLiteデータベースと
+残りは外部運用作業です。`looptalk.net`のHTTPSサーバーは稼働中で、SQLiteデータベースと
 アップロード用の永続ボリューム、バックアップ、Coturn、Sentry、本番メールを設定します。
 現在のデータベースはSQLiteのため、サーバーは1インスタンスで運用してください。
 サーバーのインストール手順と大規模（最大1億ユーザー）向けの構成は
@@ -370,6 +371,7 @@ Expo Doctorを実行します。
 ### ドキュメント
 
 - [モバイルアプリガイド](mobile/README.md)
+- [デスクトップアプリガイド](desktop/README.md)
 - [サーバーおよびAPIガイド](server/README.md)
 - [ライセンス](LICENSE)
 
@@ -422,8 +424,8 @@ open. EAS project
 `@eddiec2025/looptalk` is linked, and its Android production keystore is stored
 in EAS.
 
-The remaining work is external operations: deploy the HTTPS server at
-`looptalk.app`; provision durable storage for the SQLite database and uploads,
+The HTTPS server is live at `looptalk.net`. The remaining external operations
+are: confirm durable storage for the SQLite database and uploads,
 backups, Coturn, Sentry, and production email; configure
 the EAS production environment and iOS signing; then certify signed iOS and
 Android builds on physical devices before store submission. Follow the
@@ -438,6 +440,7 @@ server install and the architecture and code changes required to scale toward
 ```text
 LoopTalk/
 |-- app/                    Next.js website and browser messenger
+|-- desktop/                Packaged Windows, macOS and Linux app
 |-- mobile/                 Native iOS and Android application
 |   |-- App.js
 |   |-- src/
@@ -523,6 +526,7 @@ files before deploying a schema change.
 ### Documentation
 
 - [Mobile app guide](mobile/README.md)
+- [Desktop app guide](desktop/README.md)
 - [Server guide and API](server/README.md)
 - [Launch runbook](docs/LAUNCH_RUNBOOK.md)
 - [Installation and scaling guide](docs/SCALING_AND_DEPLOYMENT.md)

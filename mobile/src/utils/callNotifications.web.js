@@ -1,4 +1,5 @@
 import { getWebPushKey } from "../api/auth";
+import { getDesktopBridge, isDesktopApp } from "./desktopApp";
 
 const SERVICE_WORKER_URL = "/app/push-sw.js";
 const SERVICE_WORKER_SCOPE = "/app/";
@@ -17,7 +18,9 @@ export const requestPushPermission = async () => {
   return Notification.requestPermission();
 };
 
+// Electron has no browser push service, so the desktop app never registers a Web Push subscription.
 export const getCallPushToken = async () => {
+  if (isDesktopApp()) return null;
   if (!supported()) throw new Error("Push notifications are unavailable in this browser");
   const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: SERVICE_WORKER_SCOPE });
   await navigator.serviceWorker.ready;
@@ -31,7 +34,10 @@ export const getCallPushToken = async () => {
 };
 
 export const setupCallNotifications = async ({ onMessageOpen } = {}) => {
-  if (!supported()) return () => {};
+  const removeDesktopListener = getDesktopBridge()?.onNotificationClick((data) => {
+    if (data?.type === "message" && data.conversationId) onMessageOpen?.(data);
+  });
+  if (!supported()) return () => removeDesktopListener?.();
   const onMessage = (event) => {
     if (event.data?.source === "looptalk-push" && event.data.data?.conversationId) {
       onMessageOpen?.(event.data.data);
@@ -46,5 +52,8 @@ export const setupCallNotifications = async ({ onMessageOpen } = {}) => {
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     onMessageOpen?.({ conversationId });
   }
-  return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  return () => {
+    removeDesktopListener?.();
+    navigator.serviceWorker.removeEventListener("message", onMessage);
+  };
 };

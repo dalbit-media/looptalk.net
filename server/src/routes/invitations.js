@@ -5,7 +5,7 @@ const requireMember = require("../middleware/requireMember");
 const { normalizeInvitationCode, validInvitationCode, createInvitationCode } = require("../utils/invitationCode");
 const sharp = require("sharp");
 const { createInvitationMapHandler } = require("../utils/invitationMap");
-const { opaqueUser } = require("../utils/privateAccounts");
+const { opaqueUser, validDisplayName } = require("../utils/privateAccounts");
 
 const router = express.Router();
 const invitationMap = createInvitationMapHandler(prisma);
@@ -19,6 +19,11 @@ const DAILY_INVITATION_LIMIT = parseInt(process.env.DAILY_INVITATION_LIMIT, 10) 
 // mass-generating codes.
 const PER_USER_INVITATION_LIMIT = 5;
 const INVITATION_THROTTLE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const INVITATION_FIELDS = ["language", "inviterDisplayName", "inviteeDisplayName", "message"];
+const MAX_INVITATION_MESSAGE = 1000;
+// Newlines and tabs are allowed so the first chat message can span several lines.
+const validInvitationMessage = (value) => typeof value === "string" && value.trim().length > 0 &&
+  value.trim().length <= MAX_INVITATION_MESSAGE && !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(value);
 const privateIssuance = new Map();
 const inviterSelect = { id: true, publicUsername: true, publicDisplayName: true };
 const lookupInvitation = async (code) => {
@@ -28,8 +33,10 @@ const lookupInvitation = async (code) => {
       ? await prisma.user.findUnique({ where: { id: privateInvitation.inviterId }, select: inviterSelect })
       : null;
     const inviter = owner ? opaqueUser(owner) : null;
+    // The first message is only revealed in the chat after accepting.
+    const { message: _message, ...invitation } = privateInvitation;
     return {
-      ...privateInvitation,
+      ...invitation,
       inviter: inviter ? { username: inviter.username, displayName: privateInvitation.inviterDisplayName || inviter.displayName } : null,
     };
   }
@@ -79,6 +86,7 @@ const LANDING_COPY = {
     expiresIn: "남은 시간",
     expired: "초대가 만료되었습니다",
     declined: "초대를 거절했습니다. 이 창을 닫아도 됩니다.",
+    consent: ["수락하면 ", "이용약관", " 및 ", "개인정보 처리방침", "에 동의하게 됩니다. 불쾌한 콘텐츠와 악용 사용자는 허용되지 않습니다."],
   },
   ja: {
     title: "ループトークへの招待が届きました",
@@ -93,6 +101,7 @@ const LANDING_COPY = {
     expiresIn: "有効期限まで",
     expired: "招待の有効期限が切れました",
     declined: "招待を辞退しました。この画面を閉じてもかまいません。",
+    consent: ["承諾すると", "利用規約", "と", "プライバシーポリシー", "に同意したものとみなされます。不快なコンテンツや迷惑行為は一切認められません。"],
   },
   en: {
     title: "You're invited to LoopTalk",
@@ -107,6 +116,8 @@ const LANDING_COPY = {
     expiresIn: "Expires in",
     expired: "Invitation expired",
     declined: "Invitation declined. You can close this window.",
+    consent: ["By accepting you agree to the ", "Terms of Service", " and ", "Privacy Policy",
+      ". Objectionable content and abusive users are not tolerated."],
   },
 };
 
@@ -126,6 +137,7 @@ const getWebRegistrationUrl = (code, req) => {
   );
   clientUrl.pathname = `${clientUrl.pathname.replace(/\/?$/, "/")}register`;
   clientUrl.searchParams.set("code", code);
+  clientUrl.searchParams.set("accept", "1");
   return clientUrl.toString();
 };
 
@@ -189,13 +201,17 @@ router.get("/stats", authMiddleware, requireMember, async (req, res) => {
 // Create invitation
 router.post("/create", authMiddleware, requireMember, async (req, res) => {
   try {
-    if (req.body && Object.keys(req.body).some((key) => !["language", "inviterDisplayName"].includes(key))) {
+    if (req.body && Object.keys(req.body).some((key) => !INVITATION_FIELDS.includes(key))) {
       return require("../utils/privateAccounts").upgradeRequired(res);
     }
-    const displayName = req.body?.inviterDisplayName;
-    if (displayName !== undefined && (typeof displayName !== "string" ||
-        !displayName.trim() || displayName.trim().length > 100 || /[\u0000-\u001f\u007f]/.test(displayName))) {
-      return res.status(400).json({ error: "Inviter display name must contain 1–100 characters without control characters" });
+    const { inviterDisplayName: displayName, inviteeDisplayName, message } = req.body || {};
+    for (const name of [displayName, inviteeDisplayName]) {
+      if (name !== undefined && !validDisplayName(name)) {
+        return res.status(400).json({ error: "Display names must contain 1–100 characters without control characters" });
+      }
+    }
+    if (message !== undefined && !validInvitationMessage(message)) {
+      return res.status(400).json({ error: `The first message must contain 1–${MAX_INVITATION_MESSAGE} characters` });
     }
     const owner = await prisma.user.findUnique({ where: { id: req.userId }, select: { authPublicKey: true } });
     if (owner?.authPublicKey) {
@@ -220,6 +236,7 @@ router.post("/create", authMiddleware, requireMember, async (req, res) => {
       const invitation = await prisma.privateInvitation.create({
         data: {
           code, inviterId: req.userId, inviterDisplayName: displayName?.trim() || null,
+          inviteeDisplayName: inviteeDisplayName?.trim() || null, message: message?.trim() || null,
           expiresAt: new Date(now + 7 * 24 * 60 * 60 * 1000),
         },
       });
@@ -230,6 +247,10 @@ router.post("/create", authMiddleware, requireMember, async (req, res) => {
         previewImageUrl: getPreviewUrl(code, language, req),
         stats: await getInvitationStats(req.userId),
       });
+    }
+    // Legacy accounts cannot carry the private onboarding fields.
+    if (inviteeDisplayName !== undefined || message !== undefined) {
+      return require("../utils/privateAccounts").upgradeRequired(res);
     }
     const windowStart = new Date(Date.now() - INVITATION_THROTTLE_WINDOW_MS);
     const [userRecentCount, totalRecentCount] = await Promise.all([
@@ -388,6 +409,8 @@ router.get("/open/:code", async (req, res) => {
       .actions button { background: var(--loop-soft); color: var(--ink); }
       :focus-visible { outline: 3px solid var(--coral); outline-offset: 4px; }
       #countdown { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .consent { margin-top: 14px; font-size: 13px; }
+      .consent a { color: inherit; }
     </style>
   </head>
   <body class="site-page">
@@ -397,7 +420,8 @@ router.get("/open/:code", async (req, res) => {
       <p class="inviter">${escapeHtml(inviterLabel(invitation.inviter))}${language === "en" ? " " : ""}${escapeHtml(copy.invitedBy)}</p>
       <h1>${escapeHtml(title)}</h1>
       <p id="description">${escapeHtml(description)}</p>
-      ${isAvailable ? `<div class="actions"><a id="accept" href="${escapeHtml(webRegistrationUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(copy.accept)}</a><button id="decline" type="button">${escapeHtml(copy.decline)}</button><span id="countdown">${escapeHtml(copy.expiresIn)}</span></div>` : ""}
+      ${isAvailable ? `<div class="actions"><a id="accept" href="${escapeHtml(webRegistrationUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(copy.accept)}</a><button id="decline" type="button">${escapeHtml(copy.decline)}</button><span id="countdown">${escapeHtml(copy.expiresIn)}</span></div>
+      <p class="consent">${escapeHtml(copy.consent[0])}<a href="/terms" target="_blank" rel="noopener">${escapeHtml(copy.consent[1])}</a>${escapeHtml(copy.consent[2])}<a href="/privacy" target="_blank" rel="noopener">${escapeHtml(copy.consent[3])}</a>${escapeHtml(copy.consent[4])}</p>` : ""}
     </main>
     ${isAvailable ? `<script nonce="${escapeHtml(res.locals.cspNonce)}">
       const expiresAt = ${JSON.stringify(invitation.expiresAt.toISOString())};
@@ -424,6 +448,7 @@ router.get("/open/:code", async (req, res) => {
       };
       decline.addEventListener("click", function () {
         document.querySelector(".actions").remove();
+        document.querySelector(".consent").remove();
         description.textContent = ${JSON.stringify(copy.declined)};
       });
       updateCountdown();

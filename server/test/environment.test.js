@@ -6,7 +6,7 @@ const dotenv = require("dotenv");
 const encryptionKey = require("node:crypto").randomBytes(32).toString("base64");
 const { validateEnvironment } = require("../src/config/environment");
 
-test("the example environment requires an explicitly provisioned encryption key", () => {
+test("validation alone does not invent an encryption key for the example environment", () => {
   const exampleEnvironment = dotenv.parse(
     fs.readFileSync(path.join(__dirname, "../.env.example"))
   );
@@ -107,4 +107,46 @@ test("requires TURN relay configuration", () => {
     () => validateEnvironment({ ...validEnvironment, TURN_SECRET: "" }),
     /TURN_URLS and TURN_SECRET must be configured together/
   );
+});
+test("provisions missing secrets once beside the database and keeps explicit values", () => {
+  const os = require("node:os");
+  const { provisionSecrets } = require("../src/config/load-environment");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "looptalk-secrets-"));
+  const database = path.join(directory, "looptalk.db");
+  const secretsFile = `${database}.secrets.json`;
+  try {
+    const first = provisionSecrets({ NODE_ENV: "production", DATABASE_URL: `file:${database}` });
+    assert.doesNotThrow(() => validateEnvironment(first));
+    assert.ok(first.VAPID_PUBLIC_KEY && first.VAPID_PRIVATE_KEY);
+    const stored = JSON.parse(fs.readFileSync(secretsFile, "utf8"));
+    assert.equal(stored.USER_DATA_ENCRYPTION_KEY, first.USER_DATA_ENCRYPTION_KEY);
+
+    fs.writeFileSync(database, "existing data");
+    const second = provisionSecrets({ NODE_ENV: "production", DATABASE_URL: `file:${database}` });
+    for (const name of ["JWT_SECRET", "USER_DATA_ENCRYPTION_KEY", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]) {
+      assert.equal(second[name], first[name]);
+    }
+
+    const explicit = provisionSecrets({
+      DATABASE_URL: `file:${database}`, JWT_SECRET: "explicit-secret-with-at-least-32-characters",
+      USER_DATA_ENCRYPTION_KEY: encryptionKey,
+    });
+    assert.equal(explicit.JWT_SECRET, "explicit-secret-with-at-least-32-characters");
+    assert.equal(explicit.USER_DATA_ENCRYPTION_KEY, encryptionKey);
+
+    fs.rmSync(secretsFile);
+    const orphaned = provisionSecrets({ NODE_ENV: "production", DATABASE_URL: `file:${database}` });
+    assert.equal(orphaned.USER_DATA_ENCRYPTION_KEY, undefined, "never replaces the key of an existing database");
+    assert.throws(() => validateEnvironment(orphaned), /USER_DATA_ENCRYPTION_KEY/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("social sign-in audiences default to the app's own client IDs", () => {
+  const { audiencesFor } = require("../src/utils/socialIdentity");
+  const google = { audiences: "GOOGLE_CLIENT_IDS", defaults: (env) => [env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID] };
+  assert.deepEqual(audiencesFor(google, { EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: "web-id" }), ["web-id"]);
+  assert.deepEqual(audiencesFor(google, { GOOGLE_CLIENT_IDS: "a, b", EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: "web-id" }), ["a", "b"]);
+  assert.deepEqual(audiencesFor(google, { GOOGLE_CLIENT_IDS: "", EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: "web-id" }), []);
 });

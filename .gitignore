@@ -63,6 +63,10 @@ uploads/
 !public/site/app-icon-180.png
 !public/site/app-icon-192.png
 !public/site/app-icon-512.png
+!desktop/assets/
+!desktop/assets/*.png
+!desktop/build/
+!desktop/build/icon.png
 *.gif
 *.mov
 *.mp4
@@ -88,6 +92,7 @@ out/
 *.sqlite
 *.sqlite3
 *.app-state.json
+*.secrets.json
 
 # Crash dumps
 dump.rdb

@@ -9,16 +9,22 @@ import {
   createAccountIdentity,
   createCredentialIdentity,
   createCredentialSalt,
+  generatePassword,
   generateUsername,
   normalizeIdentifier,
   signAccountChallenge,
+  unwrapAccountKey,
+  wrapAccountKey,
 } from "../utils/accountPrivacy";
 import {
   createOwnerVault,
   lockOwnerVault,
   setVaultSession,
   getSavedOwnerIdentity,
+  getOwnerIdentity,
   getOwnerProfile,
+  readOwnerVault,
+  updateOwnerVault,
   updateVaultSessionToken,
 } from "../utils/ownerVault";
 
@@ -38,11 +44,15 @@ const retryDelay = (error, attempt) => {
   return Math.min(delay, MAX_RETRY_DELAY_MS);
 };
 
+const accountProof = async (identity) => {
+  const { challengeId, challenge } = await api.getChallenge(identity.accountId);
+  return { challengeId, signature: signAccountChallenge(identity.recoveryKey, challenge) };
+};
+
 const authenticateSavedIdentity = async (identity, { retry = false } = {}) => {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const { challengeId, challenge } = await api.getChallenge(identity.accountId);
-      const signature = signAccountChallenge(identity.recoveryKey, challenge);
+      const { challengeId, signature } = await accountProof(identity);
       return await api.login(identity.accountId, challengeId, signature);
     } catch (error) {
       if (!retry || attempt + 1 >= MAX_AUTH_ATTEMPTS || !RETRYABLE_STATUSES.has(error.response?.status)) throw error;
@@ -109,7 +119,59 @@ const openSession = async (identity, response) => {
   const { usePreferencesStore } = require("./preferencesStore");
   usePreferencesStore.getState().loadOwnerPreferences();
   const welcomeConversationId = await initializeInvitationContact(response.token, response.user.id);
-  return { user: getOwnerProfile(response.user), welcomeConversationId, sessionRenewedAt: Date.now() };
+  return {
+    user: getOwnerProfile(response.user), welcomeConversationId, sessionRenewedAt: Date.now(),
+    accountSetup: readOwnerVault().accountSetup || null,
+  };
+};
+
+const SIGNED_OUT = {
+  user: null, token: null, pendingRegistration: null, welcomeConversationId: null, accountSetup: null,
+};
+
+// Every sign-in path starts from a clean device and leaves it clean again if establishing the account fails.
+const beginSession = async (set, establish) => {
+  set(SIGNED_OUT);
+  await clearSession();
+  try {
+    const { identity, response } = await establish();
+    const opened = await openSession(identity, response);
+    set({ ...opened, token: response.token, initializationError: false });
+    return response;
+  } catch (error) {
+    await clearFailedSession();
+    throw error;
+  }
+};
+
+// Generated usernames rarely collide; a fresh one is tried before giving up.
+const registerWithGeneratedUsername = async (attempt) => {
+  for (let tries = 0; ; tries += 1) {
+    try {
+      return await attempt(generateUsername());
+    } catch (error) {
+      const retryable = error.response?.status === 409 && error.response.data?.code !== "SOCIAL_ACCOUNT_EXISTS";
+      if (!retryable || tries + 1 >= 3) throw error;
+    }
+  }
+};
+
+const credentialWrapper = async (identifier, password, accountIdentity) => {
+  const credentialSalt = createCredentialSalt();
+  const credential = await createCredentialIdentity(identifier, password, credentialSalt);
+  return {
+    credentialSalt,
+    wrapper: { credentialPublicKey: credential.publicKey, wrappedAccountKey: wrapAccountKey(credential, accountIdentity) },
+  };
+};
+
+const saveAccountSetup = async (update) => {
+  let next;
+  await updateOwnerVault((current) => {
+    next = update(current.accountSetup || {});
+    return { ...current, accountSetup: next };
+  });
+  return next;
 };
 
 export const useAuthStore = create((set, get) => ({
@@ -121,6 +183,8 @@ export const useAuthStore = create((set, get) => ({
   pendingRegistration: null,
   pendingMigration: null,
   welcomeConversationId: null,
+  accountSetup: null,
+  setupBannerDismissed: false,
   clearWelcomeConversation: () => set({ welcomeConversationId: null }),
 
   initialize: async () => {
@@ -185,23 +249,28 @@ export const useAuthStore = create((set, get) => ({
     const normalized = validateCredentials(identifier, password);
     const name = (displayName || "").trim();
     if (name.length > 100) throw new Error("Invalid display name");
-    set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
-    await clearSession();
-    try {
+    return beginSession(set, async () => {
       const credentialSalt = createCredentialSalt();
       const identity = await createCredentialIdentity(normalized, password, credentialSalt);
       const { vault } = await createOwnerVault(identity, { displayName: name });
       const response = await api.register(normalized, credentialSalt, identity.publicKey, vault, invitationCode || undefined, name || undefined);
-      const opened = await openSession(identity, response);
-      set({
-        ...opened, token: response.token, initializationError: false,
-      });
-      return response;
-    } catch (error) {
-      await clearFailedSession();
-      throw error;
-    }
+      return { identity, response };
+    });
   },
+
+  // One-tap invitation signup: a random account key unlocked by generated credentials the user can replace later.
+  acceptInvitation: async (invitationCode) => beginSession(set, async () => {
+    const identity = await createAccountIdentity();
+    const password = generatePassword();
+    const response = await registerWithGeneratedUsername(async (username) => {
+      const { credentialSalt, wrapper } = await credentialWrapper(username, password, identity);
+      const { vault } = await createOwnerVault(identity, {}, {
+        accountSetup: { generated: { username, password }, wrapped: true, linkedProviders: [] },
+      });
+      return api.register(username, credentialSalt, identity.publicKey, vault, invitationCode, undefined, undefined, wrapper);
+    });
+    return { identity, response };
+  }),
 
   joinNetwork: async (invitationCode) => {
     const { token, user } = get();
@@ -224,35 +293,54 @@ export const useAuthStore = create((set, get) => ({
     return response;
   },
 
-  login: async (identifier, password) => {
-    try {
-      set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
-      await clearSession();
-      const normalized = validateCredentials(identifier, password);
-      const parameters = await api.getCredentialParameters(normalized);
-      if (parameters.version !== 1 || parameters.iterations !== 600000 || !parameters.salt) {
-        throw new Error("Unsupported credential parameters");
-      }
-      const identity = await createCredentialIdentity(normalized, password, parameters.salt);
-      const { challengeId, challenge } = await api.getChallenge(identity.accountId);
-      const signature = signAccountChallenge(identity.recoveryKey, challenge);
-      const response = await api.login(identity.accountId, challengeId, signature);
-      const opened = await openSession(identity, response);
-      set({
-        ...opened, token: response.token,
-        pendingRegistration: null, initializationError: false,
-      });
-      return response;
-    } catch (error) {
-      await clearFailedSession();
-      throw error;
+  login: async (identifier, password) => beginSession(set, async () => {
+    const normalized = validateCredentials(identifier, password);
+    const parameters = await api.getCredentialParameters(normalized);
+    if (parameters.version !== 1 || parameters.iterations !== 600000 || !parameters.salt) {
+      throw new Error("Unsupported credential parameters");
     }
+    const credential = await createCredentialIdentity(normalized, password, parameters.salt);
+    const { challengeId, signature } = await accountProof(credential);
+    const response = await api.login(credential.accountId, challengeId, signature);
+    const identity = response.wrappedAccountKey ? unwrapAccountKey(credential, response.wrappedAccountKey) : credential;
+    return { identity, response };
+  }),
+
+  // Replaces the generated (or previous) username/password; the server drops the old credential wrapper.
+  changeCredentials: async (identifier, password) => {
+    const normalized = validateCredentials(identifier, password);
+    const { token } = get();
+    const generation = getOwnerGeneration();
+    const identity = getOwnerIdentity();
+    if (!token || !identity) throw new Error("Sign in before changing credentials");
+    const { credentialSalt, wrapper } = await credentialWrapper(normalized, password, identity);
+    const proof = await accountProof(identity);
+    const response = await api.changeCredentials({ identifier: normalized, credentialSalt, ...wrapper, ...proof }, token);
+    assertOwnerGeneration(generation);
+    const accountSetup = await saveAccountSetup((setup) => ({ ...setup, generated: null }));
+    set({ user: { ...get().user, username: response.user.username }, accountSetup });
+    return response;
   },
+
+  linkSocial: async ({ provider, idToken }) => {
+    const { token } = get();
+    const generation = getOwnerGeneration();
+    const identity = getOwnerIdentity();
+    if (!token || !identity) throw new Error("Sign in before linking an account");
+    await api.linkSocial({ provider, idToken, ...await accountProof(identity) }, token);
+    assertOwnerGeneration(generation);
+    const accountSetup = await saveAccountSetup((setup) => ({
+      ...setup, linkedProviders: [...new Set([...(setup.linkedProviders || []), provider])],
+    }));
+    set({ accountSetup });
+  },
+
+  dismissSetupBanner: () => set({ setupBannerDismissed: true }),
 
   prepareLegacyMigration: async (identifier, password, skipPhoto = false) => {
     const { createLegacySnapshot } = require("../screens/auth/legacyMigration");
     const snapshotPreferences = require("./preferencesStore").usePreferencesStore.getState();
-    set({ user: null, token: null, pendingRegistration: null, pendingMigration: null, welcomeConversationId: null });
+    set({ ...SIGNED_OUT, pendingMigration: null });
     await clearSession();
     const normalized = validateCredentials(identifier, password);
     const legacy = await api.legacyLogin(normalized, password);
@@ -296,51 +384,27 @@ export const useAuthStore = create((set, get) => ({
   socialRegister: async ({ provider, idToken, displayName, invitationCode }) => {
     const name = (displayName || "").trim();
     if (name.length > 100) throw new Error("Invalid display name");
-    set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
-    await clearSession();
-    try {
+    return beginSession(set, async () => {
       const identity = await createAccountIdentity();
       const { vault } = await createOwnerVault(identity, { displayName: name });
-      let response;
-      for (let attempt = 0; !response; attempt += 1) {
-        try {
-          response = await api.register(
-            generateUsername(), createCredentialSalt(), identity.publicKey, vault,
-            invitationCode || undefined, name || undefined, { provider, idToken }
-          );
-        } catch (error) {
-          const retryable = error.response?.status === 409 && error.response.data?.code !== "SOCIAL_ACCOUNT_EXISTS";
-          if (!retryable || attempt + 1 >= 3) throw error;
-        }
-      }
-      const opened = await openSession(identity, response);
-      set({ ...opened, token: response.token, initializationError: false });
-      return response;
-    } catch (error) {
-      await clearFailedSession();
-      throw error;
-    }
+      const response = await registerWithGeneratedUsername((username) => api.register(
+        username, createCredentialSalt(), identity.publicKey, vault,
+        invitationCode || undefined, name || undefined, { provider, idToken }
+      ));
+      return { identity, response };
+    });
   },
 
   // Replaces the lost device key; the old encrypted vault (chat history) cannot be restored.
-  socialRecover: async ({ provider, idToken }) => {
-    set({ user: null, token: null, pendingRegistration: null, welcomeConversationId: null });
-    await clearSession();
-    try {
-      const identity = await createAccountIdentity();
-      const { vault } = await createOwnerVault(identity, { displayName: "" });
-      const response = await api.socialRecover(provider, idToken, identity.publicKey, vault);
-      const opened = await openSession(identity, response);
-      set({ ...opened, token: response.token, initializationError: false });
-      return response;
-    } catch (error) {
-      await clearFailedSession();
-      throw error;
-    }
-  },
+  socialRecover: async ({ provider, idToken }) => beginSession(set, async () => {
+    const identity = await createAccountIdentity();
+    const { vault } = await createOwnerVault(identity, { displayName: "" });
+    const response = await api.socialRecover(provider, idToken, identity.publicKey, vault);
+    return { identity, response };
+  }),
 
   logout: async () => {
-    set({ user: null, token: null, pendingRegistration: null, pendingMigration: null, welcomeConversationId: null });
+    set({ ...SIGNED_OUT, pendingMigration: null, setupBannerDismissed: false });
     await clearSession();
   },
 

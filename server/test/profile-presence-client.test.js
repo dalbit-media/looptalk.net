@@ -168,6 +168,7 @@ test("inbox titles and navigation react to saved contact display names without r
     }) },
     "../../store/contactStore": { useContactStore: (select) => select({ contacts }) },
     "../../utils/contactDisplayName": loadClient("utils/contactDisplayName.js"),
+    "../../utils/messagePreview": loadClient("utils/messagePreview.js"),
     "../../hooks/useTranslation": { useTranslation: () => translate },
     "../../hooks/useAppTheme": { useAppTheme: () => ({ colors }) },
     "../../config/environment": { API_URL: "https://localhost" },
@@ -228,6 +229,7 @@ test("Settings begins with an editable profile, unlabeled bio under username, an
     "../../i18n/i18n": { t: translate },
     "../../utils/showAlert": { showAlert() {} },
     "../../utils/callNotifications": {},
+    "../../utils/desktopApp": { isDesktopApp: () => false },
     "../../utils/chatTextSize": { getChatMessageFontSize: () => 16 },
     "../../config/environment": { API_URL: "https://localhost" },
   });
@@ -400,6 +402,7 @@ test("socket snapshots preserve newer live events, clear stale online users on d
       clearSecureSession: () => {},
     },
     "../utils/privateMedia": { removePrivateMedia: async () => {} },
+    "../utils/desktopNotifications": { notifyDesktopMessage() {} },
     "../utils/showAlert": { showAlert() {} },
     "../i18n/i18n": { t: (key) => key },
   }, { setInterval: () => 1, clearInterval() {} });

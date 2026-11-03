@@ -26,8 +26,9 @@ AES-256-GCM under `USER_DATA_ENCRYPTION_KEY`. Lookup uses a domain-separated
 keyed HMAC index, never readable email/phone database columns. The service holds
 this contact-storage key and can therefore decrypt contact identifiers; do not
 claim that the operator is cryptographically unable to access them. The same
-key cannot decrypt owner vaults. Configure it once using
-`npm run privacy:key --prefix server`, protect/back it up separately, and do not
+key cannot decrypt owner vaults. The server generates it once for a new database and
+keeps it in `<database file>.secrets.json` (or set it explicitly, e.g. with
+`npm run privacy:key --prefix server`); protect/back it up with the database, and do not
 rotate it without migrating encrypted identifiers and lookup indexes.
 
 Vaults and local records use NaCl XSalsa20-Poly1305 authenticated encryption
@@ -63,8 +64,10 @@ caches and memory; crashes or OS copies can leave temporary files.
 Private signup sends the contact identifier over HTTPS for encrypted credential
 lookup storage, but never sends the password, owner decryption key, or readable
 profile. Invited signup atomically creates a normal two-person `CHAT` with the
-inviter and one fixed, server-readable text attributed to that inviter, marked
-`automaticWelcome` and visibly labeled as an automatic, server-readable notice.
+inviter and one server-readable text attributed to that inviter (the inviter's
+optional first message, or a fixed default), marked `automaticWelcome` and
+visibly labeled as a server-readable invitation message. The first message is
+hidden from the public invitation page and cleared from the invitation on redemption.
 This is the sole automatic onboarding exception: replies and subsequent messages
 use the normal E2EE relay, and private plaintext-write endpoints remain blocked.
 The inviter's contact is imported first into the invitee's encrypted owner vault

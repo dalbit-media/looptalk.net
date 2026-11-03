@@ -5,6 +5,7 @@ const sharp = require("sharp");
 const root = path.resolve(__dirname, "../..");
 const site = path.join(root, "public", "site");
 const assets = path.join(root, "mobile", "assets");
+const desktop = path.join(root, "desktop");
 const background = "#F5F7FA";
 
 async function main() {
@@ -18,6 +19,10 @@ async function main() {
     render(512).png().toFile(path.join(assets, "logo.png")),
     render(512).png().toFile(path.join(assets, "splash-icon.png")),
     render(48).png().toFile(path.join(assets, "favicon.png")),
+    // electron-builder derives the Windows .ico, macOS .icns and Linux icons from build/icon.png.
+    render(1024).png().toFile(path.join(desktop, "build", "icon.png")),
+    render(512).png().toFile(path.join(desktop, "assets", "icon.png")),
+    render(32).png().toFile(path.join(desktop, "assets", "tray.png")),
     // Keep every colored pixel inside Android's circular adaptive-icon safe zone.
     render(600).extend({
       top: 212, bottom: 212, left: 212, right: 212,
@@ -47,7 +52,7 @@ async function main() {
     imageOffset += frame.length;
   });
   await fs.writeFile(path.join(root, "public", "favicon.ico"), Buffer.concat([header, ...frames]));
-  console.log("Generated website, PWA, native, splash, notification, and favicon assets.");
+  console.log("Generated website, PWA, native, desktop, splash, notification, and favicon assets.");
 }
 
 main().catch((error) => {

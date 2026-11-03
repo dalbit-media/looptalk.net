@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Switch, TouchableOpacity, View, ScrollView } from "react-native";
 import { UserProfileHeader } from "../../components/UserProfileHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -11,6 +11,7 @@ import { usePreferencesStore } from "../../store/preferencesStore";
 import { t } from "../../i18n/i18n";
 import { showAlert } from "../../utils/showAlert";
 import { getCallPushToken, requestPushPermission } from "../../utils/callNotifications";
+import { isDesktopApp } from "../../utils/desktopApp";
 import { getChatMessageFontSize } from "../../utils/chatTextSize";
 import { API_URL } from "../../config/environment";
 
@@ -38,10 +39,18 @@ export const SettingsScreen = ({ navigation }) => {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [externalLinksExpanded, setExternalLinksExpanded] = useState(false);
 
+  // Declining the desktop app's notification prompt turns the switch off to match what the OS will show.
+  useEffect(() => {
+    if (notificationsEnabled && isDesktopApp() && Notification.permission !== "granted") {
+      setNotificationsEnabled(false);
+    }
+  }, [notificationsEnabled, setNotificationsEnabled]);
+
   const handleNotificationsChange = async (enabled) => {
     if (!enabled) {
       try {
-        await AuthAPI.disableDeviceTokens(token);
+        // Desktop app notifications are local; this endpoint disables push on every device.
+        if (!isDesktopApp()) await AuthAPI.disableDeviceTokens(token);
       } catch (error) {
         showAlert(t("common.error"), t("settings.notificationsFailed"));
       } finally {
@@ -58,7 +67,7 @@ export const SettingsScreen = ({ navigation }) => {
       }
 
       const deviceToken = await getCallPushToken();
-      await AuthAPI.registerDeviceToken(deviceToken, Platform.OS, token);
+      if (deviceToken) await AuthAPI.registerDeviceToken(deviceToken, Platform.OS, token);
       await setNotificationsEnabled(true);
     } catch (error) {
       showAlert(t("common.error"), t("settings.notificationsFailed"));
@@ -148,6 +157,15 @@ export const SettingsScreen = ({ navigation }) => {
       <UserProfileHeader user={user} editable />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.account")}</Text>
+
+        <TouchableOpacity style={styles.settingItem} onPress={() => navigation.navigate("AccountSetup")}>
+          <Ionicons name="key-outline" size={20} color={colors.primary} />
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>{t("setup.title")}</Text>
+            <Text style={styles.settingValue}>{t("setup.settingsDescription")}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
+        </TouchableOpacity>
 
         {user.member !== false && (
           <TouchableOpacity

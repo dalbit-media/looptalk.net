@@ -303,6 +303,7 @@ const storeFixture = () => {
     "../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
     "../i18n/i18n": { t: (key) => key },
     "../utils/privateMedia": { removePrivateMedia: async () => {} },
+    "../utils/desktopNotifications": { notifyDesktopMessage() {} },
     "expo-crypto": { randomUUID },
   });
   store.setState({

@@ -49,7 +49,7 @@ const navigationRef = createNavigationContainerRef();
 let pendingMessageNotification = null;
 let pendingInvitationCode = null;
 
-const openPendingWelcomeInbox = () => {
+const openPendingWelcomeChat = () => {
   const { token, welcomeConversationId, clearWelcomeConversation } = useAuthStore.getState();
   if (
     !token ||
@@ -60,8 +60,11 @@ const openPendingWelcomeInbox = () => {
     return;
   }
   clearWelcomeConversation();
+  // Invitees land in the inviter's chat so the first message is right there to answer.
   navigationRef.navigate("Messages", {
-    screen: "MessagesList",
+    screen: "Chat",
+    initial: false,
+    params: { conversationId: welcomeConversationId },
   });
 };
 
@@ -99,7 +102,7 @@ const openPendingInvitation = () => {
 
 const rememberInvitationUrl = (url) => {
   try {
-    const parsed = new URL(url, "https://looptalk.app");
+    const parsed = new URL(url, "https://looptalk.net");
     if (!parsed.pathname.replace(/\/$/, "").endsWith("/register")) return;
     const code = parsed.searchParams.get("code")?.trim();
     if (code) pendingInvitationCode = code;
@@ -121,7 +124,7 @@ const handleMessageNotification = (data) => {
 const linking = {
   prefixes: [
     "looptalk://",
-    "https://looptalk.app/app/",
+    "https://looptalk.net/app/",
     Platform.OS === "web" && typeof window !== "undefined"
       ? `${window.location.origin}/app/`
       : null,
@@ -302,7 +305,7 @@ function App() {
     messageStore.flushOutbox(token);
     messageStore.loadConversations(token, userId);
     useContactStore.getState().loadContacts(token);
-    openPendingWelcomeInbox();
+    openPendingWelcomeChat();
     openPendingInvitation();
     openPendingMessageNotification();
 
@@ -350,12 +353,12 @@ function App() {
             linking={linking}
             initialState={token ? undefined : initialNavigationState}
             onReady={() => {
-              openPendingWelcomeInbox();
+              openPendingWelcomeChat();
               openPendingInvitation();
               openPendingMessageNotification();
             }}
             onStateChange={() => {
-              openPendingWelcomeInbox();
+              openPendingWelcomeChat();
               openPendingInvitation();
             }}
           >

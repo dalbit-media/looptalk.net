@@ -27,6 +27,7 @@ jobs:
       - run: npm ci --prefix server
       - run: npm ci --prefix mobile
       - run: npm run check
+      - run: node --test desktop/test/*.test.js
       - run: npm run build
       - run: git diff --check
 

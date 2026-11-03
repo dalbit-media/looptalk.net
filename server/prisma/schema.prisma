@@ -21,6 +21,10 @@ model User {
   credentialSalt String?
   contactLookup  String? @unique
   encryptedIdentifier String?
+  // A chosen username/password unlocks the stable account key instead of replacing it.
+  credentialPublicKey String? @unique
+  credentialAccountId String? @unique
+  wrappedAccountKey   String?
   publicUsername String? @unique
   publicDisplayName String?
   encryptedVault  String?
@@ -208,6 +212,8 @@ model PrivateInvitation {
   createdAt       DateTime @default(now())
   inviterId       String?
   inviterDisplayName String?
+  inviteeDisplayName String?
+  message         String?
   acceptedById    String? @unique
   acceptedAt      DateTime?
 }

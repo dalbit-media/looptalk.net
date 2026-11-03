@@ -151,23 +151,9 @@ DATABASE_URL="file:/srv/looptalk/data/looptalk.db"
 UPLOAD_DIR=/srv/looptalk/data/uploads
 PORT=3001
 HOST=127.0.0.1
-JWT_SECRET="<output of: openssl rand -base64 48>"
-USER_DATA_ENCRYPTION_KEY="<output of: openssl rand -base64 32>"
-INSTANCE_COUNT=1
 TRUST_PROXY=1
-WEB_CLIENT_URL="/app/"
-RELEASE_VERSION="1.0.0"
-SENTRY_DSN=""
 ADMIN_USER_IDS=""
-
-# Web push (generate once: npx web-push generate-vapid-keys)
-VAPID_PUBLIC_KEY=""
-VAPID_PRIVATE_KEY=""
-VAPID_SUBJECT="mailto:ops@example.com"
-
-# Apple/Google sign-in, used only for account recovery
-GOOGLE_CLIENT_IDS=""
-APPLE_CLIENT_IDS=""
+SENTRY_DSN=""
 
 # TURN
 TURN_URLS="turn:looptalk.example.com:3478?transport=udp,turns:looptalk.example.com:5349?transport=tcp"
@@ -176,10 +162,13 @@ TURN_SECRET="<output of: openssl rand -hex 32>"
 
 `TRUST_PROXY` is the number of proxy hops in front of the app (1 for nginx; 2 for a CDN plus a load balancer). Without it, rate limits see every client as the proxy address.
 
-Back up `JWT_SECRET`, `USER_DATA_ENCRYPTION_KEY` and the VAPID pair in a secret
-manager. Losing or rotating `USER_DATA_ENCRYPTION_KEY` makes encrypted contact
-lookups unreadable, and changing the VAPID pair invalidates every browser push
-subscription.
+`JWT_SECRET`, `USER_DATA_ENCRYPTION_KEY` and the VAPID pair are generated on first
+start into `/srv/looptalk/data/looptalk.db.secrets.json` (mode 600). Back that file up
+with the database or provide the values from a secret manager instead; explicit
+values take precedence. Losing or rotating `USER_DATA_ENCRYPTION_KEY` makes encrypted
+contact lookups unreadable, and changing the VAPID pair invalidates every browser push
+subscription. Apple sign-in defaults to the bundle ID; set the
+`EXPO_PUBLIC_GOOGLE_*_CLIENT_ID` values to enable Google sign-in.
 
 ### 4.5 Run as a service
 
