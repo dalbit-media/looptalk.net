@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { ActivityIndicator, StyleSheet, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 import { AppText as Text } from "./AppText";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
@@ -46,15 +46,13 @@ export const NotificationSetup = ({ onClose }) => {
   const help = support !== "ready" ? support : permission === "denied" ? "blocked" : error;
   const close = () => { if (!pending.current) onClose(); };
   return (
-    <View style={styles.dialog}>
+    <Modal visible transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.overlay}>
+        <View style={styles.dialog} accessibilityViewIsModal>
+          <ScrollView>
       <Text style={styles.title} accessibilityRole="header">{t("setup.notificationsTitle")}</Text>
       <Text style={styles.body}>{t("notificationSetup.intro")}</Text>
-      {["prepare", "permission", "register"].map((step, index) => (
-        <View key={step} style={styles.step}>
-          <Text style={styles.number}>{index + 1}</Text>
-          <Text style={styles.body}>{t(`notificationSetup.${step}`)}</Text>
-        </View>
-      ))}
+      {!help && !done && <Text style={styles.feedback}>{t("notificationSetup.permission")}</Text>}
       {help && <Text accessibilityLiveRegion="polite" style={styles.feedback}>
         {t(`notificationSetup.${help}`)}
       </Text>}
@@ -65,7 +63,7 @@ export const NotificationSetup = ({ onClose }) => {
         </Text>
       </View>}
       {done && <Text accessibilityLiveRegion="polite" style={styles.feedback}>{t("notificationSetup.success")}</Text>}
-      {!done && support === "ready" && <TouchableOpacity accessibilityRole="button"
+      {!done && support === "ready" && permission !== "denied" && <TouchableOpacity accessibilityRole="button"
         accessibilityLabel={t("notificationSetup.enable")} accessibilityState={{ disabled: busy }}
         disabled={busy} onPress={enable} style={[styles.button, busy && styles.disabled]}>
         <Text style={styles.buttonText}>{t("notificationSetup.enable")}</Text>
@@ -75,16 +73,18 @@ export const NotificationSetup = ({ onClose }) => {
         accessibilityState={{ disabled: busy }} style={styles.close}>
         <Text style={styles.body}>{t("common.close")}</Text>
       </TouchableOpacity>
-    </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 };
 
 const createStyles = (colors) => StyleSheet.create({
-  dialog: { backgroundColor: colors.surface, padding: 20, borderBottomWidth: 1, borderColor: colors.border },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center", padding: 20 },
+  dialog: { width: "100%", maxWidth: 440, maxHeight: "85%", backgroundColor: colors.surface, padding: 20, borderRadius: 16 },
   title: { fontSize: 20, fontWeight: "700", color: colors.text, marginBottom: 12 },
   body: { fontSize: 14, lineHeight: 21, color: colors.text, flexShrink: 1 },
-  step: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginTop: 16 },
-  number: { color: colors.primary, fontSize: 16, fontWeight: "700" },
   feedback: { color: colors.text, fontSize: 14, lineHeight: 22, marginTop: 20 },
   progress: { flexDirection: "row", gap: 10, alignItems: "center", marginTop: 20 },
   button: { minHeight: 44, backgroundColor: colors.primary, borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 20, padding: 10 },

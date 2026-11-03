@@ -93,7 +93,7 @@ test("settings keep the original menu and show the build version in About", () =
   assert.ok(!order.includes(-1));
 });
 
-test("web permission information button opens inline setup instead of an alert", async () => {
+test("web permission information button opens notification setup instead of an alert", async () => {
   const screen = fixture("web", {});
   await screen.press();
   assert.ok(screen.nodes(screen.render()).some((node) => node.type === "NotificationSetup"));

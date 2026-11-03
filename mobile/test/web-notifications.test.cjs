@@ -161,16 +161,20 @@ const setupFixture = ({ support = "ready", initialPermission = "default", enable
   return { render, button, errors, closed: () => closed };
 };
 
-test("guided setup shows numbered steps, connects on explicit tap and confirms completion", async () => {
+test("notification modal connects on explicit tap and confirms completion", async () => {
   const f = setupFixture();
   const texts = nodes(f.render()).map((node) => node.props?.children);
-  for (const step of ["prepare", "permission", "register"]) assert.ok(texts.includes(`notificationSetup.${step}`));
+  assert.equal(f.render().type, "Modal");
+  assert.ok(texts.includes("notificationSetup.permission"));
   await f.button().props.onPress();
   assert.ok(nodes(f.render()).some((node) => node.props?.children === "notificationSetup.success"));
   assert.equal(f.button(), undefined);
 });
 
 test("guided setup handles blocked permission, dismissal, unsupported environments and retryable failures", async () => {
+  const blocked = setupFixture({ initialPermission: "denied" });
+  assert.equal(blocked.button(), undefined, "Blocked permission must show site-settings instructions, not a nonfunctional permission button");
+  assert.ok(nodes(blocked.render()).some((node) => node.props?.children === "notificationSetup.blocked"));
   for (const [result, help] of [["denied", "blocked"], ["default", "dismissed"]]) {
     const f = setupFixture({ enable: async () => result });
     await f.button().props.onPress();

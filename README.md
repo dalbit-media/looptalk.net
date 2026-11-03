@@ -426,7 +426,7 @@ Implemented:
 
 On the web app, Settings has one combined notification/browser-permissions row;
 there is no notification banner. Tap the row, its information button, or the
-off switch to show the setup steps directly below it. Choose **Allow and connect
+off switch to open the notification modal. Choose **Allow and connect
 notifications** and wait for confirmation. Blocked permissions must be changed in the
 browser's site settings; on iPhone/iPad (16.4+), add LoopTalk to the Home Screen
 and launch it there before enabling notifications. Desktop browsers do not
@@ -434,7 +434,8 @@ require installation. HTTPS is required.
 
 Both the Expo export and the Next.js fallback serve `/app/push-sw.js` as
 JavaScript (not the app's HTML page), with no-cache headers so worker updates
-can take effect.
+can take effect. The Next.js route bundles the worker source so production does
+not depend on the source file being present or on the server's working directory.
 
 Personal Notes is created automatically and pinned above other chats. Notes and
 attachments use the existing encrypted delivery and device-local history; only

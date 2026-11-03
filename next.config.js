@@ -41,6 +41,10 @@ const nextConfig = {
       ...config.resolve.extensions,
     ];
     config.module.rules.push({
+      resourceQuery: /^\?raw$/,
+      type: "asset/source",
+    });
+    config.module.rules.push({
       test: /\.(js|jsx|ts|tsx)$/,
       include: [
         path.resolve(__dirname, "mobile"),

@@ -26,7 +26,12 @@ test("Next.js fallback serves real JavaScript at the browser push worker URL wit
   });
   const module = { exports: {} };
   vm.runInNewContext(code, {
-    module, exports: module.exports, require, Response, process: { cwd: () => root },
+    module, exports: module.exports, Response,
+    require: (name) => {
+      assert.equal(name, "../../../mobile/web/push-sw.js?raw");
+      return fs.readFileSync(path.join(root, "mobile", "web", "push-sw.js"), "utf8");
+    },
+    process: { cwd: () => { throw new Error("Worker must not depend on deployment working directory"); } },
   }, { filename });
   const response = await module.exports.GET();
   assert.equal(response.status, 200);

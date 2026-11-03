@@ -1585,9 +1585,11 @@ const createStyles = (colors) => StyleSheet.create({
   headerProfileTitle: {
     flexDirection: "row",
     alignItems: "center",
-    maxWidth: 190,
+    flexShrink: 1,
+    minWidth: 0,
   },
   headerProfileAvatar: {
+    flexShrink: 0,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -1614,7 +1616,7 @@ const createStyles = (colors) => StyleSheet.create({
     flexShrink: 1,
   },
   headerProfileDetails: {
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
   },
   headerNotesRow: {
