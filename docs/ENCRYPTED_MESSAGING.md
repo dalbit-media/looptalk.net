@@ -117,7 +117,7 @@ metadata or imply an anonymous-credential or unlinkable-routing protocol.
 
 ## Message protocol scope and rollout
 
-`CHAT` messages, attachments, edits, deletions, and reactions use the encrypted
+`CHAT` and `NOTES` messages, attachments, edits, deletions, and reactions use the encrypted
 relay. Existing legacy `WELCOME` operator conversations are a server-readable
 exception, not created by private signup. Private profiles, contact organization,
 settings, and invitation history use the encrypted owner vault. Opaque account
@@ -125,6 +125,20 @@ identifiers, membership, public keys, push routing, call signaling, and delivery
 receipts still use server storage.
 There is no silent plaintext fallback: old clients receive `426 E2EE_REQUIRED`
 before a private plaintext upload is written.
+
+Loading the conversation list ensures one owner-only `NOTES` conversation exists.
+Personal Notes stays first on refresh and live updates. Its device roster contains
+only the owner's registered devices; the sending device keeps its local copy.
+With no other devices, the relay retains only a content-free delivery receipt.
+Like other chats, previously acknowledged history is not automatically copied to
+devices registered later.
+
+Selected videos can be encoded on the sending device before entering the encrypted
+outbox. The pre-send Original size checkbox defaults to unchecked and bypasses
+encoding when checked. Compression never sends readable media to the server or a
+third-party service, and non-video files are unchanged. Each selected attachment
+has its own durable delivery/retry entry. If an encoder is unavailable, the user
+must choose Original size explicitly; there is no silent plaintext fallback.
 
 Back up the production database and uploads, then run the repository's additive
 schema deployment (`npm run db:push --prefix server`; stop if Prisma reports any

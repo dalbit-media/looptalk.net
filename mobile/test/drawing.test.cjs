@@ -53,10 +53,10 @@ const fixture = (options = {}) => {
     },
     "./AppText": { AppText: "Text" },
     "react-native-svg": { default: "Svg", Path: "Path" },
-    "react-native-view-shot": { captureRef: async (...args) => {
+    "../utils/captureDrawing": { captureDrawing: async (...args) => {
       captures.push(args);
       return options.capture ? options.capture() : "data:image/png;base64,test";
-    }, releaseCapture: (uri) => released.push(uri) },
+    }, releaseDrawing: (uri) => { if (options.native) released.push(uri); } },
     "@expo/vector-icons/Ionicons": { default: "Icon" },
     "../hooks/useAppTheme": { useAppTheme: () => ({ colors: {} }) },
     "../hooks/useTranslation": { useTranslation: () => (key) => key },
@@ -126,7 +126,7 @@ test("failed send preserves strokes; duplicate sends and edits are blocked until
   await f.button("messages.drawingSend").props.onPress();
   assert.equal(f.alerts.length, 1);
   assert.ok(nodes(f.render()).find((node) => node.type === "Path"));
-  assert.equal(f.captures[0][1].result, "data-uri");
+  assert.equal(f.captures[0][1].length, 1, "The exporter receives the completed strokes");
   fail = false;
   const send = f.button("messages.drawingSend").props.onPress();
   await Promise.resolve(); await Promise.resolve();
@@ -165,6 +165,80 @@ test("capture failure preserves the drawing and native send releases its tempora
   handlers.onPanResponderGrant({ nativeEvent: { locationX: 10, locationY: 20 } });
   handlers.onPanResponderRelease();
   await native.button("messages.drawingSend").props.onPress();
-  assert.equal(native.captures[0][1].result, "tmpfile");
+  assert.equal(native.captures[0][1].length, 1);
   assert.deepEqual(native.released, ["data:image/png;base64,test"]);
+});
+
+const loadUtility = (name, mocks = {}, globals = {}) => {
+  const filename = path.join(__dirname, "..", "src", "utils", name);
+  const { code } = babel.transformSync(fs.readFileSync(filename, "utf8"), {
+    babelrc: false, configFile: false, plugins: ["@babel/plugin-transform-modules-commonjs"],
+  });
+  const module = { exports: {} };
+  vm.runInNewContext(code, {
+    module, exports: module.exports,
+    require: (name) => {
+      if (!Object.hasOwn(mocks, name)) throw new Error(`Unexpected dependency: ${name}`);
+      return mocks[name];
+    },
+    ...globals,
+  });
+  return module.exports;
+};
+
+test("web export renders strokes on white directly without DOM screenshots or network requests", async () => {
+  const strokes = [], fills = [];
+  const context = {
+    fillRect: (...args) => fills.push([context.fillStyle, ...args]),
+    stroke: (path) => strokes.push([path.d, context.strokeStyle, context.lineWidth, context.lineCap]),
+  };
+  const canvas = {
+    getContext: () => context,
+    toDataURL: (type) => { assert.equal(type, "image/png"); return "data:image/png;base64,AQID"; },
+  };
+  const ref = { current: {
+    getBoundingClientRect: () => ({ width: 120.5, height: 240 }),
+    ownerDocument: { createElement: (tag) => { assert.equal(tag, "canvas"); return canvas; } },
+  } };
+  const { captureDrawing } = loadUtility("captureDrawing.web.js", {}, {
+    Path2D: class { constructor(d) { this.d = d; } },
+  });
+  const paths = [{ d: "M10,20 L80,90", color: "#FF3B30", strokeWidth: 8 }];
+  assert.equal(await captureDrawing(ref, paths), "data:image/png;base64,AQID");
+  assert.deepEqual(fills, [["#FFFFFF", 0, 0, 121, 240]]);
+  assert.deepEqual(strokes, [["M10,20 L80,90", "#FF3B30", 8, "round"]]);
+  ref.current.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  await assert.rejects(captureDrawing(ref, paths), /not visible/);
+});
+
+test("native export retains PNG temporary-file capture and cleanup", async () => {
+  const captures = [], released = [];
+  const { captureDrawing, releaseDrawing } = loadUtility("captureDrawing.js", {
+    "react-native-view-shot": {
+      captureRef: async (...args) => { captures.push(args); return "file:temp.png"; },
+      releaseCapture: (uri) => released.push(uri),
+    },
+  });
+  const ref = { current: {} };
+  assert.equal(await captureDrawing(ref), "file:temp.png");
+  assert.equal(captures[0][0], ref);
+  assert.equal(captures[0][1].result, "tmpfile");
+  assert.equal(captures[0][1].format, "png");
+  releaseDrawing("file:temp.png");
+  assert.deepEqual(released, ["file:temp.png"]);
+});
+
+test("web drawing data URLs are decoded locally under a CSP that forbids data fetches", async () => {
+  const { readUploadBytes, encodeAttachment } = loadUtility("privateMedia.web.js", {
+    "../storage/privateRecords": {},
+    "./messageEncryption": {
+      decodeBase64: (value) => new Uint8Array(Buffer.from(value, "base64")),
+      encodeBase64: (value) => Buffer.from(value).toString("base64"),
+    },
+    "../config/limits": require("../src/config/limits"),
+    "./ownerSession": {},
+  }, { fetch: () => { throw new Error("CSP blocked network fetch"); } });
+  assert.deepEqual([...await readUploadBytes("data:image/png;base64,AQID")], [1, 2, 3]);
+  assert.equal(await encodeAttachment("data:image/png;base64,AQID"), "AQID");
+  await assert.rejects(readUploadBytes("data:image/png,invalid"), /Invalid attachment data URL/);
 });

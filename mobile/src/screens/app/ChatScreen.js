@@ -9,6 +9,7 @@ import * as VideoThumbnails from "expo-video-thumbnails";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { EmptyState } from "../../components/EmptyState";
 import { AttachmentSheet } from "../../components/AttachmentSheet";
+import { AttachmentReview } from "../../components/AttachmentReview";
 import { DrawingPad } from "../../components/DrawingPad";
 import { VoiceRecorderBar } from "../../components/VoiceRecorderBar";
 import { VoiceMessageBubble } from "../../components/VoiceMessageBubble";
@@ -25,10 +26,13 @@ import { contactDisplayNames, resolveDisplayName } from "../../utils/contactDisp
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { API_URL } from "../../config/environment";
+import { MAX_ATTACHMENT_MB, assertAttachmentSize } from "../../config/limits";
 import { showAlert } from "../../utils/showAlert";
 import * as ReportAPI from "../../api/reports";
 import { getEncryptionSafetyCodes } from "../../utils/secureMessaging";
 import { openPrivateAttachment } from "../../utils/privateMedia";
+import { LIBRARY_PICKER_OPTIONS, FILE_PICKER_OPTIONS, selectedAttachment, releaseSelectedAttachment } from "../../utils/attachmentSelection";
+import { prepareAttachment } from "../../utils/prepareAttachment";
 
 const formatFileSize = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
@@ -83,6 +87,12 @@ export const ChatScreen = ({ route, navigation }) => {
   const [drawingVisible, setDrawingVisible] = useState(false);
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [originalSize, setOriginalSize] = useState(false);
+  const [attachmentStatus, setAttachmentStatus] = useState("");
+  const attachmentSendingRef = useRef(false);
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  pendingAttachmentsRef.current = pendingAttachments;
   const [replyTarget, setReplyTarget] = useState(null);
   const [quotedMessageId, setQuotedMessageId] = useState(null);
   const [jumpingToReply, setJumpingToReply] = useState(false);
@@ -115,6 +125,14 @@ export const ChatScreen = ({ route, navigation }) => {
   messagesRef.current = messages;
 
   const conversation = conversations.find((item) => item.id === conversationId);
+  useEffect(() => {
+    setPendingAttachments([]);
+    setOriginalSize(false);
+    setAttachmentStatus("");
+    return () => {
+      if (!attachmentSendingRef.current) pendingAttachmentsRef.current.forEach(releaseSelectedAttachment);
+    };
+  }, [conversationId]);
   const publicPeer =
     conversation && !conversation.isGroupChat
       ? conversation.participants?.find((participant) => participant.userId !== user.id)
@@ -269,7 +287,8 @@ export const ChatScreen = ({ route, navigation }) => {
             <UserPresence user={peerUser} compact onHeader />
           </View>
         </TouchableOpacity>
-      ) : conversation?.name || route.params?.name || t("messages.chat"),
+      ) : conversation?.kind === "NOTES" ? t("messages.personalNotes") :
+        conversation?.name || route.params?.name || t("messages.chat"),
       headerRight: () => (
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -322,7 +341,7 @@ export const ChatScreen = ({ route, navigation }) => {
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigation, colors, canCall, canVideoCall, canScreenShare, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.isGroupChat, route.params?.name, names]);
+  }, [navigation, colors, canCall, canVideoCall, canScreenShare, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.kind, conversation?.isGroupChat, route.params?.name, names]);
 
   useEffect(() => {
     let isActive = true;
@@ -523,15 +542,19 @@ export const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  const uploadMedia = async (payload) => {
+  const uploadMedia = async (payload, size) => {
     setUploadingMedia(true);
     try {
+      // Picker sizes let oversized files fail before they are read into memory.
+      assertAttachmentSize(size || 0);
       await sendMediaMessage(conversationId, payload, token);
     } catch (error) {
       console.error("Error sending media message:", error);
       showAlert(
         t("common.error"),
-        error.response?.data?.error || t("messages.mediaUploadFailed")
+        error.code === "ATTACHMENT_TOO_LARGE" || error.response?.status === 413
+          ? t("messages.attachmentTooLarge", { size: MAX_ATTACHMENT_MB })
+          : error.response?.data?.error || t("messages.mediaUploadFailed")
       );
     } finally {
       setUploadingMedia(false);
@@ -561,13 +584,9 @@ export const ChatScreen = ({ route, navigation }) => {
       showAlert(t("common.error"), t("messages.mediaLibraryPermissionDenied"));
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images", "videos"],
-      quality: 0.9,
-      videoMaxDuration: 120,
-    });
+    const result = await ImagePicker.launchImageLibraryAsync(LIBRARY_PICKER_OPTIONS);
     if (result.canceled || !result.assets?.length) return;
-    await handlePickedAsset(result.assets[0]);
+    reviewAttachments(result.assets);
   };
 
   const handleTakePhotoOrVideo = async () => {
@@ -579,41 +598,80 @@ export const ChatScreen = ({ route, navigation }) => {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images", "videos"],
-      quality: 0.9,
+      quality: 1,
+      videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
       videoMaxDuration: 120,
     });
     if (result.canceled || !result.assets?.length) return;
-    await handlePickedAsset(result.assets[0]);
+    reviewAttachments(result.assets);
   };
 
-  const handlePickedAsset = async (asset) => {
-    const isVideo = asset.type === "video" || asset.duration != null;
-    const name = asset.fileName || (isVideo ? "video.mp4" : "photo.jpg");
-    const mimeType = asset.mimeType || guessMimeType(asset.uri, isVideo ? "video/mp4" : "image/jpeg");
+  const reviewAttachments = (assets) => {
+    setPendingAttachments(assets.map(selectedAttachment));
+    setOriginalSize(false);
+    setAttachmentStatus("");
+  };
 
-    let thumbnailUri;
-    let thumbnailMimeType;
-    if (isVideo) {
-      try {
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 500 });
-        thumbnailUri = thumbnail.uri;
-        thumbnailMimeType = "image/jpeg";
-      } catch (error) {
-        console.error("Error generating video thumbnail:", error);
+  const handleSendAttachments = async () => {
+    if (attachmentSendingRef.current || !pendingAttachments.length) return;
+    attachmentSendingRef.current = true;
+    setUploadingMedia(true);
+    let prepared;
+    let currentAttachment;
+    try {
+      for (let index = 0; index < pendingAttachments.length; index += 1) {
+        currentAttachment = pendingAttachments[index];
+        const progress = { index: index + 1, count: pendingAttachments.length };
+        setAttachmentStatus(t("messages.preparingAttachment", progress));
+        prepared = await prepareAttachment(currentAttachment, {
+          original: originalSize,
+          onProgress: (value) => setAttachmentStatus(t("messages.encodingAttachment", {
+            ...progress, percent: Math.round(value * 100),
+          })),
+        });
+        const payload = prepared.payload;
+        if (payload.messageType === "VIDEO" && Platform.OS !== "web") {
+          try {
+            const thumbnail = await VideoThumbnails.getThumbnailAsync(payload.uri, { time: 0 });
+            payload.thumbnailUri = thumbnail.uri;
+            payload.thumbnailMimeType = "image/jpeg";
+          } catch (error) {
+            console.error("Error generating video thumbnail:", error);
+          }
+        }
+        setAttachmentStatus(t("messages.uploadingAttachment", progress));
+        await sendMediaMessage(conversationId, payload, token, {
+          onUploadProgress: (event) => {
+            if (event.total) setAttachmentStatus(t("messages.uploadingAttachmentProgress", {
+              ...progress, percent: Math.round(event.loaded / event.total * 100),
+            }));
+          },
+        });
+        releaseSelectedAttachment(currentAttachment);
+        setPendingAttachments((items) => items.slice(1));
+        prepared.dispose();
+        prepared = null;
       }
+    } catch (error) {
+      // An accepted outbox entry owns its retry; don't submit a second copy.
+      if (error.clientMessageId) {
+        releaseSelectedAttachment(currentAttachment);
+        setPendingAttachments((items) => items.slice(1));
+      }
+      console.error("Error sending selected attachments:", error);
+      showAlert(t("common.error"),
+        error.code === "ATTACHMENT_TOO_LARGE" || error.response?.status === 413
+          ? t("messages.attachmentTooLarge", { size: MAX_ATTACHMENT_MB })
+          : error.code === "VIDEO_ENCODING_UNAVAILABLE" ||
+              (!prepared && currentAttachment?.messageType === "VIDEO" && !originalSize)
+            ? t("messages.encodingUnavailable")
+            : t("messages.mediaUploadFailed"));
+    } finally {
+      prepared?.dispose();
+      attachmentSendingRef.current = false;
+      setUploadingMedia(false);
+      setAttachmentStatus("");
     }
-
-    await uploadMedia({
-      uri: asset.uri,
-      name,
-      mimeType,
-      messageType: isVideo ? "VIDEO" : "IMAGE",
-      width: asset.width,
-      height: asset.height,
-      duration: isVideo && asset.duration ? Math.round(asset.duration) : null,
-      thumbnailUri,
-      thumbnailMimeType,
-    });
   };
 
   const handleVoiceCancel = (message) => {
@@ -647,29 +705,9 @@ export const ChatScreen = ({ route, navigation }) => {
 
   const handlePickFile = async () => {
     setAttachmentSheetVisible(false);
-    const result = await DocumentPicker.getDocumentAsync({
-      type: [
-        "application/pdf",
-        "text/plain",
-        "text/csv",
-        "application/zip",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      ],
-      copyToCacheDirectory: true,
-      multiple: false,
-    });
+    const result = await DocumentPicker.getDocumentAsync(FILE_PICKER_OPTIONS);
     if (result.canceled || !result.assets?.length) return;
-    const file = result.assets[0];
-    await uploadMedia({
-      uri: file.uri,
-      name: file.name || "file",
-      mimeType: file.mimeType || "application/octet-stream",
-      messageType: "FILE",
-      fileName: file.name || "file",
-      fileSize: file.size,
-    });
+    reviewAttachments(result.assets);
   };
 
   const handleAttachmentSelect = (key) => {
@@ -1400,6 +1438,15 @@ export const ChatScreen = ({ route, navigation }) => {
         </View>
       )}
 
+      <AttachmentReview items={pendingAttachments} original={originalSize}
+        onOriginalChange={setOriginalSize} onSend={handleSendAttachments}
+        onCancel={() => {
+          pendingAttachments.forEach(releaseSelectedAttachment);
+          setPendingAttachments([]);
+          setOriginalSize(false);
+        }}
+        busy={uploadingMedia} status={attachmentStatus} />
+
       {recordingVoice ? (
         <VoiceRecorderBar onCancel={handleVoiceCancel} onSend={handleVoiceSend} />
       ) : (
@@ -1407,7 +1454,7 @@ export const ChatScreen = ({ route, navigation }) => {
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setAttachmentSheetVisible(true)}
-            disabled={uploadingMedia}
+            disabled={uploadingMedia || pendingAttachments.length > 0}
           >
             {uploadingMedia ? (
               <ActivityIndicator size="small" color={colors.primary} />

@@ -1,5 +1,6 @@
 import { privateTransaction } from "../storage/privateRecords";
 import { encodeBase64, decodeBase64 } from "./messageEncryption";
+import { assertAttachmentSize } from "../config/limits";
 import {
   isOwnerAccount, requireOwnerSession, encryptLocalValue, decryptLocalValue,
   getOwnerGeneration, assertOwnerGeneration,
@@ -16,6 +17,12 @@ export const clearPrivateMediaUrls = (userId) => {
   }
 };
 export const readUploadBytes = async (uri) => {
+  // Drawing exports are data URLs, not network requests allowed by connect-src.
+  if (uri.startsWith("data:")) {
+    const match = /^data:[^;,]+;base64,([A-Za-z0-9+/]*={0,2})$/.exec(uri);
+    if (!match) throw new Error("Invalid attachment data URL");
+    return decodeBase64(match[1]);
+  }
   const response = await fetch(uri);
   if (!response.ok) throw new Error(`Unable to read attachment (${response.status})`);
   return new Uint8Array(await response.arrayBuffer());
@@ -94,6 +101,6 @@ export const createCipherUpload = async (bytes) => ({
 });
 export const encodeAttachment = async (uri) => {
   const bytes = /^[A-Za-z0-9+/]+={0,2}$/.test(uri) ? decodeBase64(uri) : await readUploadBytes(uri);
-  if (bytes.length > 100 * 1024 * 1024) throw new Error("Attachment exceeds the 100 MB limit");
+  assertAttachmentSize(bytes.length);
   return encodeBase64(bytes);
 };

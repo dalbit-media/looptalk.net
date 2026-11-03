@@ -132,6 +132,28 @@ test("poll forum persistence, validation and participation access with isolated 
     assert.equal(await prisma.forumComment.count(), 0);
   });
 
+  await t.test("regular-post comments are readable and writable without a support vote", async () => {
+    const regular = (await request("/polls", "alice", "POST", {
+      question: "A regular post", options: ["Support"],
+    })).data;
+    try {
+      const posted = await request(`/polls/${regular.id}/comments`, "bob", "POST", { content: "No vote needed" });
+      assert.equal(posted.status, 201);
+      for (const user of ["alice", "bob", "carol"]) {
+        const detail = await request(`/polls/${regular.id}`, user);
+        assert.equal(detail.data.myOptionId, null);
+        const comments = await request(`/polls/${regular.id}/comments`, user);
+        assert.equal(comments.status, 200);
+        assert.equal(comments.data.comments[0].id, posted.data.id);
+      }
+      assert.equal(await prisma.forumVote.count({ where: { pollId: regular.id } }), 0);
+      assert.equal((await request(`/polls/${poll.id}/comments`, "carol")).status, 403,
+        "Reading a regular post does not unlock a separate poll");
+    } finally {
+      await prisma.forumPoll.delete({ where: { id: regular.id } });
+    }
+  });
+
   await t.test("post reactions toggle independently from votes and expose only counts and own selection", async () => {
     assert.deepEqual((await request(`/polls/${poll.id}`)).data.reactions, []);
     for (const emoji of ["", "not-an-emoji", "👍👍", null]) {

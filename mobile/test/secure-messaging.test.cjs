@@ -118,6 +118,7 @@ const serviceFixture = () => {
     "../api/secureMessages": api,
     "./messageEncryption": crypto,
     "./privateMedia": media,
+    "../config/limits": require("../src/config/limits"),
   });
   return { ...f, service, records, values, events, api, media };
 };
@@ -273,6 +274,7 @@ test("an attachment write failure cannot produce a local message", async () => {
 
 const storeFixture = () => {
   const f = serviceFixture();
+  f.records.multiGet = async (keys) => Promise.all(keys.map(async (key) => [key, await f.records.getItem(key)]));
   f.records.updateItem = async (key, update) => {
     const value = update(await f.records.getItem(key));
     if (value === null) await f.records.removeItem(key);
@@ -304,6 +306,7 @@ const storeFixture = () => {
     "../i18n/i18n": { t: (key) => key },
     "../utils/privateMedia": { removePrivateMedia: async () => {} },
     "../utils/desktopNotifications": { notifyDesktopMessage() {} },
+    "../utils/conversationOrder": load("utils/conversationOrder.js"),
     "expo-crypto": { randomUUID },
   });
   store.setState({
@@ -334,6 +337,65 @@ test("message store sends private text via crypto, leaves a durable local copy, 
   assert.equal(message.deliveryState, null);
   assert.equal((await f.storage.readMessageOutbox("alice")).length, 0);
   assert.equal(f.events.filter(([kind]) => kind === "post").length, 1);
+});
+
+test("Personal Notes stays first on refresh, message receipt and conversation updates", async () => {
+  const f = storeFixture();
+  const notes = { id: "notes", kind: "NOTES", createdAt: "2020-01-01", messages: [] };
+  const chat = { id: "private-room", kind: "CHAT", createdAt: "2026-01-01", messages: [] };
+  f.messageApi.getConversations = async () => [chat, notes];
+  await f.store.getState().loadConversations("token", "alice");
+  assert.equal(f.store.getState().conversations[0].id, "notes");
+  await f.store.getState().receiveMessage({
+    id: randomUUID(), conversationId: chat.id, senderId: "alice",
+    messageType: "TEXT", content: "Newer chat", createdAt: "2026-11-03",
+  });
+  assert.equal(f.store.getState().conversations[0].id, "notes");
+  f.store.getState().upsertConversation({ ...chat, name: "Updated" });
+  assert.equal(f.store.getState().conversations[0].id, "notes");
+});
+
+test("Personal Notes uses encrypted delivery with only the owner's devices", async () => {
+  const f = storeFixture();
+  f.store.setState({ conversations: [{ id: "private-room", kind: "NOTES" }] });
+  f.api.getRecipientDevices = async () => ({ devices: [asDevice(f.sender, "alice")] });
+  const entry = await enqueueText(f);
+  await f.store.getState()._sendOutboxEntry(entry, "token");
+  const [message] = await f.storage.readConversationMessages("alice", "private-room");
+  assert.equal(message.content, entry.content);
+  assert.equal(message.encrypted, true);
+  const post = f.events.find(([kind]) => kind === "post");
+  assert.equal(post[2].recipients.length, 0);
+  assert.equal((await f.storage.readMessageOutbox("alice")).length, 0);
+});
+
+test("web drawing data URLs send as encrypted PNG attachments and retain a durable local drawing", async () => {
+  const f = storeFixture();
+  f.media.encodeAttachment = load("utils/privateMedia.web.js", {
+    "../storage/privateRecords": {},
+    "./messageEncryption": crypto,
+    "../config/limits": require("../src/config/limits"),
+    "./ownerSession": {},
+  }).encodeAttachment;
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  await f.store.getState().sendMediaMessage("private-room", {
+    uri: `data:image/png;base64,${png}`, name: "drawing.png",
+    mimeType: "image/png", messageType: "DRAWING",
+  }, "token");
+  const [message] = await f.storage.readConversationMessages("alice", "private-room");
+  assert.equal(message.messageType, "DRAWING");
+  assert.equal(message.mediaUrl, "local:attachment");
+  assert.equal(message.deliveryState, null);
+  assert.equal(message.encrypted, true);
+  const [, , metadata, bytes] = f.events.find(([kind]) => kind === "post");
+  const payload = crypto.decryptDelivery({
+    ...metadata, ...metadata.recipients[0], conversationId: "private-room",
+    senderId: "alice", senderPublicKey: f.sender.publicKey,
+  }, bytes, f.recipient);
+  assert.equal(payload.body.messageType, "DRAWING");
+  assert.equal(payload.body.attachment.mimeType, "image/png");
+  assert.equal(payload.body.attachment.bytes, png);
+  assert.equal((await f.storage.readMessageOutbox("alice")).length, 0);
 });
 
 test("concurrent retries of the same dispatch share a single send", async () => {
@@ -388,6 +450,21 @@ test("failed private media setup leaves a visible retryable local message, never
   assert.equal((await f.storage.readMessageOutbox("alice")).length, 1);
   assert.equal(f.alerts.length, 1);
   assert.ok(!f.events.some(([kind]) => kind === "post"));
+});
+
+test("media upload progress reaches encrypted transport and durable failures identify their existing message", async () => {
+  const f = storeFixture();
+  const onUploadProgress = () => {};
+  const payload = { uri: "local:fixture", name: "clip.mp4", mimeType: "video/mp4", messageType: "VIDEO" };
+  await f.store.getState().sendMediaMessage("private-room", payload, "token", { onUploadProgress });
+  const post = f.events.find(([kind]) => kind === "post");
+  assert.equal(post[5].onUploadProgress, onUploadProgress);
+  f.api.getRecipientDevices = async () => { throw new Error("Recipient unavailable"); };
+  await assert.rejects(f.store.getState().sendMediaMessage("private-room", payload, "token"), (error) => {
+    assert.match(error.clientMessageId, /^[0-9a-f-]{36}$/);
+    return true;
+  });
+  assert.equal((await f.storage.readMessageOutbox("alice")).length, 1);
 });
 
 test("switching accounts during crypto preparation cannot store one user's message in another account", async () => {

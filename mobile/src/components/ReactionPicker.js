@@ -5,7 +5,7 @@ import { AppText as Text } from "./AppText";
 
 export const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"];
 
-export const ReactionBar = ({ reactions = [], userId, colors, onSelect, onAdd, disabled = false, addLabel }) => {
+export const ReactionBar = ({ reactions = [], userId, colors, onSelect, onAdd, disabled = false, addLabel, compact = false }) => {
   const styles = createStyles(colors);
   const grouped = new Map();
   for (const reaction of reactions) {
@@ -17,24 +17,24 @@ export const ReactionBar = ({ reactions = [], userId, colors, onSelect, onAdd, d
 
   if (!grouped.size && !onAdd) return null;
   return (
-    <View style={styles.reactionBar}>
+    <View style={[styles.reactionBar, compact && styles.compactBar]}>
       {[...grouped.values()].map(({ emoji, count, selected }) => (
         <TouchableOpacity key={emoji} accessibilityRole="button"
           accessibilityLabel={`${emoji}, ${count}`}
           accessibilityState={{ selected, disabled: disabled || !onSelect }}
           disabled={disabled || !onSelect}
           onPress={onSelect ? (event) => { event?.stopPropagation?.(); onSelect(emoji); } : undefined}
-          style={[styles.reactionChip, selected && styles.reactionChipSelected, disabled && styles.disabled]}>
-          <Text style={styles.reactionEmoji}>{emoji}</Text>
-          <Text style={[styles.reactionCount, selected && styles.reactionCountSelected]}>{count}</Text>
+          style={[styles.reactionChip, selected && styles.reactionChipSelected, compact && styles.compactChip, disabled && styles.disabled]}>
+          <Text style={[styles.reactionEmoji, compact && styles.compactEmoji]}>{emoji}</Text>
+          <Text style={[styles.reactionCount, compact && styles.compactCount, selected && styles.reactionCountSelected]}>{count}</Text>
         </TouchableOpacity>
       ))}
       {onAdd && <TouchableOpacity accessibilityRole="button" accessibilityLabel={addLabel}
         accessibilityState={{ disabled }} disabled={disabled}
         onPress={(event) => { event?.stopPropagation?.(); onAdd(); }}
-        style={[styles.addReaction, disabled && styles.disabled]}>
-        <Ionicons name="add" size={17} color={colors.secondaryText} />
-        <Ionicons name="happy-outline" size={16} color={colors.secondaryText} />
+        style={[styles.addReaction, compact && styles.compactAdd, disabled && styles.disabled]}>
+        {!compact && <Ionicons name="add" size={17} color={colors.secondaryText} />}
+        <Ionicons name="happy-outline" size={compact ? 18 : 16} color={colors.secondaryText} />
       </TouchableOpacity>}
     </View>
   );
@@ -84,6 +84,11 @@ const createStyles = (colors) => StyleSheet.create({
   reactionCountSelected: { color: colors.navigationAccent },
   disabled: { opacity: 0.55 },
   addReaction: { width: 38, height: 34, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 1, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.input },
+  compactBar: { gap: 4, marginTop: 2 },
+  compactChip: { minWidth: 32, minHeight: 28, gap: 3, paddingHorizontal: 4, borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
+  compactEmoji: { fontSize: 14 },
+  compactCount: { fontSize: 11, fontWeight: "500" },
+  compactAdd: { width: 28, height: 28, borderWidth: 0, borderRadius: 0, backgroundColor: "transparent" },
   backdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20, backgroundColor: "rgba(10,14,20,0.55)" },
   sheet: { width: "100%", maxWidth: 420, padding: 20, borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.2, shadowRadius: 24, elevation: 12 },
   heading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 18 },

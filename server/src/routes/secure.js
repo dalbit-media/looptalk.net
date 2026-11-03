@@ -12,9 +12,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const KINDS = new Set(["message", "edit", "delete", "reaction"]);
 const SENDER = { id: true, publicUsername: true, publicDisplayName: true };
 const { opaqueUser } = require("../utils/privateAccounts");
+// Keep equal to mobile/src/config/limits.js MAX_PAYLOAD_BYTES (250 MB attachments, base64 + envelope headroom).
+const MAX_ATTACHMENT_BYTES = 250 * 1024 * 1024;
+const MAX_PAYLOAD_BYTES = Math.ceil(MAX_ATTACHMENT_BYTES * 1.4);
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 140 * 1024 * 1024, files: 1, fields: 1, fieldSize: 1024 * 1024, parts: 3 },
+  limits: { fileSize: MAX_PAYLOAD_BYTES, files: 1, fields: 1, fieldSize: 1024 * 1024, parts: 3 },
 }).single("payload");
 
 function fail(status, code, error) {
@@ -58,7 +61,8 @@ async function membership(db, conversationId, userId) {
   if (!conversation?.participants.some((p) => p.userId === userId)) {
     fail(403, "NOT_PARTICIPANT", "Not a conversation participant");
   }
-  if (conversation.kind !== "CHAT" || conversation.participants.some((p) => p.user.status === "SYSTEM")) {
+  if (!["CHAT", "NOTES"].includes(conversation.kind) ||
+      conversation.participants.some((p) => p.user.status === "SYSTEM")) {
     fail(400, "UNSUPPORTED_CONVERSATION", "This conversation does not support encrypted messages");
   }
   if (!conversation.isGroupChat && conversation.participants.length === 2) {
@@ -282,3 +286,4 @@ router.post("/messages/:id/ack", route(async (req, res) => {
 }));
 
 module.exports = router;
+module.exports.MAX_PAYLOAD_BYTES = MAX_PAYLOAD_BYTES;

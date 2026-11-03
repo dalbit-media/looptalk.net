@@ -2,6 +2,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import { shareAsync } from "expo-sharing";
 import { randomUUID } from "expo-crypto";
 import { encodeBase64, decodeBase64 } from "./messageEncryption";
+import { assertAttachmentSize } from "../config/limits";
 import {
   isOwnerAccount, requireOwnerSession, encryptLocalValue, decryptLocalValue,
   getOwnerGeneration, assertOwnerGeneration,
@@ -119,6 +120,6 @@ export const createCipherUpload = async (bytes, id) => {
 };
 export const encodeAttachment = async (uri) => {
   const bytes = /^[A-Za-z0-9+/]+={0,2}$/.test(uri) ? decodeBase64(uri) : await readUploadBytes(uri);
-  if (bytes.length > 100 * 1024 * 1024) throw new Error("Attachment exceeds the 100 MB limit");
+  assertAttachmentSize(bytes.length);
   return encodeBase64(bytes);
 };

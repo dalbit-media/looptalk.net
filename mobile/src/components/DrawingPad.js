@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet, TouchableOpacity, Modal, PanResponder, Platform } from "react-native";
 import { AppText as Text } from "./AppText";
 import Svg, { Path } from "react-native-svg";
-import { captureRef, releaseCapture } from "react-native-view-shot";
+import { captureDrawing, releaseDrawing } from "../utils/captureDrawing";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
@@ -143,16 +143,14 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
     setSending(true);
     let uri;
     try {
-      uri = await captureRef(canvasRef, {
-        format: "png", quality: 1, result: Platform.OS === "web" ? "data-uri" : "tmpfile",
-      });
+      uri = await captureDrawing(canvasRef, paths);
       await onSend(uri);
       setPaths([]);
     } catch (error) {
       console.error("Error sending drawing:", error);
       showAlert(t("common.error"), t("messages.mediaUploadFailed"));
     } finally {
-      if (uri && Platform.OS !== "web") releaseCapture(uri);
+      if (uri) releaseDrawing(uri);
       sendingRef.current = false;
       setSending(false);
     }

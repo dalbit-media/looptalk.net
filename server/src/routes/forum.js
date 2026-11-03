@@ -256,16 +256,19 @@ router.post("/polls/:id/vote", writeLimiter, async (req, res) => {
   }
 });
 
-const requireParticipant = async (req, res, next) => {
+const requireCommentAccess = async (req, res, next) => {
   try {
     const poll = await prisma.forumPoll.findUnique({
       where: { id: req.params.id },
-      select: { id: true, visibility: true, author: { select: { isMember: true } } },
+      select: {
+        id: true, visibility: true, author: { select: { isMember: true } },
+        _count: { select: { options: true } },
+      },
     });
     if (!poll || (!req.isMember && (poll.visibility !== "public" || poll.author.isMember))) {
       return res.status(404).json({ error: "Poll not found" });
     }
-    if (!req.isMember) return next();
+    if (!req.isMember || poll._count.options === 1) return next();
     const vote = await prisma.forumVote.findUnique({
       where: { pollId_userId: { pollId: poll.id, userId: req.userId } }, select: { id: true },
     });
@@ -277,7 +280,7 @@ const requireParticipant = async (req, res, next) => {
   }
 };
 
-router.get("/polls/:id/comments", requireParticipant, async (req, res) => {
+router.get("/polls/:id/comments", requireCommentAccess, async (req, res) => {
   const skip = pageOffset(req.query.page);
   if (skip === null) return res.status(400).json({ error: "Invalid page" });
   try {
@@ -297,7 +300,7 @@ router.get("/polls/:id/comments", requireParticipant, async (req, res) => {
   }
 });
 
-router.post("/polls/:id/comments", writeLimiter, requireParticipant, async (req, res) => {
+router.post("/polls/:id/comments", writeLimiter, requireCommentAccess, async (req, res) => {
   const { content } = req.body || {};
   if (!validText(content, 2000)) return res.status(400).json({ error: "Comment must contain 1-2000 characters" });
   try {

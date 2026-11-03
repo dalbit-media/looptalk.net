@@ -88,3 +88,28 @@ test("reaction picker exposes accessible options, selected state and close behav
   assert.equal(closed, true);
   assert.equal(REACTION_EMOJIS.length, 8);
 });
+
+test("compact post reactions are small and borderless while chat reactions retain their existing style", () => {
+  const { ReactionBar } = load();
+  const props = {
+    reactions: [{ emoji: "❤️", count: 2, reactedByMe: true }],
+    colors: { border: "#ddd", surface: "#fff", primarySoft: "#eef", navigationAccent: "#369", input: "#eee" },
+    onSelect() {}, onAdd() {}, addLabel: "React",
+  };
+  const flatten = (styles) => Object.assign({}, ...styles.flat().filter(Boolean));
+  const tree = ReactionBar({ ...props, compact: true });
+  const chip = find(tree, (node) => node.props?.accessibilityLabel === "❤️, 2");
+  assert.equal(flatten(chip.props.style).borderWidth, 0);
+  assert.equal(flatten(chip.props.style).backgroundColor, "transparent");
+  assert.equal(flatten(chip.props.style).minHeight, 28);
+  const emoji = find(chip, (node) => node.props?.children === "❤️");
+  assert.equal(flatten(emoji.props.style).fontSize, 14);
+  const add = find(tree, (node) => node.props?.accessibilityLabel === "React");
+  assert.equal(flatten(add.props.style).borderWidth, 0);
+  assert.equal(nodes(add).filter((node) => node.props?.name === "happy-outline").length, 1);
+  assert.equal(nodes(add).some((node) => node.props?.name === "add"), false);
+  const chat = ReactionBar(props);
+  const chatChip = find(chat, (node) => node.props?.accessibilityLabel === "❤️, 2");
+  assert.equal(flatten(chatChip.props.style).borderWidth, 1);
+  assert.equal(flatten(chatChip.props.style).minHeight, 34);
+});

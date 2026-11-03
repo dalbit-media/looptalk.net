@@ -111,6 +111,7 @@
         }
       ],
       "expo-video",
+      "react-native-compressor",
       [
         "@config-plugins/react-native-webrtc",
         {

@@ -111,6 +111,41 @@ test("opaque ephemeral encrypted relay with isolated SQLite database", { timeout
   const ack = (id, d, user = d.user) =>
     request(`/api/secure/messages/${id}/ack`, { user, method: "POST", body: { deviceId: d.deviceId } });
 
+  await t.test("Personal Notes is created once, pinned first, isolated and encrypted to own devices", async (t) => {
+    t.after(async () => {
+      await prisma.conversation.deleteMany({ where: { kind: "NOTES" } });
+      await prisma.conversation.update({ where: { id: direct.id }, data: { lastMessageAt: null } });
+      events.length = 0;
+      traffic.length = 0;
+      pushes.length = 0;
+    });
+    const lists = await Promise.all([request("/api/conversations"), request("/api/conversations")]);
+    for (const list of lists) {
+      assert.equal(list.status, 200);
+      assert.equal(list.data[0].kind, "NOTES");
+    }
+    const notes = lists[0].data[0];
+    assert.equal(lists[1].data[0].id, notes.id);
+    assert.equal(await prisma.conversation.count({ where: { kind: "NOTES" } }), 1);
+    assert.deepEqual(notes.participants.map((p) => p.userId), ["alice"]);
+    assert.equal((await request(`/api/conversations/${notes.id}`, { user: "bob" })).status, 403);
+    const roster = await request(`/api/secure/conversations/${notes.id}/devices`);
+    assert.deepEqual(roster.data.participantIds, ["alice"]);
+    assert.deepEqual(roster.data.devices.map((d) => d.userId), ["alice", "alice"]);
+    const dispatch = make([alice2]);
+    assert.equal((await send(dispatch, { conversationId: notes.id })).status, 201);
+    assert.equal((await fetchPayload(dispatch.id, bob)).status, 404);
+    assert.ok((await inbox(alice2)).data.some((entry) => entry.id === dispatch.id));
+    assert.equal((await ack(dispatch.id, alice2)).status, 200);
+    assert.equal(await prisma.securePayload.count({ where: { dispatchId: dispatch.id } }), 0);
+    const singleDeviceNotes = (await request("/api/conversations", { user: "outsider" })).data[0];
+    assert.equal((await send(make([], { senderDeviceId: outsider.deviceId }), {
+      conversationId: singleDeviceNotes.id, user: "outsider",
+    })).status, 201);
+    await prisma.conversation.update({ where: { id: direct.id }, data: { lastMessageAt: new Date("2099-01-01") } });
+    assert.equal((await request("/api/conversations")).data[0].id, notes.id);
+  });
+
   await t.test("auth first; canonical immutable public keys and device ownership", async () => {
     assert.equal((await request("/api/secure/devices", { user: null })).status, 401);
     assert.equal((await register(alice)).status, 200);

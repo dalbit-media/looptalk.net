@@ -52,6 +52,15 @@ const relayConversationUpdate = (req, conversation) => {
 // Get conversations list
 router.get("/", authMiddleware, async (req, res) => {
   try {
+    await secureTransaction(prisma, (db) => db.conversation.upsert({
+      where: { id: `personal-notes:${req.userId}` },
+      update: {},
+      create: {
+        id: `personal-notes:${req.userId}`,
+        kind: "NOTES",
+        participants: { create: { userId: req.userId } },
+      },
+    }));
     const conversations = await prisma.conversationParticipant.findMany({
       where: { userId: req.userId },
       include: {
@@ -80,6 +89,7 @@ router.get("/", authMiddleware, async (req, res) => {
 
     result.sort(
       (left, right) =>
+        Number(right.kind === "NOTES") - Number(left.kind === "NOTES") ||
         new Date(right.lastMessageAt || right.createdAt) -
         new Date(left.lastMessageAt || left.createdAt)
     );

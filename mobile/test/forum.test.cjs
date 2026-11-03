@@ -297,6 +297,50 @@ test("failed votes do not unlock results or request comments", async () => {
   assert.equal(commentRequests, 0);
 });
 
+test("regular posts load and post comments without voting or displaying a vote gate", async () => {
+  const calls = [];
+  const f = fixture("PollScreen", {
+    getPoll: async () => ({ ...poll, options: [poll.options[0]] }),
+    listComments: async (...args) => {
+      calls.push(["comments", ...args]);
+      return { comments: [{ id: "regular-comment", content: "Visible without voting",
+        author: { name: "Bob" }, createdAt: poll.createdAt }], hasMore: false };
+    },
+    postComment: async (...args) => calls.push(["post", ...args]),
+    vote: async () => assert.fail("Regular posts must not require a vote"),
+  });
+  let tree = await f.open();
+  assert.ok(find(tree, (node) => node.props?.children === "Visible without voting"));
+  assert.equal(find(tree, (node) => node.props?.children === "forum.voteToUnlock"), undefined);
+  assert.equal(button(tree, "forum.vote"), undefined);
+  assert.ok(find(tree, (node) => node.props?.text === "forum.regularPostRules"));
+  find(tree, (node) => node.props?.accessibilityLabel === "forum.commentPlaceholder").props.onChangeText(" My comment ");
+  await button(f.render(), "forum.postComment").props.onPress();
+  assert.deepEqual(calls, [
+    ["comments", "token", "poll"], ["post", "token", "poll", "My comment"], ["comments", "token", "poll"],
+  ]);
+  tree = f.render();
+  assert.equal(find(tree, (node) => node.props?.accessibilityLabel === "forum.commentPlaceholder").props.value, "");
+  assert.equal(find(tree, (node) => node.type === "ReactionBar").props.compact, true);
+});
+
+test("older support-voted regular posts do not show poll results or poll participation hints", async () => {
+  const regular = { ...poll, options: [poll.options[0]], myOptionId: "first", totalVotes: 1,
+    results: [{ optionId: "first", votes: 1 }] };
+  const detail = fixture("PollScreen", {
+    getPoll: async () => regular, listComments: async () => ({ comments: [], hasMore: false }),
+  });
+  const tree = await detail.open();
+  assert.ok(find(tree, (node) => node.props?.children === "forum.comments"));
+  assert.equal(find(tree, (node) => typeof node.props?.children === "string" && node.props.children.startsWith("forum.totalVotes")), undefined);
+  assert.equal(find(tree, (node) => typeof node.props?.children === "string" && node.props.children.startsWith("forum.result{")), undefined);
+  const feed = fixture("ForumScreen", { listPolls: async () => ({ polls: [regular], hasMore: false }) });
+  const list = await feed.open();
+  const row = list.props.renderItem({ item: regular });
+  assert.equal(find(row, (node) => node.props?.children === "forum.participated"), undefined);
+  assert.equal(find(row, (node) => node.type === "ReactionBar").props.compact, true);
+});
+
 test("participating users post real comments and see explicit posting errors", async () => {
   let fail = true;
   const submitted = [];

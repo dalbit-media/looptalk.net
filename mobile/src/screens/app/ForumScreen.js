@@ -204,11 +204,11 @@ export const ForumScreen = ({ navigation }) => {
                 styles={styles} colors={colors} />
             </View>
             <Text style={styles.title}>{item.question}</Text>
-            {item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
+            {item.options.length > 1 && item.myOptionId ? <Text style={styles.meta}>{t("forum.participated")}</Text> : null}
           </TouchableOpacity>
           {tab === "public" && <PostTags tags={item.tags} styles={styles} selectedTag={selectedTag}
             onSelect={isMember ? selectTag : undefined} />}
-          <ReactionBar reactions={item.reactions} userId={myId} colors={colors}
+          <ReactionBar compact reactions={item.reactions} userId={myId} colors={colors}
             addLabel={t("forum.react")} disabled={!isMember || reactionSaving}
             onSelect={isMember ? (emoji) => toggleListReaction(item, emoji) : undefined}
             onAdd={isMember ? () => { setReactionTarget(item); setReactionError(""); } : undefined} />
@@ -365,7 +365,7 @@ export const PollScreen = ({ route }) => {
       const detail = await ForumAPI.getPoll(token, pollId);
       if (current !== request.current) return;
       setPoll(detail);
-      if (!isMember || detail.myOptionId) {
+      if (!isMember || detail.options.length === 1 || detail.myOptionId) {
         const data = await ForumAPI.listComments(token, pollId);
         if (current !== request.current) return;
         setComments(data.comments);
@@ -502,7 +502,7 @@ export const PollScreen = ({ route }) => {
         {poll && <>
           <View style={styles.titleRow}>
             <Text style={[styles.title, styles.grow]}>{poll.question}</Text>
-            <InfoTip align="right" text={t("forum.rules")} />
+            <InfoTip align="right" text={t(poll.options.length > 1 ? "forum.rules" : "forum.regularPostRules")} />
           </View>
           <View style={styles.postByline}>
             <Text style={[styles.meta, styles.grow]} numberOfLines={1}>
@@ -524,7 +524,7 @@ export const PollScreen = ({ route }) => {
             </TouchableOpacity>}
           </View>
           {poll.visibility === "public" && <PostTags tags={poll.tags} styles={styles} />}
-          <ReactionBar reactions={poll.reactions} userId={myId} colors={colors}
+          <ReactionBar compact reactions={poll.reactions} userId={myId} colors={colors}
             addLabel={t("forum.react")} disabled={!isMember || reactionSaving || loading}
             onSelect={isMember ? (emoji) => togglePollReaction(emoji) : undefined}
             onAdd={isMember ? () => { setReactionError(""); setReactionPickerOpen(true); } : undefined} />
@@ -566,7 +566,7 @@ export const PollScreen = ({ route }) => {
               </View>
             </View>
           </Modal>}
-          {poll.options.length === 1 && !poll.myOptionId ? null : poll.options.map((option) => {
+          {poll.options.length > 1 && poll.options.map((option) => {
             const count = poll.results?.find((result) => result.optionId === option.id)?.votes;
             const percent = poll.totalVotes ? Math.round(count / poll.totalVotes * 100) : 0;
             return poll.myOptionId ? (
@@ -586,15 +586,12 @@ export const PollScreen = ({ route }) => {
               </TouchableOpacity>
             );
           })}
-          {!isMember ? <Text style={styles.notice}>{t("forum.guestNotice")}</Text> : !poll.myOptionId ? <View style={styles.section}>
+          {!isMember ? <Text style={styles.notice}>{t("forum.guestNotice")}</Text> : poll.options.length > 1 && !poll.myOptionId ? <View style={styles.section}>
             <Text style={styles.notice}>{t("forum.voteToUnlock")}</Text>
-            {poll.options.length === 1
-              ? <Button styles={styles} disabled={saving || loading} label={`👍 ${poll.options[0].text}`}
-                onPress={() => submitVote(poll.options[0].id)} />
-              : <Button styles={styles} disabled={!selection || saving || loading} label={t("forum.vote")} onPress={submitVote} />}
+            <Button styles={styles} disabled={!selection || saving || loading} label={t("forum.vote")} onPress={submitVote} />
           </View> : null}
-          {(!isMember || poll.myOptionId) && <>
-            {poll.results && <Text style={styles.notice}>{t("forum.totalVotes", { count: poll.totalVotes })}</Text>}
+          {(!isMember || poll.options.length === 1 || poll.myOptionId) && <>
+            {poll.options.length > 1 && poll.results && <Text style={styles.notice}>{t("forum.totalVotes", { count: poll.totalVotes })}</Text>}
             <View style={styles.titleRow}>
               <Text style={styles.title}>{t("forum.comments")}</Text>
               <InfoTip align="right" text={t("forum.storageNotice")} />

@@ -47,7 +47,8 @@ export const MessagesScreen = ({ navigation }) => {
   ];
 
   const getConversationTitle = (conversation) =>
-    conversation.name || getPeerName(conversation, user.id, names) || t("messages.unnamedChat");
+    conversation.kind === "NOTES" ? t("messages.personalNotes") :
+      conversation.name || getPeerName(conversation, user.id, names) || t("messages.unnamedChat");
 
   const filteredConversations = useMemo(() => {
     const query = isMember ? searchQuery.trim().toLowerCase() : "";
@@ -135,7 +136,9 @@ export const MessagesScreen = ({ navigation }) => {
               : t("navigation.profile")}
           >
             <View style={styles.avatar}>
-              {peerAvatarUri ? (
+              {item.kind === "NOTES" ? (
+                <Ionicons name="document-text-outline" size={26} color={colors.primary} />
+              ) : peerAvatarUri ? (
                 <Image source={{ uri: peerAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
               ) : (
                 <Text style={styles.avatarText}>

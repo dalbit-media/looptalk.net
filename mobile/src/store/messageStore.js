@@ -21,6 +21,7 @@ import { t } from "../i18n/i18n";
 import { randomUUID } from "expo-crypto";
 import { removePrivateMedia } from "../utils/privateMedia";
 import { notifyDesktopMessage } from "../utils/desktopNotifications";
+import { compareConversations } from "../utils/conversationOrder";
 
 let outboxFlushPromise = null;
 let detachPresenceLifecycle = null;
@@ -76,11 +77,7 @@ const updateConversationPreview = (conversations, message) =>
         ? { ...conversation, messages: [message], lastMessageAt: message.createdAt }
         : conversation
     )
-    .sort(
-      (left, right) =>
-        new Date(right.messages?.[0]?.createdAt || right.createdAt) -
-        new Date(left.messages?.[0]?.createdAt || left.createdAt)
-    );
+    .sort(compareConversations);
 
 const updatePreviewOperation = (conversations, operation, changes) =>
   conversations.map((conversation) => {
@@ -230,7 +227,7 @@ export const useMessageStore = create((set, get) => ({
         conversations: [
           updated,
           ...state.conversations.filter((item) => item.id !== conversation.id),
-        ],
+        ].sort(compareConversations),
       };
     });
   },
@@ -461,11 +458,7 @@ export const useMessageStore = create((set, get) => ({
           unreadCount: conversation.unreadCount || 0,
         };
       }));
-      hydrated.sort(
-        (left, right) =>
-          new Date(right.messages?.[0]?.createdAt || right.createdAt) -
-          new Date(left.messages?.[0]?.createdAt || left.createdAt)
-      );
+      hydrated.sort(compareConversations);
       if (get().activeUserId !== userId) return;
       set({ conversations: hydrated });
     } catch (error) {
@@ -820,6 +813,7 @@ export const useMessageStore = create((set, get) => ({
   },
 
   sendMediaMessage: async (conversationId, mediaPayload, token, options) => {
+    let queuedMessageId;
     try {
       const conversation = get().conversations.find((item) => item.id === conversationId)
         || await api.getConversation(conversationId, token);
@@ -832,12 +826,13 @@ export const useMessageStore = create((set, get) => ({
           createdAt: new Date().toISOString(), status: "queued",
         };
         await updateMessageOutbox(userId, (outbox) => [...outbox, entry]);
+        queuedMessageId = entry.clientMessageId;
         await get()._receiveSecureDelivery({
           id: entry.clientMessageId, messageId: entry.clientMessageId, kind: "message",
           conversationId, senderId: userId, sender: useAuthStore.getState().user,
           createdAt: entry.createdAt, deliveryState: "queued",
         }, entry.secureBody);
-        return get()._sendOutboxEntry(entry, token);
+        return await get()._sendOutboxEntry(entry, token, options);
       }
       const message = await api.sendMediaMessage(
         conversationId,
@@ -848,6 +843,7 @@ export const useMessageStore = create((set, get) => ({
       await get().receiveMessage(message);
       return message;
     } catch (error) {
+      if (queuedMessageId) error.clientMessageId = queuedMessageId;
       console.error("Error sending media message:", error);
       throw error;
     }

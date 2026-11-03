@@ -409,6 +409,8 @@ Implemented:
 - Signing up without an invitation gives guest access to public loops; a guest can
   join a network later with an invitation code
 - Three forum visibility levels: My Loop, Neighbor Loops, and Public
+- Regular-post comments are available without voting; poll results and comments
+  retain their vote requirement. Forum reaction controls are compact and borderless.
 - Web Push (VAPID) and Expo push notifications
 - Direct and group conversation metadata
 - Live text relay, typing indicators, reactions, edits, and deletions
@@ -421,6 +423,20 @@ Implemented:
 - File sharing, offline text retry, read state, and push notifications
 - Direct voice/video calling, browser screen sharing, and group administration
 - User/message reports, blocking, and in-app account deletion
+
+Personal Notes is created automatically and pinned above other chats. Notes and
+attachments use the existing encrypted delivery and device-local history; only
+the owner's registered devices receive them. Web drawings export strokes directly
+to a white-background PNG and decode data URLs locally without relaxing the CSP.
+Photo/video and file pickers allow multiple selections. Before sending, a compact
+review lists the selected items and an unchecked **Original size** option.
+By default, videos are encoded locally to high-quality H.264 MP4 without resizing;
+compatible AAC audio is copied on web. Only smaller results replace the source.
+Other files remain unchanged, and Original size bypasses encoding entirely.
+Encoding and upload progress are shown for each item. Web encoding requires
+WebCodecs H.264/AAC support; unsupported devices can send with Original size.
+Native compression requires a rebuilt app with the compressor/Nitro modules
+(not Expo Go); the Expo plugin is included in the app configuration.
 
 Current constraints:
 

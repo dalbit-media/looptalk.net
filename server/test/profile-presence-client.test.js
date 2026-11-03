@@ -195,6 +195,11 @@ test("inbox titles and navigation react to saved contact display names without r
   contacts = {};
   assert.match(renderToStaticMarkup(render()), /public_handle/);
   assert.equal(peer.displayName, "public_handle", "Do not mutate server identity");
+  conversation.kind = "NOTES";
+  conversation.participants = [{ userId: "owner", user: { id: "owner" } }];
+  assert.match(renderToStaticMarkup(render()), new RegExp(translate("messages.personalNotes")));
+  allElements(render()).find((element) => element.props?.activeOpacity === 0.7).props.onPress();
+  assert.equal(calls.at(-1)[1].name, translate("messages.personalNotes"));
 });
 
 test("Settings begins with an editable profile, unlabeled bio under username, and presence before other settings", () => {
@@ -383,6 +388,7 @@ test("socket snapshots preserve newer live events, clear stale online users on d
     disconnect: () => { socket.connected = false; handlers.get("disconnect")?.(); },
   };
   const { useMessageStore } = loadClient("store/messageStore.js", {
+    "../utils/conversationOrder": loadClient("utils/conversationOrder.js"),
     "socket.io-client": { io: () => socket },
     "expo-crypto": { randomUUID: crypto.randomUUID },
     "../api/messages": {},
@@ -497,13 +503,16 @@ test("first chat open preserves early layout events and reveals fresh, cached an
       "../../hooks/useTranslation": { useTranslation: () => translate },
       "../../hooks/useAppTheme": { useAppTheme: () => ({ colors }) },
       "../../config/environment": { API_URL: "https://localhost" },
+      "../../config/limits": loadClient("config/limits.js"),
       "../../utils/showAlert": { showAlert: () => assert.fail("Unexpected chat alert") },
       "../../api/reports": {},
       "../../utils/secureMessaging": { getEncryptionSafetyCodes: async () => [] },
       "../../utils/privateMedia": { openPrivateAttachment: async () => {} },
+      "../../utils/attachmentSelection": loadClient("utils/attachmentSelection.js"),
+      "../../utils/prepareAttachment": {},
     };
     for (const name of [
-      "AppTextInput", "AppText", "UserPresence", "EmptyState", "AttachmentSheet",
+      "AppTextInput", "AppText", "UserPresence", "EmptyState", "AttachmentSheet", "AttachmentReview",
       "DrawingPad", "VoiceRecorderBar", "VoiceMessageBubble", "VideoMessageBubble",
       "SearchBar", "FilterChips", "HighlightText",
     ]) {

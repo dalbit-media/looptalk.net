@@ -91,7 +91,10 @@ test("retained legacy welcome conversations and administrator reply tracking", a
     const sender = await prisma.user.findUnique({ where: { id: LOOPTALK_USER_ID } });
     assert.equal(sender, null);
     const list = await request("/api/conversations", { token: admin.token });
-    assert.deepEqual(list.data, []);
+    assert.equal(list.data.length, 1);
+    assert.equal(list.data[0].kind, "NOTES");
+    assert.deepEqual(list.data[0].participants.map((p) => p.userId), [admin.user.id]);
+    assert.deepEqual(list.data[0].messages, []);
     const overview = await request("/api/admin/public-overview");
     assert.equal(overview.status, 200);
     assert.equal(overview.data.counts.users, 1);
@@ -116,6 +119,8 @@ test("retained legacy welcome conversations and administrator reply tracking", a
     assert.equal(map.data.mode, "live");
     assert.equal(map.data.totalUsers, 2);
     const list = await request("/api/conversations", { token: member.token });
+    assert.equal(list.data[0].kind, "NOTES");
+    list.data = list.data.filter((conversation) => conversation.kind !== "NOTES");
     assert.equal(list.data.length, 1);
     assert.equal(list.data[0].kind, "CHAT");
     assert.equal(list.data[0].participants.length, 2);

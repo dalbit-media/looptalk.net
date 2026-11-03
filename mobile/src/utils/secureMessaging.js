@@ -6,13 +6,13 @@ import {
   createDeviceIdentity, encryptDelivery, decryptDelivery, encodeBase64, decodeBase64, deviceFingerprint,
 } from "./messageEncryption";
 import { encodeAttachment, savePrivateMedia, privateMediaUrl, clearPrivateMediaUrls } from "./privateMedia";
+import { MAX_PAYLOAD_BYTES } from "../config/limits";
 
 const identities = new Map();
 const registrations = new Map();
 const inboxQueues = new Map();
 const dispatchKey = (userId, id) => `looptalk:secure-dispatch:${userId}:${id}`;
 const seenKey = (userId, id) => `looptalk:secure-received:${userId}:${id}`;
-const MAX_PAYLOAD_BYTES = 140 * 1024 * 1024;
 
 export const clearSecureSession = (userId) => {
   identities.delete(userId);
