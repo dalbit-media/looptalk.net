@@ -84,8 +84,20 @@ while sharing switches back to the camera. Shared screens fit within the
 remote view rather than being cropped. Minimizing keeps remote audio playing.
 
 Drawing attachments bind mouse/touch/pen input after the modal canvas mounts,
-including on reopen. A single tap draws a dot; Undo and Clear edit completed
-strokes. Capture and upload are single-flight, and edits/closing are locked
+including on reopen. The live preview uses explicit CSS dimensions so website
+SVG icon styles cannot shrink and clip the strokes. The lightweight studio has
+a pressure-sensitive brush (supported stylus/native force), constant-width pen,
+translucent marker, white-paper eraser, palette/custom hex colors, 1–64 px sizes,
+and 10–100% opacity. Erasing paints opaque white on the fixed white paper;
+Undo restores the covered paint. Clear is also undoable, with 40 undo steps,
+redo, and no loss of artwork when older undo steps expire.
+Rounded, quadratic-smoothed outlines render identically in preview and PNG.
+Coalesced pointer samples are rendered once per animation frame; completed
+strokes are memoized, and long gestures are thinned above 4,096 samples.
+Browser PNG export uses 2–3× resolution, capped at 3,072 px per side and
+4 megapixels to bound mobile export memory. Native capture retains device
+resolution. No painting dependencies, layers, or zoom controls are added.
+Capture and upload are single-flight, and edits/closing are locked
 while sending. Failed uploads preserve the drawing for retry; successful sends
 close the pad. Native temporary captures are released after sending.
 
