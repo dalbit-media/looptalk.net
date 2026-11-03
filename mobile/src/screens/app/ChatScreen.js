@@ -141,6 +141,10 @@ export const ChatScreen = ({ route, navigation }) => {
   const peerUser = publicPeer
     ? { ...publicPeer, displayName: resolveDisplayName(names, publicPeer) }
     : null;
+  const isNotes = conversation?.kind === "NOTES";
+  const selfUser = isNotes
+    ? { ...user, ...conversation.participants?.find((participant) => participant.userId === user.id)?.user }
+    : null;
   const canCall = isCallingSupported && !!peerUser;
   const canVideoCall = canCall && isVideoCallingSupported;
   const isScreenSharingSupported = useCallStore((state) => state.isScreenSharingSupported);
@@ -287,8 +291,34 @@ export const ChatScreen = ({ route, navigation }) => {
             <UserPresence user={peerUser} compact onHeader />
           </View>
         </TouchableOpacity>
-      ) : conversation?.kind === "NOTES" ? t("messages.personalNotes") :
-        conversation?.name || route.params?.name || t("messages.chat"),
+      ) : isNotes ? (
+        <TouchableOpacity
+          style={styles.headerProfileTitle}
+          onPress={() => openUserProfile(user.id)}
+          accessibilityRole="button"
+          accessibilityLabel={`${selfUser.displayName || selfUser.username || ""}, ${t("messages.personalNotes")}`}
+        >
+          <View style={styles.headerProfileAvatar}>
+            {selfUser.profilePicture ? (
+              <Image
+                source={{ uri: `${API_URL}${selfUser.profilePicture}` }}
+                style={styles.headerProfileAvatarImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={styles.headerProfileAvatarText}>
+                {(selfUser.displayName || selfUser.username || "?")[0]}
+              </Text>
+            )}
+          </View>
+          <View style={[styles.headerProfileDetails, styles.headerNotesRow]}>
+            <Text style={styles.headerProfileName} numberOfLines={1}>
+              {selfUser.displayName || selfUser.username || t("messages.personalNotes")}
+            </Text>
+            <Text style={styles.notesChip} numberOfLines={1}>{t("messages.personalNotes")}</Text>
+          </View>
+        </TouchableOpacity>
+      ) : conversation?.name || route.params?.name || t("messages.chat"),
       headerRight: () => (
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -341,7 +371,8 @@ export const ChatScreen = ({ route, navigation }) => {
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigation, colors, canCall, canVideoCall, canScreenShare, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.kind, conversation?.isGroupChat, route.params?.name, names]);
+  }, [navigation, colors, canCall, canVideoCall, canScreenShare, peerUser?.id, peerUser?.displayName, peerUser?.profilePicture, conversation?.name, conversation?.kind, conversation?.isGroupChat, route.params?.name, names,
+    selfUser?.displayName, selfUser?.username, selfUser?.profilePicture]);
 
   useEffect(() => {
     let isActive = true;
@@ -1206,8 +1237,12 @@ export const ChatScreen = ({ route, navigation }) => {
       {conversation?.kind !== "WELCOME" && (
         <TouchableOpacity
           style={styles.encryptionNotice}
-          accessibilityLabel={t("secure.safetyCodesTitle")}
+          accessibilityLabel={isNotes ? t("secure.notesNotice") : t("secure.safetyCodesTitle")}
           onPress={async () => {
+            if (isNotes) {
+              navigation.navigate("MyData");
+              return;
+            }
             try {
               const devices = await getEncryptionSafetyCodes(user.id, conversationId, token);
               showAlert(t("secure.safetyCodesTitle"), [
@@ -1220,7 +1255,7 @@ export const ChatScreen = ({ route, navigation }) => {
             }
           }}
         >
-          <Text style={styles.encryptionNoticeText}>{t("secure.conversationNotice")}</Text>
+          <Text style={styles.encryptionNoticeText}>{t(isNotes ? "secure.notesNotice" : "secure.conversationNotice")}</Text>
         </TouchableOpacity>
       )}
       {searchActive && (
@@ -1581,6 +1616,22 @@ const createStyles = (colors) => StyleSheet.create({
   headerProfileDetails: {
     flex: 1,
     minWidth: 0,
+  },
+  headerNotesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  notesChip: {
+    color: colors.navigationAccent,
+    backgroundColor: colors.primarySoft,
+    fontSize: 10,
+    fontWeight: "600",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: "hidden",
+    flexShrink: 0,
   },
   searchContainer: {
     backgroundColor: colors.surface,

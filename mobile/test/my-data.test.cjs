@@ -168,8 +168,10 @@ const screenFixture = () => {
   let route = { name: "MyDataHome" };
   const navigations = [];
   const colors = new Proxy({}, { get: () => "#123456" });
-  const account = (select) => select({ user: { id: "alice" } });
+  const account = (select) => select({ user: { id: "alice" }, token: "token" });
   account.getState = () => ({ user: { id: "alice" } });
+  const deviceCalls = [];
+  let ownDevices = async () => [];
   const hooks = {
     ...React,
     useState: (initial) => {
@@ -186,7 +188,7 @@ const screenFixture = () => {
     react: hooks,
     "react-native": Object.fromEntries(["ActivityIndicator", "FlatList", "Image", "Modal",
       "RefreshControl", "ScrollView", "TouchableOpacity", "View"].map((name) => [name, name])
-      .concat([["StyleSheet", { create: (styles) => styles }]])),
+      .concat([["StyleSheet", { create: (styles) => styles }], ["Platform", { OS: "ios" }]])),
     "@react-navigation/native": { useFocusEffect: (callback) => { focus = callback; } },
     "@expo/vector-icons/Ionicons": "Icon",
     "@expo/vector-icons/MaterialCommunityIcons": "ProviderIcon",
@@ -201,6 +203,7 @@ const screenFixture = () => {
     "../../store/authStore": { useAuthStore: account },
     "../../utils/dataLibrary": f.library,
     "../../utils/privateMedia": { privateMediaUrl: async () => { throw new Error("Unexpected media read"); } },
+    "../../utils/secureMessaging": { getOwnDevices: (...args) => { deviceCalls.push(args); return ownDevices(...args); } },
     "../../utils/showAlert": { showAlert: () => {} },
   });
   const render = () => {
@@ -219,7 +222,7 @@ const screenFixture = () => {
     await new Promise(setImmediate);
     return render();
   };
-  return { ...f, render, nodes, find, focusScreen, navigations, setRoute: (value) => { route = value; } };
+  return { ...f, render, nodes, find, focusScreen, navigations, deviceCalls, setOwnDevices: (value) => { ownDevices = value; }, setRoute: (value) => { route = value; } };
 };
 
 test("screen histogram opens galleries/lists and cloud cards stay explicitly disconnected", async () => {
@@ -230,7 +233,7 @@ test("screen histogram opens galleries/lists and cloud cards stay explicitly dis
   assert.ok(imageBar);
   imageBar.props.onPress();
   assert.deepEqual(plain(f.navigations[0]), ["DataCategory", { category: "image" }]);
-  assert.equal(f.nodes(tree).filter((node) => node.type === "Text" && node.props.children === "myData.notConnected").length, 4);
+  assert.equal(f.nodes(tree).filter((node) => node.type === "Text" && node.props.children === "myData.notConnected").length, 5);
   const logos = f.nodes(tree).filter((node) => node.type === "ProviderIcon");
   assert.deepEqual(logos.map((node) => node.props.name), ["microsoft-onedrive", "google-drive", "apple-icloud", "dropbox"]);
   for (const logo of logos) {
@@ -279,4 +282,35 @@ test("item modal saves real local tags and search filters the list", async () =>
   const filtered = f.find(f.render(), (node) => node.type === "FlatList");
   assert.equal(filtered.props.data.length, 1);
   assert.equal(filtered.props.data[0].message.id, "first");
+});
+
+test("device cards sit above the chart and filter by this device or cloud-only sources", async () => {
+  const f = screenFixture();
+  f.saveConversation("alice", "room", [message("text"), message("photo", "IMAGE")]);
+  f.setOwnDevices(async () => [
+    { deviceId: "here", current: true, fingerprint: "ab12 cd34" },
+    { deviceId: "laptop", current: false, fingerprint: "9f0e 1111" },
+  ]);
+  let tree = await f.focusScreen();
+  assert.deepEqual(plain(f.deviceCalls[0]), ["alice", "token"]);
+  const cards = () => f.nodes(f.find(f.render(), (node) => node.props?.testID === "my-devices")).filter((node) => node.type === "TouchableOpacity");
+  assert.deepEqual(cards().map((card) => card.props.accessibilityLabel),
+    ["myData.thisDevice, myData.itemCount:2", "myData.otherDevice:undefined, myData.needsCloud", "myData.cloudSync, myData.notConnected"]);
+  const nodes = f.nodes(tree);
+  assert.ok(nodes.findIndex((node) => node.props?.testID === "my-devices")
+    < nodes.findIndex((node) => node.props?.accessibilityLabel?.startsWith("myData.type.image,")), "devices above chart");
+  cards()[2].props.onPress();
+  tree = f.render();
+  assert.ok(f.find(tree, (node) => node.props?.children === "myData.sourceLocked"));
+  assert.ok(f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:0"));
+  f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:0").props.onPress();
+  assert.deepEqual(plain(f.navigations.at(-1)), ["DataCategory", { category: "image", source: "cloud" }]);
+  cards()[0].props.onPress();
+  tree = f.render();
+  assert.equal(f.find(tree, (node) => node.props?.children === "myData.sourceLocked"), undefined);
+  assert.ok(f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:1"));
+  assert.equal(cards()[0].props.accessibilityState.selected, true);
+  f.setRoute({ name: "DataCategory", params: { category: null, source: "laptop" } });
+  const list = f.find(f.render(), (node) => node.type === "FlatList");
+  assert.equal(list.props.data.length, 0);
 });

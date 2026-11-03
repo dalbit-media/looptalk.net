@@ -18,6 +18,7 @@ import { API_URL, BUILD_LABEL } from "../../config/environment";
 
 const THEME_OPTIONS = ["system", "light", "dark"];
 const CHAT_TEXT_SIZE_OPTIONS = ["standard", "large", "extraLarge"];
+const NotificationContent = Platform.OS === "web" ? TouchableOpacity : View;
 
 export const SettingsScreen = ({ navigation }) => {
   const logout = useAuthStore((state) => state.logout);
@@ -135,7 +136,7 @@ export const SettingsScreen = ({ navigation }) => {
 
   const handlePermissionSettings = async () => {
     if (Platform.OS === "web") {
-      showAlert(t("settings.browserPermissions"), t("settings.browserPermissionsHelp"));
+      setShowNotificationSetup(true);
       return;
     }
 
@@ -157,7 +158,6 @@ export const SettingsScreen = ({ navigation }) => {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {showNotificationSetup && <NotificationSetup onClose={() => setShowNotificationSetup(false)} />}
       <UserProfileHeader user={user} editable />
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("settings.account")}</Text>
@@ -187,7 +187,7 @@ export const SettingsScreen = ({ navigation }) => {
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity style={styles.settingItem} onPress={handlePermissionSettings}>
+        {Platform.OS !== "web" && <TouchableOpacity style={styles.settingItem} onPress={handlePermissionSettings}>
           <Ionicons name="lock-closed" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
             <Text style={styles.settingLabel}>
@@ -198,7 +198,7 @@ export const SettingsScreen = ({ navigation }) => {
             </Text>
           </View>
           <Ionicons name={Platform.OS === "web" ? "information-circle-outline" : "chevron-forward"} size={20} color={colors.mutedText} />
-        </TouchableOpacity>
+        </TouchableOpacity>}
       </View>
 
       <View style={styles.section}>
@@ -206,18 +206,28 @@ export const SettingsScreen = ({ navigation }) => {
 
         <View style={styles.settingItem}>
           <Ionicons name="notifications" size={20} color={colors.primary} />
-          <View style={styles.settingContent}>
+          <NotificationContent style={styles.settingContent} accessibilityRole={Platform.OS === "web" ? "button" : undefined}
+            accessibilityLabel={Platform.OS === "web" ? t("settings.notificationsAndPermissions") : undefined}
+            accessibilityState={Platform.OS === "web" ? { expanded: showNotificationSetup } : undefined}
+            onPress={Platform.OS === "web" ? handlePermissionSettings : undefined}>
             <Text style={styles.settingLabel}>{t("settings.notifications")}</Text>
             <Text style={styles.settingValue}>
-              {t("settings.notificationDescription")}
+              {t(Platform.OS === "web" ? "settings.notificationsAndPermissionsDescription" : "settings.notificationDescription")}
             </Text>
-          </View>
+          </NotificationContent>
+          {Platform.OS === "web" && <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel={t("settings.browserPermissions")}
+            onPress={handlePermissionSettings} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}>
+            <Ionicons name="information-circle-outline" size={20} color={colors.mutedText} />
+          </TouchableOpacity>}
           <Switch
+            accessibilityLabel={t("settings.notifications")}
             value={notificationsEnabled}
             onValueChange={handleNotificationsChange}
             trackColor={{ false: colors.border, true: colors.primary }}
           />
         </View>
+        {showNotificationSetup && <NotificationSetup onClose={() => setShowNotificationSetup(false)} />}
 
         <View style={styles.modeItem}>
           <View style={styles.modeHeading}>

@@ -9,6 +9,10 @@ export const registerDevice = async (identity, token) => {
   }, { headers: headers(token) });
   return response.data;
 };
+export const getOwnDevices = async (token) => {
+  const response = await api.get("/secure/devices", { headers: headers(token) });
+  return response.data;
+};
 export const getRecipientDevices = async (conversationId, token) => {
   const response = await api.get(`/secure/conversations/${conversationId}/devices`, { headers: headers(token) });
   return response.data;

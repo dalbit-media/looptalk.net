@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator, FlatList, Image, Modal, RefreshControl, ScrollView,
+  ActivityIndicator, FlatList, Image, Modal, Platform, RefreshControl, ScrollView,
   StyleSheet, TouchableOpacity, View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
@@ -20,6 +20,7 @@ import {
   normalizeDataTags, saveDataTags, summarizeDataLibrary,
 } from "../../utils/dataLibrary";
 import { openPrivateAttachment, privateMediaUrl } from "../../utils/privateMedia";
+import { getOwnDevices } from "../../utils/secureMessaging";
 import { showAlert } from "../../utils/showAlert";
 
 const localUrl = (url) => typeof url === "string" && /^(blob:|data:|file:|content:)/.test(url);
@@ -73,9 +74,13 @@ export const MyDataScreen = ({ navigation, route }) => {
   const { colors, isDark } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const userId = useAuthStore((state) => state.user?.id);
+  const token = useAuthStore((state) => state.token);
   const browsing = route.name === "DataCategory";
   const category = route.params?.category || null;
   const selectedTag = route.params?.tag || "";
+  const [selectedSource, setSource] = useState(null);
+  const source = browsing ? route.params?.source || null : selectedSource;
+  const [devices, setDevices] = useState([]);
   const [entries, setEntries] = useState([]);
   const [tags, setTags] = useState({});
   const [loading, setLoading] = useState(true);
@@ -108,13 +113,21 @@ export const MyDataScreen = ({ navigation, route }) => {
         if (active) setLoading(false);
       }
     })();
+    if (token) {
+      getOwnDevices(userId, token)
+        .then((list) => { if (active && useAuthStore.getState().user?.id === userId) setDevices(list); })
+        .catch((cause) => console.error("Unable to list own devices:", cause));
+    }
     return () => { active = false; };
-  }, [userId, revision]));
+  }, [userId, token, revision]));
 
-  const summary = useMemo(() => summarizeDataLibrary(entries), [entries]);
+  // Only this device's local library is readable; other devices and cloud data need a cloud connection.
+  const sourceLocked = !!source && source !== "local";
+  const sourceEntries = sourceLocked ? [] : entries;
+  const summary = useMemo(() => summarizeDataLibrary(sourceEntries), [sourceEntries]);
   const visible = useMemo(
-    () => filterDataLibrary(entries, tags, category, query, selectedTag),
-    [entries, tags, category, query, selectedTag]
+    () => filterDataLibrary(sourceEntries, tags, category, query, selectedTag),
+    [sourceEntries, tags, category, query, selectedTag]
   );
   const libraryTags = [...new Set(entries.flatMap((entry) => tags[entry.key] || []))].sort();
   const maxCount = Math.max(1, ...summary.map((type) => type.count));
@@ -182,9 +195,40 @@ export const MyDataScreen = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
       <Text style={styles.muted}>{t("myData.scope")}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceRow} testID="my-devices">
+        {[
+          ...(devices.length ? devices : [{ deviceId: "local", current: true }]).map((device) => ({
+            key: device.current ? "local" : device.deviceId,
+            icon: device.current ? (Platform.OS === "web" ? "desktop-outline" : "phone-portrait-outline") : "hardware-chip-outline",
+            label: device.current ? t("myData.thisDevice") : t("myData.otherDevice", { code: device.fingerprint.slice(0, 4).toUpperCase() }),
+            detail: device.current ? t("myData.itemCount", { count: entries.length }) : t("myData.needsCloud"),
+            locked: !device.current,
+          })),
+          { key: "cloud", icon: "cloud-offline-outline", label: t("myData.cloudSync"), detail: t("myData.notConnected"), locked: true },
+        ].map((card) => {
+          const active = source === card.key;
+          return (
+            <TouchableOpacity
+              key={card.key}
+              style={[styles.sourceCard, active && styles.sourceCardActive]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${card.label}, ${card.detail}`}
+              onPress={() => setSource(active ? null : card.key)}
+            >
+              <View style={styles.sourceHeading}>
+                <Ionicons name={card.icon} size={18} color={colors.navigationAccent} />
+                {card.locked && <Ionicons name="lock-closed-outline" size={12} color={colors.mutedText} />}
+              </View>
+              <Text numberOfLines={1} style={styles.sourceLabel}>{card.label}</Text>
+              <Text numberOfLines={1} style={styles.footnote}>{card.detail}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>{t("myData.itemCount", { count: entries.length })}</Text>
-        <Text style={styles.muted}>{t("myData.histogramHint")}</Text>
+        <Text style={styles.sectionTitle}>{t("myData.itemCount", { count: sourceEntries.length })}</Text>
+        <Text style={sourceLocked ? styles.link : styles.muted}>{t(sourceLocked ? "myData.sourceLocked" : "myData.histogramHint")}</Text>
         <View style={styles.histogram}>
           {summary.map((type) => {
             const blocks = type.count ? Math.max(1, Math.ceil(type.count / maxCount * 10)) : 0;
@@ -194,7 +238,7 @@ export const MyDataScreen = ({ navigation, route }) => {
                 style={styles.barColumn}
                 accessibilityRole="button"
                 accessibilityLabel={`${t(`myData.type.${type.key}`)}, ${t("myData.itemCount", { count: type.count })}`}
-                onPress={() => navigation.navigate("DataCategory", { category: type.key })}
+                onPress={() => navigation.navigate("DataCategory", { category: type.key, ...(source ? { source } : {}) })}
               >
                 <Text style={styles.count}>{type.count}</Text>
                 <View style={styles.blocks}>
@@ -208,7 +252,7 @@ export const MyDataScreen = ({ navigation, route }) => {
             );
           })}
         </View>
-        <TouchableOpacity accessibilityRole="button" style={styles.allButton} onPress={() => navigation.navigate("DataCategory", { category: null })}>
+        <TouchableOpacity accessibilityRole="button" style={styles.allButton} onPress={() => navigation.navigate("DataCategory", { category: null, ...(source ? { source } : {}) })}>
           <Text style={styles.link}>{t("myData.browseAll")}</Text><Ionicons name="arrow-forward" size={18} color={colors.navigationAccent} />
         </TouchableOpacity>
       </View>
@@ -269,7 +313,7 @@ export const MyDataScreen = ({ navigation, route }) => {
             <Text style={styles.muted}>{t("myData.itemCount", { count: visible.length })}</Text>
             <SearchBar value={query} onChangeText={setQuery} placeholder={t("myData.search")} colors={colors} />
           </View>}
-          ListEmptyComponent={<Text style={styles.empty}>{t(entries.length ? "myData.noResults" : "myData.empty")}</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>{t(sourceLocked ? "myData.sourceLocked" : entries.length ? "myData.noResults" : "myData.empty")}</Text>}
           renderItem={({ item }) => (
             <TouchableOpacity accessibilityRole="button" onPress={() => selectEntry(item)} style={gallery ? styles.galleryItem : styles.listItem}>
               {gallery ? <View style={styles.thumbnailFrame}><LocalMedia entry={item} userId={userId} thumbnail styles={styles} colors={colors} t={t} /></View> : (
@@ -321,6 +365,11 @@ const createStyles = (colors) => StyleSheet.create({
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: "700", marginBottom: 8 },
   card: { borderWidth: 1, borderColor: colors.border, padding: 16, borderRadius: 18, gap: 8 },
   iconButton: { padding: 12, minHeight: 44, minWidth: 44 },
+  sourceRow: { gap: 10, paddingVertical: 2 },
+  sourceCard: { width: 124, minHeight: 44, padding: 10, gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface },
+  sourceCardActive: { borderColor: colors.navigationAccent, backgroundColor: colors.primarySoft },
+  sourceHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  sourceLabel: { color: colors.text, fontSize: 13, fontWeight: "600" },
   histogram: { flexDirection: "row", alignItems: "flex-end", gap: 8, marginTop: 16 },
   barColumn: { flex: 1, minWidth: 0, alignItems: "center", gap: 8, paddingVertical: 8 },
   count: { color: colors.text, fontSize: 15, fontWeight: "700" },

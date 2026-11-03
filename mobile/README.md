@@ -217,6 +217,18 @@ resolved lazily from existing private storage; missing files show an explicit
 unavailable state rather than fetching a remote replacement. Refresh or return
 to the tab to reload local records. Storage failures show a retry action.
 
+Small source cards above the histogram list the account's registered
+encryption devices (`GET /secure/devices`) plus a Cloud sync card. Tapping a
+card filters the histogram and browser by source; tap again to clear. Only
+**This device** has readable data. Other devices and Cloud sync are locked,
+show zero items, and point to the cloud connection below, because no data
+leaves a device until cloud sync exists. If the device list cannot be loaded,
+only This device is shown.
+
+The Personal Notes conversation appears as **My memo**: it uses the account's
+own avatar and name like a chat with yourself, with a small "My memo" chip.
+Its banner says all data is stored locally and opens My Data to connect a cloud.
+
 Microsoft OneDrive, Google Drive, Apple iCloud, and Dropbox cards below the
 histogram are explicitly disconnected **previews**. There is no OAuth flow,
 backup, sync, upload, or provider credential storage in this feature.

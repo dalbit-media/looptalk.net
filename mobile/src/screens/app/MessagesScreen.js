@@ -47,7 +47,7 @@ export const MessagesScreen = ({ navigation }) => {
   ];
 
   const getConversationTitle = (conversation) =>
-    conversation.kind === "NOTES" ? t("messages.personalNotes") :
+    conversation.kind === "NOTES" ? (user.displayName || user.username || t("messages.personalNotes")) :
       conversation.name || getPeerName(conversation, user.id, names) || t("messages.unnamedChat");
 
   const filteredConversations = useMemo(() => {
@@ -65,6 +65,7 @@ export const MessagesScreen = ({ navigation }) => {
         .join(" ");
       return (
         title.includes(query) ||
+        (conversation.kind === "NOTES" && t("messages.personalNotes").toLowerCase().includes(query)) ||
         lastMessageText.includes(query) ||
         participantNames.includes(query)
       );
@@ -102,11 +103,15 @@ export const MessagesScreen = ({ navigation }) => {
       ? new Date(lastMessage.createdAt).toLocaleDateString()
       : "";
     const title = getConversationTitle(item);
-    const peerUser = item.participants?.find(
+    const isNotes = item.kind === "NOTES";
+    const peerUser = isNotes ? null : item.participants?.find(
       (participant) => participant.user?.id !== user.id
     )?.user;
-    const peerAvatarUri = peerUser?.profilePicture
-      ? `${API_URL}${peerUser.profilePicture}`
+    const selfPicture = isNotes
+      ? item.participants?.find((participant) => participant.userId === user.id)?.user?.profilePicture || user.profilePicture
+      : null;
+    const peerAvatarUri = (selfPicture || peerUser?.profilePicture)
+      ? `${API_URL}${selfPicture || peerUser.profilePicture}`
       : null;
     const peerName = resolveDisplayName(names, peerUser);
     const isPeerOnline = presenceConnected && item.participants?.some(
@@ -136,9 +141,7 @@ export const MessagesScreen = ({ navigation }) => {
               : t("navigation.profile")}
           >
             <View style={styles.avatar}>
-              {item.kind === "NOTES" ? (
-                <Ionicons name="document-text-outline" size={26} color={colors.primary} />
-              ) : peerAvatarUri ? (
+              {peerAvatarUri ? (
                 <Image source={{ uri: peerAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
               ) : (
                 <Text style={styles.avatarText}>
@@ -151,12 +154,15 @@ export const MessagesScreen = ({ navigation }) => {
 
           <View style={styles.conversationContent}>
             <View style={styles.conversationHeader}>
-              <HighlightText
-                text={title}
-                query={searchQuery}
-                style={styles.conversationName}
-                numberOfLines={1}
-              />
+              <View style={styles.titleRow}>
+                <HighlightText
+                  text={title}
+                  query={searchQuery}
+                  style={isNotes ? styles.notesName : styles.conversationName}
+                  numberOfLines={1}
+                />
+                {isNotes && <Text style={styles.notesChip} numberOfLines={1}>{t("messages.personalNotes")}</Text>}
+              </View>
               <Text style={styles.timestamp}>{timestamp}</Text>
             </View>
             <HighlightText
@@ -346,6 +352,31 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: "600",
     color: colors.text,
     flex: 1,
+  },
+  titleRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginRight: 8,
+  },
+  notesName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.text,
+    flexShrink: 1,
+  },
+  notesChip: {
+    color: colors.navigationAccent,
+    backgroundColor: colors.primarySoft,
+    fontSize: 10,
+    fontWeight: "600",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: "hidden",
+    flexShrink: 0,
   },
   timestamp: {
     fontSize: 12,

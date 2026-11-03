@@ -110,6 +110,16 @@ export const getEncryptionSafetyCodes = async (userId, conversationId, token) =>
   }));
 };
 
+export const getOwnDevices = async (userId, token) => {
+  const identity = await ensureSecureDevice(userId, token);
+  const { devices } = await api.getOwnDevices(token);
+  return devices.filter((device) => device.userId === userId).map((device) => ({
+    deviceId: device.deviceId,
+    current: device.deviceId === identity.deviceId,
+    fingerprint: deviceFingerprint(device.publicKey),
+  })).sort((left, right) => Number(right.current) - Number(left.current));
+};
+
 export const preparePrivateAttachment = async (media) => ({
   content: null,
   messageType: media.messageType,

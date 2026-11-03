@@ -196,25 +196,23 @@ test("notification setup prevents duplicate requests and closing during registra
   const pending = button.props.onPress();
   await button.props.onPress();
   assert.equal(calls, 1);
-  f.render().props.onRequestClose();
+  nodes(f.render()).find((node) => node.props?.accessibilityLabel === "common.close").props.onPress();
   assert.equal(f.closed(), 0);
   assert.equal(f.button().props.disabled, true);
   finish("granted");
   await pending;
-  f.render().props.onRequestClose();
+  nodes(f.render()).find((node) => node.props?.accessibilityLabel === "common.close").props.onPress();
   assert.equal(f.closed(), 1);
 });
 
-test("notification and installation actions share one row and installation does not open account settings", () => {
+test("account banner offers installation but no notification action", () => {
   const state = hooks();
   let installed = 0;
-  let notificationsEnabled = false;
   const { AccountSetupBanner } = load("components/AccountSetupBanner.js", {
     react: state.react, "react-native": native,
     "@expo/vector-icons/Ionicons": { default: "Icon" },
     "./AppText": { AppText: "Text" },
     "../hooks/useAppTheme": { useAppTheme: () => ({ colors: {} }) },
-    "../store/preferencesStore": { usePreferencesStore: (select) => select({ notificationsEnabled }) },
     "../store/authStore": { useAuthStore: (select) => select({ user: { member: true }, accountSetup: {}, dismissSetupBanner() {} }) },
     "../hooks/useTranslation": { useTranslation: () => (key) => key },
     "../hooks/useAppInstall": { useAppInstall: () => ({ available: true, label: "Install", install: () => { installed++; } }) },
@@ -224,16 +222,12 @@ test("notification and installation actions share one row and installation does 
   });
   const render = () => { state.reset(); return AccountSetupBanner({ onPress: () => assert.fail("Account settings are not installation") }); };
   const tree = render();
-  const row = tree.props.children[0];
-  assert.equal(row.props.style.flexDirection, "row");
-  const buttons = nodes(row).filter((node) => node.type === "TouchableOpacity");
-  assert.equal(buttons.length, 3);
-  buttons[1].props.onPress();
+  assert.equal(tree.type, "Banner");
+  assert.equal(tree.props.title, "Install");
+  tree.props.onPress();
   assert.equal(installed, 1);
-  buttons[0].props.onPress();
-  assert.ok(nodes(render()).some((node) => node.type === "NotificationSetup"));
-  notificationsEnabled = true;
-  assert.ok(nodes(render()).some((node) => node.type === "NotificationSetup"), "Completion remains visible after enabling");
+  assert.equal(nodes(tree).some((node) => node.type === "NotificationSetup"), false);
+  assert.equal(nodes(tree).some((node) => node.props?.accessibilityLabel === "setup.notificationsTitle"), false);
 });
 
 test("every supported locale includes all notification setup steps and recovery guidance", () => {

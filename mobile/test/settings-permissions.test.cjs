@@ -69,7 +69,7 @@ const fixture = (platform, linking) => {
   const label = platform === "web" ? "settings.browserPermissions" : "settings.devicePermissions";
   const button = nodes(tree).find((node) =>
     node.type === "TouchableOpacity" &&
-    nodes(node).some((child) => child.props?.children === label));
+    (node.props.accessibilityLabel === label || nodes(node).some((child) => child.props?.children === label)));
   assert.ok(button, `Permission button for ${platform}`);
   return { press: button.props.onPress, alerts, errors, tree, nodes, render };
 };
@@ -87,17 +87,39 @@ test("settings keep the original menu and show the build version in About", () =
   const { tree, nodes } = fixture("web", {});
   const texts = nodes(tree).map((node) => [].concat(node.props?.children).join(""));
   assert.ok(texts.includes("settings.version v.07"));
-  const order = ["settings.account", "settings.browserPermissions", "settings.notifications",
+  const order = ["settings.account", "settings.preferences", "settings.notifications",
     "settings.about", "settings.externalLinks"].map((key) => texts.indexOf(key));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.ok(!order.includes(-1));
 });
 
-test("web permission button explains site settings without the unavailable native method", async () => {
+test("web permission information button opens inline setup instead of an alert", async () => {
   const screen = fixture("web", {});
   await screen.press();
-  assert.deepEqual(screen.alerts, [["settings.browserPermissions", "settings.browserPermissionsHelp"]]);
+  assert.ok(screen.nodes(screen.render()).some((node) => node.type === "NotificationSetup"));
+  assert.deepEqual(screen.alerts, []);
   assert.equal(screen.errors.length, 0);
+});
+
+test("web settings have one combined row with working text, information, and switch controls", async () => {
+  const screen = fixture("web", {});
+  const texts = screen.nodes(screen.tree).map((node) => node.props?.children);
+  assert.equal(texts.includes("settings.browserPermissions"), false, "No separate browser-permissions row");
+  assert.equal(texts.filter((text) => text === "settings.notifications").length, 1);
+  const textButton = screen.nodes(screen.tree).find((node) =>
+    node.props?.accessibilityLabel === "settings.notificationsAndPermissions");
+  const infoButton = screen.nodes(screen.tree).find((node) =>
+    node.props?.accessibilityLabel === "settings.browserPermissions");
+  const toggle = screen.nodes(screen.tree).find((node) => node.type === "Switch");
+  const row = screen.nodes(screen.tree).find((node) =>
+    node.type === "View" && [textButton, infoButton, toggle].every((control) => node.props.children?.includes?.(control)));
+  assert.ok(row, "All three controls share one row");
+  for (const press of [textButton.props.onPress, infoButton.props.onPress, () => toggle.props.onValueChange(true)]) {
+    await press();
+    const guide = screen.nodes(screen.render()).find((node) => node.type === "NotificationSetup");
+    assert.ok(guide);
+    guide.props.onClose();
+  }
 });
 
 test("web notification switch opens the guided setup before requesting any browser permissions", async () => {
@@ -139,6 +161,7 @@ test("permission guidance is translated in every supported locale", () => {
     for (const key of [
       "settings.browserPermissions", "settings.browserPermissionsDescription",
       "settings.browserPermissionsHelp", "settings.permissionsOpenFailed",
+      "settings.notificationsAndPermissions", "settings.notificationsAndPermissionsDescription",
     ]) assert.ok(keys.has(key), `${locale.key.name}: ${key}`);
   }
 });
