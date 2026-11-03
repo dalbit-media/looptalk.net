@@ -13,4 +13,6 @@ mobile/.expo/web-dist
 server/prisma/dev.db*
 server/uploads/*
 *.log
-desktop
+desktop/**
+!desktop/package.json
+!desktop/package-lock.json

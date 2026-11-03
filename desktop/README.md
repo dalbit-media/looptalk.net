@@ -43,8 +43,9 @@ npm run dist:mac --prefix desktop    # dist/LoopTalk.dmg (on macOS)
 npm run dist:linux --prefix desktop  # dist/LoopTalk.AppImage, dist/LoopTalk.deb
 ```
 
-Each local `dist*` run bumps the shared build number (`v.01`, `v.02`, ...) in the
-root and desktop `package.json` files; commit the change. CI builds reuse the
+Each `dist*` run, including CI, bumps the shared build number (`v.01`, `v.02`, ...)
+in the root and desktop `package.json` files. Persist/commit the updated manifests
+and lockfiles between releases; separate clean checkouts start from their
 committed number.
 
 Pushing a `desktop-v*` tag runs `.github/workflows/desktop-release.yml`, which

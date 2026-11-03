@@ -1,7 +1,7 @@
-import { version } from "../../../package.json";
+import packageInfo from "../../../package.json";
 import buildLabel from "./buildLabel";
 
-export const BUILD_LABEL = buildLabel(version);
+export const BUILD_LABEL = buildLabel(packageInfo.version);
 
 const PRODUCTION_API_URL = "https://looptalk.net";
 const browserApiUrl =

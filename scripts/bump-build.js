@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Each local build takes the next build number from the root npm package version.
-// CI, EAS and server deploys reuse the committed number so every environment agrees.
+// Combined releases explicitly reuse one version across their build steps.
 const { execSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -9,7 +8,7 @@ const buildLabel = require("../mobile/src/config/buildLabel");
 const root = path.resolve(__dirname, "..");
 let { version } = require(path.join(root, "package.json"));
 
-if (!process.env.CI && !process.env.EAS_BUILD) {
+if (process.env.LOOPTALK_REUSE_BUILD_VERSION !== "1") {
   version = execSync("npm version patch --no-git-tag-version", { cwd: root, stdio: ["ignore", "pipe", "inherit"] })
     .toString().trim().replace(/^v/, "");
   // The desktop installer carries the same number; set in place to keep the files' formatting.

@@ -1,6 +1,7 @@
 FROM cgr.dev/chainguard/node:22-dev AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY desktop/package.json desktop/package-lock.json ./desktop/
 RUN npm ci --ignore-scripts
 COPY server/package.json server/package-lock.json ./server/
 RUN npm ci --omit=dev --prefix server
@@ -11,7 +12,7 @@ COPY mobile ./mobile
 COPY app ./app
 COPY public ./public
 COPY next.config.js ./next.config.js
-RUN npm run export:web --prefix mobile
+COPY scripts ./scripts
 RUN DATABASE_URL="file:/tmp/looptalk-build.db" npm run prisma:generate --prefix server
 RUN npm run build
 USER root

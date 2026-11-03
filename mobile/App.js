@@ -210,12 +210,7 @@ function App() {
         await usePreferencesStore.getState().initialize();
         await SplashScreen.hideAsync();
 
-        const minimumSplashTime = new Promise((resolve) =>
-          setTimeout(resolve, 900)
-        );
         await useAuthStore.getState().initialize();
-
-        await minimumSplashTime;
         initialized = true;
       } catch (e) {
         console.warn("Unable to initialize application:", e?.message || e);

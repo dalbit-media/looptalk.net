@@ -570,11 +570,17 @@ the Prisma schema to SQLite when it starts; back up the database and uploaded
 files before deploying a schema change.
 
 Build numbers come from the root `package.json` version: `0.0.N` is shown as
-`v.0N` under Settings > About. `npm run export:web`, the desktop
+`v.01`, `v.02`, `v.03`, ... under Settings > About. `npm run build`,
+`npm run export:web` (including direct `--prefix mobile` exports), the desktop
 `npm run dist*` scripts and the mobile `npm run build:ios` /
 `npm run build:android` scripts each bump it with `npm version` (desktop
-follows the same number). Commit the bump. CI, EAS, Docker and
-`release:prepare` reuse the committed number without changing it. The store
+follows the same number). CI no longer skips increments. Persist/commit the
+updated package manifests and lockfiles between releases so clean checkouts do
+not restart from an old number. `npm run build` rebuilds both the exported
+messenger and Next.js website with one increment, so servers preferring the
+exported messenger cannot show an older build label. Docker and
+`release:prepare` use this same build and explicitly share its number via
+`LOOPTALK_REUSE_BUILD_VERSION=1`; leave this unset for independent builds. The store
 marketing version in `mobile/app.json` is managed separately.
 
 ### Documentation

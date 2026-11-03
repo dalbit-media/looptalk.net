@@ -7,6 +7,16 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "../..");
 const source = fs.readFileSync(path.join(root, "public", "site", "theme.js"), "utf8");
 
+test("website icon sizing preserves explicitly sized application SVGs and centered loading spinners", () => {
+  const css = fs.readFileSync(path.join(root, "app", "site.css"), "utf8");
+  const rule = css.match(/svg:not\(\[width\]\):not\(\[height\]\)\s*\{([^}]+)\}/);
+  assert.ok(rule, "Default icon dimensions must not override application SVG dimensions");
+  assert.match(rule[1], /width:\s*1\.25rem/);
+  assert.match(rule[1], /height:\s*1\.25rem/);
+  const general = css.match(/(?:^|\n)\s*svg\s*\{([^}]+)\}/)[1];
+  assert.doesNotMatch(general, /(?:^|;)\s*(?:width|height)\s*:/);
+});
+
 const startTheme = ({ savedTheme = null, dark = false, storageBlocked = false, metaPresent = true } = {}) => {
   const listeners = {};
   const warnings = [];

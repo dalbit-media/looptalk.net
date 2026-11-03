@@ -83,6 +83,13 @@ or returns to voice-only if the camera was off. Pressing the camera button
 while sharing switches back to the camera. Shared screens fit within the
 remote view rather than being cropped. Minimizing keeps remote audio playing.
 
+Website icon sizing excludes SVGs with explicit dimensions, preserving the
+centered rotation of both small and large app loading indicators.
+Startup has no minimum splash timer: navigation appears as soon as the reset
+check, preferences and account initialization complete. Saved identity and token
+reads run concurrently; reset checks and authenticated-session validation still
+finish before navigation is exposed.
+
 Drawing attachments bind mouse/touch/pen input after the modal canvas mounts,
 including on reopen. The live preview uses explicit CSS dimensions so website
 SVG icon styles cannot shrink and clip the strokes. The lightweight studio has

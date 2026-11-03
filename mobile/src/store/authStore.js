@@ -190,8 +190,10 @@ export const useAuthStore = create((set, get) => ({
   initialize: async () => {
     set({ loading: true, initializationError: false });
     try {
-      const identity = await getSavedOwnerIdentity();
-      const token = await SecureStore.getItemAsync(TOKEN_KEY);
+      const [identity, token] = await Promise.all([
+        getSavedOwnerIdentity(),
+        SecureStore.getItemAsync(TOKEN_KEY),
+      ]);
       if (!identity || !token) {
         await clearSession();
         set({ user: null, token: null, loading: false });
