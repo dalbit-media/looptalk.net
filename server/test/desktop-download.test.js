@@ -30,13 +30,13 @@ test("desktop downloads redirect to the packaged installer for each platform", a
   });
 });
 
-test("desktop downloads default to the latest GitHub release and require HTTPS overrides", async () => {
+test("without an installer host, desktop download links open the web app; overrides require HTTPS", async () => {
   await withServer(createDesktopDownloadRouter({ baseUrl: "" }), async (origin) => {
-    const response = await fetch(`${origin}/download/desktop/windows`, { redirect: "manual" });
-    assert.equal(
-      response.headers.get("location"),
-      "https://github.com/dalbit-media/looptalk.net/releases/latest/download/LoopTalk-Setup.exe"
-    );
+    for (const platform of Object.keys(DESKTOP_INSTALLERS)) {
+      const response = await fetch(`${origin}/download/desktop/${platform}`, { redirect: "manual" });
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("location"), "/app/");
+    }
   });
   assert.throws(() => createDesktopDownloadRouter({ baseUrl: "http://downloads.example" }), /HTTPS/);
 });

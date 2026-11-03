@@ -12,8 +12,10 @@ const NOTIFICATIONS_KEY = "notificationsEnabled";
 const SUPPORTED_LANGUAGES = ["ko"];
 const THEME_MODES = ["system", "light", "dark"];
 const CHAT_TEXT_SIZES = ["standard", "large", "extraLarge"];
-// The desktop app asks for notification permission on first launch, so its notifications start enabled.
-const defaultNotificationsEnabled = () => isDesktopApp();
+// The desktop app asks for notification permission on first launch, and a browser that already
+// allowed notifications needs no prompt, so both start enabled.
+const defaultNotificationsEnabled = () => isDesktopApp() ||
+  (typeof Notification !== "undefined" && Notification.permission === "granted");
 const persistPreference = async (key, value) => {
   if (getOwnerIdentity()) {
     await updateOwnerVault((current) => ({

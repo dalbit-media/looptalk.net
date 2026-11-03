@@ -267,7 +267,11 @@ Startup runs `prisma db push`, which applies only additive changes (new tables,
 columns with defaults, indexes) and refuses destructive ones without
 `--accept-data-loss`. Before each push, `server/scripts/start.js` writes a
 consistent snapshot next to the database (`<db>.pre-migrate-<timestamp>`, last
-three kept; set `SKIP_DB_SNAPSHOT=1` to disable). The current release is purely
+three kept; set `SKIP_DB_SNAPSHOT=1` to disable). Prisma also treats a brand-new
+optional `@unique` column as possible data loss, even though it starts empty.
+So before the push, startup creates such columns and their unique indexes
+itself (for example `User.credentialPublicKey` and `User.credentialAccountId`).
+That lets unattended restarts complete instead of stopping at the prompt. The current release is purely
 additive: existing accounts get `isMember = true`, so current users stay full
 members, and the new forum tables start empty.
 

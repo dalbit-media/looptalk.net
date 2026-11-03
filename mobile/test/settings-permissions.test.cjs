@@ -35,12 +35,12 @@ const fixture = (platform, linking) => {
     "../../store/authStore": { useAuthStore: (select) => select({ user: { id: "me" }, token: "token" }) },
     "../../store/messageStore": { useMessageStore: (select) => select({}) },
     "../../store/preferencesStore": { usePreferencesStore: (select) => select({}) },
-    "../../i18n/i18n": { t: (key) => key },
+    "../../i18n/i18n": { t: (key, params) => (params?.version ? `${key} ${params.version}` : key) },
     "../../utils/showAlert": { showAlert: (...args) => alerts.push(args) },
-    "../../utils/callNotifications": {},
+    "../../utils/pushRegistration": {},
     "../../utils/desktopApp": { isDesktopApp: () => false },
     "../../utils/chatTextSize": { getChatMessageFontSize: () => 16 },
-    "../../config/environment": { API_URL: "https://example.test" },
+    "../../config/environment": { API_URL: "https://example.test", BUILD_LABEL: "v.07" },
   };
   const module = { exports: {} };
   vm.runInNewContext(code, {
@@ -63,8 +63,27 @@ const fixture = (platform, linking) => {
     node.type === "TouchableOpacity" &&
     nodes(node).some((child) => child.props?.children === label));
   assert.ok(button, `Permission button for ${platform}`);
-  return { press: button.props.onPress, alerts, errors, tree };
+  return { press: button.props.onPress, alerts, errors, tree, nodes };
 };
+
+test("build numbers display as v.01, v.02 and keep growing past two digits", () => {
+  const buildLabel = require("../src/config/buildLabel");
+  assert.equal(buildLabel("0.0.1"), "v.01");
+  assert.equal(buildLabel("0.0.12"), "v.12");
+  assert.equal(buildLabel("0.0.123"), "v.123");
+  assert.equal(buildLabel(undefined), "v.00");
+  assert.match(buildLabel(require("../../package.json").version), /^v\.\d{2,}$/);
+});
+
+test("settings keep the original menu and show the build version in About", () => {
+  const { tree, nodes } = fixture("web", {});
+  const texts = nodes(tree).map((node) => [].concat(node.props?.children).join(""));
+  assert.ok(texts.includes("settings.version v.07"));
+  const order = ["settings.account", "settings.browserPermissions", "settings.notifications",
+    "settings.about", "settings.externalLinks"].map((key) => texts.indexOf(key));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  assert.ok(!order.includes(-1));
+});
 
 test("web permission button explains site settings without the unavailable native method", async () => {
   const screen = fixture("web", {});

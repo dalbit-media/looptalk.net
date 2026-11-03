@@ -110,12 +110,21 @@ export const AccountSetupScreen = () => {
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t("setup.save")}</Text>}
             </TouchableOpacity>
           </View>
-        ) : null}
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.heading}>{t("setup.signInTitle")}</Text>
+            {currentUsername ? (
+              <>
+                <Text style={styles.label}>{t("auth.username")}</Text>
+                <Text selectable style={styles.value}>@{currentUsername}</Text>
+              </>
+            ) : null}
+            <Text style={styles.body}>{t("setup.signInFixed")}</Text>
+          </View>
+        )}
 
-        <View style={styles.card}>
-          <SocialAuthButtons mode="link" title={t("setup.linkTitle")} onError={setSocialError} />
-          {socialError ? <Text accessibilityRole="alert" style={styles.error}>{socialError}</Text> : null}
-        </View>
+        <SocialAuthButtons mode="link" title={t("setup.linkTitle")} onError={setSocialError} style={styles.card} />
+        {socialError ? <Text accessibilityRole="alert" style={styles.error}>{socialError}</Text> : null}
 
         {appInstall.available ? (
           <View style={styles.card}>
@@ -123,7 +132,7 @@ export const AccountSetupScreen = () => {
             <Text style={styles.body}>{appInstall.hint}</Text>
             <TouchableOpacity accessibilityRole="button" style={[styles.button, appInstall.installing && styles.disabled]}
               disabled={appInstall.installing} onPress={appInstall.install}>
-              <Text style={styles.buttonText}>{t(appInstall.desktopDownload ? "invite.download" : "setup.install")}</Text>
+              <Text style={styles.buttonText}>{t("setup.install")}</Text>
             </TouchableOpacity>
           </View>
         ) : null}

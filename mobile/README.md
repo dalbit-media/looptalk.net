@@ -339,8 +339,9 @@ Google 소셜 인증은 다음 선택적 변수도 사용합니다.
 - `looptalk.net` 운영 API는 HTTPS로 제공 중입니다. iOS 서명은 아직 구성해야 합니다.
 - 운영 빌드는 기본적으로 `https://looptalk.net`을 사용합니다(`EXPO_PUBLIC_API_URL`로 변경 가능).
 	`EXPO_PUBLIC_SENTRY_DSN`, Google OAuth 클라이언트 ID, Sentry 소스맵 자격 증명은 선택 사항입니다.
-- iOS 자격 증명을 구성한 다음 `eas build --platform all --profile production`을
-	실행하고 실제 기기 검증을 완료하기 전에는 스토어에 제출하지 마세요.
+- iOS 자격 증명을 구성한 다음 `npm run build:ios`와 `npm run build:android`를
+	실행하세요(설정 화면에 표시되는 `v.NN` 빌드 번호를 올린 뒤 `eas build --profile production`
+	실행). 실제 기기 검증을 완료하기 전에는 스토어에 제출하지 마세요.
 
 ### 소스 구조
 
@@ -431,7 +432,8 @@ Googleソーシャル認証では、次の任意変数も使用します。
 - `looptalk.net`本番APIはHTTPSで稼働中です。iOS署名はまだ設定が必要です。
 - 本番ビルドは既定で`https://looptalk.net`を使用します（`EXPO_PUBLIC_API_URL`で変更可能）。
 	`EXPO_PUBLIC_SENTRY_DSN`、Google OAuthクライアントID、Sentryソースマップ資格情報は任意です。
-- iOS資格情報を設定して`eas build --platform all --profile production`を実行し、
+- iOS資格情報を設定して`npm run build:ios`と`npm run build:android`を実行し
+	（設定画面に表示される`v.NN`ビルド番号を上げてから`eas build --profile production`を実行）、
 	実機検証を完了するまではストアへ提出しないでください。
 
 ### ソース構成
@@ -528,9 +530,10 @@ Google social authentication also uses these optional variables:
 - Production builds default to `https://looptalk.net` (override with
 	`EXPO_PUBLIC_API_URL`). `EXPO_PUBLIC_SENTRY_DSN`, Google OAuth client IDs and
 	Sentry source-map credentials are optional EAS `production` values.
-- Configure iOS credentials, run
-	`eas build --platform all --profile production`, and complete physical-device
-	certification before submitting either binary.
+- Configure iOS credentials, run `npm run build:ios` and
+	`npm run build:android` (each bumps the shared `v.NN` build number shown in
+	Settings, then runs `eas build --profile production`), and complete
+	physical-device certification before submitting either binary.
 
 ### iOS App Store Release
 

@@ -4,14 +4,13 @@ import { useTranslation } from "./useTranslation";
 import { showAlert } from "../utils/showAlert";
 import {
   detectRelatedWebApp,
-  getDesktopDownloadPlatform,
   getWebAppInstallHelp,
   installWebApp,
   isWebAppInstalled,
   subscribeWebAppInstallation,
 } from "../utils/webAppInstall";
 
-// Install (PWA) or download (packaged desktop app) state shared by every install entry point.
+// Optional browser install (PWA) shared by every install entry point; the web app works fully without it.
 export const useAppInstall = () => {
   const t = useTranslation();
   const installed = useSyncExternalStore(subscribeWebAppInstallation, isWebAppInstalled, () => false);
@@ -23,9 +22,7 @@ export const useAppInstall = () => {
     detectRelatedWebApp().catch((error) => console.error("Could not detect installed web app:", error));
   }, []);
 
-  // Even with the web app installed, desktop browsers can still get the packaged app.
-  const desktopDownload = Platform.OS === "web" && Boolean(getDesktopDownloadPlatform());
-  const available = Platform.OS === "web" && (!installed || desktopDownload);
+  const available = Platform.OS === "web" && !installed;
 
   const install = async () => {
     if (prompting.current) return;
@@ -49,8 +46,8 @@ export const useAppInstall = () => {
   };
 
   return {
-    installed, available, desktopDownload, installing, install,
-    label: t(desktopDownload ? "settings.downloadDesktopApp" : "settings.installApp"),
-    hint: t(desktopDownload ? "settings.downloadDesktopAppDescription" : "settings.installAppDescription"),
+    installed, available, installing, install,
+    label: t("settings.installApp"),
+    hint: t("settings.installAppDescription"),
   };
 };

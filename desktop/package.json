@@ -1,7 +1,7 @@
 {
   "name": "looptalk-desktop",
   "productName": "LoopTalk",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "description": "LoopTalk desktop messenger",
   "author": "Dalbit Media <admin@looptalk.net>",
   "homepage": "https://looptalk.net",
@@ -12,10 +12,10 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --publish never",
-    "dist:win": "electron-builder --win --publish never",
-    "dist:mac": "electron-builder --mac --publish never",
-    "dist:linux": "electron-builder --linux --publish never"
+    "dist": "node ../scripts/bump-build.js && electron-builder --publish never",
+    "dist:win": "node ../scripts/bump-build.js && electron-builder --win --publish never",
+    "dist:mac": "node ../scripts/bump-build.js && electron-builder --mac --publish never",
+    "dist:linux": "node ../scripts/bump-build.js && electron-builder --linux --publish never"
   },
   "devDependencies": {
     "electron": "45.2.1",

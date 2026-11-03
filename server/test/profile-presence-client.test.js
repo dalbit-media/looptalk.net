@@ -228,10 +228,10 @@ test("Settings begins with an editable profile, unlabeled bio under username, an
     },
     "../../i18n/i18n": { t: translate },
     "../../utils/showAlert": { showAlert() {} },
-    "../../utils/callNotifications": {},
+    "../../utils/pushRegistration": {},
     "../../utils/desktopApp": { isDesktopApp: () => false },
     "../../utils/chatTextSize": { getChatMessageFontSize: () => 16 },
-    "../../config/environment": { API_URL: "https://localhost" },
+    "../../config/environment": { API_URL: "https://localhost", BUILD_LABEL: "v.01" },
   });
   const html = renderToStaticMarkup(React.createElement(SettingsScreen, { navigation: {} }));
   assert.ok(html.indexOf("presence-marker") < html.indexOf(translate("settings.account")));

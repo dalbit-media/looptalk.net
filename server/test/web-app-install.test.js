@@ -48,7 +48,7 @@ const loadInstaller = ({
     source.replace('import { Platform } from "react-native";', "")
       .replace('import { isDesktopApp } from "./desktopApp";', "")
       .replaceAll("export const ", "const ") +
-      "\nthis.installer = { installWebApp, isWebAppInstalled, subscribeWebAppInstallation, detectRelatedWebApp, getWebAppInstallationId, getWebAppInstallHelp, getDesktopDownloadPlatform };",
+      "\nthis.installer = { installWebApp, isWebAppInstalled, subscribeWebAppInstallation, detectRelatedWebApp, getWebAppInstallationId, getWebAppInstallHelp };",
     context
   );
   return { ...context.installer, storage, handlers, displayHandlers, navigations };
@@ -176,33 +176,25 @@ test("installation help handles HTTPS, iOS, iPad desktop mode and other browsers
   assert.equal(loadInstaller({ userAgent: "Chrome" }).getWebAppInstallHelp(), "browser");
 });
 
-test("desktop browsers download the packaged app for their operating system", async () => {
-  const cases = [
-    [{ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140", navigatorPlatform: "Win32" }, "windows"],
-    [{ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605", navigatorPlatform: "MacIntel" }, "mac"],
-    [{ userAgent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/140", navigatorPlatform: "Linux x86_64" }, "linux"],
-    [{ userAgent: "Mozilla/5.0 (Linux; Android 15; Pixel) Mobile", navigatorPlatform: "Linux armv8l" }, null],
-    [{ userAgent: "Mozilla/5.0 (iPhone)", navigatorPlatform: "iPhone" }, null],
-    [{ userAgent: "Mozilla/5.0 (Macintosh)", navigatorPlatform: "MacIntel", maxTouchPoints: 5 }, null],
-    [{ userAgent: "Mozilla/5.0 (X11; CrOS x86_64)", navigatorPlatform: "Linux x86_64" }, null],
-    [{ userAgent: "Chrome", userAgentData: { mobile: true, platform: "Android" } }, null],
-  ];
-  for (const [options, expected] of cases) {
+test("desktop browsers use the browser install prompt and never leave the web app for a download", async () => {
+  for (const options of [
+    { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140", navigatorPlatform: "Win32" },
+    { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605", navigatorPlatform: "MacIntel" },
+    { userAgent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/140", navigatorPlatform: "Linux x86_64" },
+  ]) {
     const installer = loadInstaller(options);
-    assert.equal(installer.getDesktopDownloadPlatform(), expected, options.userAgent);
-    if (expected) assert.equal(await installer.installWebApp(), "download");
-    assert.deepEqual(installer.navigations, expected ? [`/download/desktop/${expected}`] : []);
+    assert.equal(await installer.installWebApp(), "manual", options.userAgent);
+    assert.deepEqual(installer.navigations, []);
   }
 });
 
-test("the packaged desktop app counts as installed and never offers another download", async () => {
+test("the packaged desktop app counts as installed and never offers another install", async () => {
   const installer = loadInstaller({
     userAgent: "Mozilla/5.0 (Windows NT 10.0) Electron/45", navigatorPlatform: "Win32",
     desktopBridge: { notify: async () => true },
   });
   assert.equal(installer.isWebAppInstalled(), true);
   assert.equal(installer.handlers.size, 0);
-  assert.equal(installer.getDesktopDownloadPlatform(), null);
   assert.equal(await installer.installWebApp(), "unavailable");
   assert.equal(installer.getWebAppInstallationId(), "test-installation-0001");
 });

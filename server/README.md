@@ -692,9 +692,9 @@ Optional overrides (see `.env.example` for the full list):
 - `SENTRY_DSN`; `RELEASE_VERSION` defaults to `server/package.json` `version`
 - `TRUST_PROXY`: number of reverse proxies in front of the server
 - `WEB_CLIENT_URL`: web client frame URL, defaults to same-origin `/app/`
-- `DESKTOP_DOWNLOAD_BASE_URL`: HTTPS folder holding the desktop installers
-  served by `/download/desktop/{windows,mac,linux,linux-deb}`; defaults to the
-  latest GitHub release of this repository
+- `DESKTOP_DOWNLOAD_BASE_URL`: optional HTTPS folder holding the published
+  desktop installers served by `/download/desktop/{windows,mac,linux,linux-deb}`.
+  When it is unset, those links open the browser web app at `/app/`.
 
 Social sign-in for owner-encrypted accounts (social registration,
 `/api/auth/social-recover`, `/api/auth/social-link`) verifies identity tokens

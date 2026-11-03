@@ -10,10 +10,10 @@ import { useMessageStore } from "../../store/messageStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { t } from "../../i18n/i18n";
 import { showAlert } from "../../utils/showAlert";
-import { getCallPushToken, requestPushPermission } from "../../utils/callNotifications";
+import { enablePushNotifications } from "../../utils/pushRegistration";
 import { isDesktopApp } from "../../utils/desktopApp";
 import { getChatMessageFontSize } from "../../utils/chatTextSize";
-import { API_URL } from "../../config/environment";
+import { API_URL, BUILD_LABEL } from "../../config/environment";
 
 const THEME_OPTIONS = ["system", "light", "dark"];
 const CHAT_TEXT_SIZE_OPTIONS = ["standard", "large", "extraLarge"];
@@ -60,15 +60,10 @@ export const SettingsScreen = ({ navigation }) => {
     }
 
     try {
-      const permission = await requestPushPermission();
+      const permission = await enablePushNotifications();
       if (permission !== "granted") {
         showAlert(t("common.error"), t("settings.notificationsDenied"));
-        return;
       }
-
-      const deviceToken = await getCallPushToken();
-      if (deviceToken) await AuthAPI.registerDeviceToken(deviceToken, Platform.OS, token);
-      await setNotificationsEnabled(true);
     } catch (error) {
       showAlert(t("common.error"), t("settings.notificationsFailed"));
     }
@@ -127,7 +122,7 @@ export const SettingsScreen = ({ navigation }) => {
   };
 
   const handleAbout = () => {
-    showAlert(t("settings.about"), t("settings.aboutBody"));
+    showAlert(t("settings.about"), t("settings.aboutBody", { version: BUILD_LABEL }));
   };
 
   const handlePermissionSettings = async () => {
@@ -306,7 +301,7 @@ export const SettingsScreen = ({ navigation }) => {
           <Ionicons name="information-circle" size={20} color={colors.primary} />
           <View style={styles.settingContent}>
             <Text style={styles.settingLabel}>{t("settings.about")}</Text>
-            <Text style={styles.settingValue}>{t("settings.version")}</Text>
+            <Text style={styles.settingValue}>{t("settings.version", { version: BUILD_LABEL })}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
         </TouchableOpacity>

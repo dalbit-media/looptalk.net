@@ -22,6 +22,8 @@ import { AppText, AppTextScaleProvider } from "./src/components/AppText";
 import { CallOverlay } from "./src/components/CallOverlay";
 import { WebAlertHost } from "./src/components/WebAlertHost";
 import { setupCallNotifications } from "./src/utils/callNotifications";
+import { browserNotificationPermission, registerPushDevice } from "./src/utils/pushRegistration";
+import { isDesktopApp } from "./src/utils/desktopApp";
 import { setupNativeCalling } from "./src/utils/nativeCalling";
 import { useCallStore } from "./src/store/callStore";
 import "./src/utils/webAppInstall";
@@ -172,6 +174,7 @@ function App() {
   const token = useAuthStore((state) => state.token);
   const userId = useAuthStore((state) => state.user?.id);
   const loading = useAuthStore((state) => state.loading);
+  const notificationsEnabled = usePreferencesStore((state) => state.notificationsEnabled);
   const [showSplash, setShowSplash] = useState(true);
   const [initializationAttempt, setInitializationAttempt] = useState(0);
   const [resetError, setResetError] = useState(false);
@@ -296,6 +299,12 @@ function App() {
       .catch((error) => console.error("Unable to initialize native calling:", error));
     return () => cleanupNotifications?.();
   }, []);
+
+  // A browser that already allows notifications is subscribed on every sign-in, without installing anything.
+  useEffect(() => {
+    if (!token || !notificationsEnabled || browserNotificationPermission() !== "granted" || isDesktopApp()) return;
+    registerPushDevice(token).catch((error) => console.error("Unable to subscribe to web notifications:", error));
+  }, [token, notificationsEnabled]);
 
   useEffect(() => {
     if (!token || !userId) return undefined;

@@ -8,6 +8,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "export:web": "expo export --platform web && node scripts/prepare-web-pwa.js",
+    "build:ios": "node ../scripts/bump-build.js && eas build --platform ios --profile production",
+    "build:android": "node ../scripts/bump-build.js && eas build --platform android --profile production",
     "check": "expo-doctor"
   },
   "dependencies": {

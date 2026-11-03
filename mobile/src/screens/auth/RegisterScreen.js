@@ -4,22 +4,17 @@ import { AppTextInput as TextInput } from "../../components/AppTextInput";
 import { AppText as Text } from "../../components/AppText";
 import { useAuthStore } from "../../store/authStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
-import { registerDeviceToken } from "../../api/auth";
 import { getInvitationInfo } from "../../api/invitations";
-import { getCallPushToken, requestPushPermission } from "../../utils/callNotifications";
+import { requestPushPermission } from "../../utils/callNotifications";
+import { browserNotificationPermission } from "../../utils/pushRegistration";
 import { SocialAuthButtons } from "../../components/SocialAuthButtons";
 import { TermsNotice } from "../../components/TermsNotice";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { generateUsername, normalizeIdentifier, isUsername } from "../../utils/accountPrivacy";
 
-const enableWebPush = async () => {
-  const deviceToken = await getCallPushToken();
-  if (deviceToken) await registerDeviceToken(deviceToken, "web", useAuthStore.getState().token);
-  await usePreferencesStore.getState().setNotificationsEnabled(true);
-};
-const webNotificationPermission = () =>
-  Platform.OS === "web" && typeof Notification !== "undefined" ? Notification.permission : null;
+// App.js subscribes this browser for push once notifications are on and permission is granted.
+const enableWebPush = () => usePreferencesStore.getState().setNotificationsEnabled(true);
 
 export const RegisterScreen = ({ route, navigation }) => {
   const t = useTranslation();
@@ -53,8 +48,8 @@ export const RegisterScreen = ({ route, navigation }) => {
     setErrorMessage("");
     setLoading(true);
     // Asked during the tap so browsers treat the notification prompt as user-initiated.
-    const permission = webNotificationPermission() === "default"
-      ? requestPushPermission().catch(() => "default") : webNotificationPermission();
+    const permission = browserNotificationPermission() === "default"
+      ? requestPushPermission().catch(() => "default") : browserNotificationPermission();
     try {
       await acceptInvitation(invitationCode);
       if (await permission === "granted") enableWebPush().catch(() => {});
@@ -105,7 +100,7 @@ export const RegisterScreen = ({ route, navigation }) => {
     setLoading(true);
     try {
       await register(normalized, password, name, invitationCode);
-      if (webNotificationPermission() === "granted") enableWebPush().catch(() => {});
+      if (browserNotificationPermission() === "granted") enableWebPush().catch(() => {});
       setPassword("");
       setConfirmPassword("");
       setDisplayName("");

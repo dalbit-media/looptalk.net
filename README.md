@@ -241,6 +241,13 @@ npm run build
 서버 검사는 JavaScript 구문, Prisma 클라이언트 공유 규칙, 단위 테스트 및
 Prisma 스키마를 확인합니다. 클라이언트 검사는 Expo Doctor를 실행합니다.
 
+빌드 번호는 루트 `package.json` 버전입니다. `0.0.N`은 설정 화면의 정보 항목에
+`v.0N`으로 표시됩니다. `npm run export:web`, 데스크톱 `npm run dist*`,
+모바일 `npm run build:ios` / `npm run build:android`를 실행할 때마다
+`npm version`으로 번호가 올라갑니다(데스크톱도 같은 번호). 변경 사항을 커밋하세요.
+CI, EAS, Docker, `release:prepare`는 커밋된 번호를 그대로 사용합니다.
+스토어용 버전(`mobile/app.json`)은 별도로 관리합니다.
+
 ### 문서
 
 - [모바일 앱 안내서](mobile/README.md)
@@ -367,6 +374,13 @@ npm run build
 サーバー検査では、JavaScript構文、Prismaクライアントの共有規則、
 ユニットテスト、Prismaスキーマを確認します。クライアント検査では
 Expo Doctorを実行します。
+
+ビルド番号はルート `package.json` のバージョンです。`0.0.N` は設定画面の「について」に
+`v.0N` と表示されます。`npm run export:web`、デスクトップの `npm run dist*`、
+モバイルの `npm run build:ios` / `npm run build:android` を実行するたびに
+`npm version` で番号が上がります（デスクトップも同じ番号）。変更はコミットしてください。
+CI、EAS、Docker、`release:prepare` はコミット済みの番号をそのまま使います。
+ストア用のバージョン（`mobile/app.json`）は別に管理します。
 
 ### ドキュメント
 
@@ -522,6 +536,14 @@ runs Expo Doctor.
 For a release build, run `npm run release:prepare`. The server synchronizes
 the Prisma schema to SQLite when it starts; back up the database and uploaded
 files before deploying a schema change.
+
+Build numbers come from the root `package.json` version: `0.0.N` is shown as
+`v.0N` under Settings > About. `npm run export:web`, the desktop
+`npm run dist*` scripts and the mobile `npm run build:ios` /
+`npm run build:android` scripts each bump it with `npm version` (desktop
+follows the same number). Commit the bump. CI, EAS, Docker and
+`release:prepare` reuse the committed number without changing it. The store
+marketing version in `mobile/app.json` is managed separately.
 
 ### Documentation
 

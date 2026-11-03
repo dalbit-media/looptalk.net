@@ -67,7 +67,7 @@ const GoogleButton = ({ submit, disabled, busy, styles, colors, label }) => {
 };
 
 // Apple and Google are offered first; the identity is linked solely so the account can be recovered.
-export const SocialAuthButtons = ({ mode = "register", title, invitationCode, displayName, disabled, onError, onBusyChange }) => {
+export const SocialAuthButtons = ({ mode = "register", title, invitationCode, displayName, disabled, onError, onBusyChange, style }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
@@ -126,7 +126,7 @@ export const SocialAuthButtons = ({ mode = "register", title, invitationCode, di
   ) : button;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, style]}>
       {title ? <Text style={styles.title}>{title}</Text> : null}
       {appleAvailable ? providerButton("apple", (
         <ProviderButton

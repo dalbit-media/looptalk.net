@@ -108,24 +108,7 @@ export const getWebAppInstallHelp = () => {
   return "browser";
 };
 
-// Desktop browsers get the packaged app, whose notifications and start-at-login do not depend on browser settings.
-export const getDesktopDownloadPlatform = () => {
-  if (!isWeb || isDesktopShell) return null;
-  const { userAgent = "", platform = "", maxTouchPoints = 0, userAgentData } = window.navigator;
-  if (userAgentData?.mobile || /Android|iPhone|iPad|iPod|Mobile|CrOS/i.test(userAgent)) return null;
-  const os = `${userAgentData?.platform || ""} ${platform} ${userAgent}`;
-  if (/Win/i.test(os)) return "windows";
-  if (/Mac/i.test(os)) return maxTouchPoints > 1 ? null : "mac";
-  if (/Linux|X11/i.test(os)) return "linux";
-  return null;
-};
-
 export const installWebApp = async () => {
-  const desktopPlatform = getDesktopDownloadPlatform();
-  if (desktopPlatform) {
-    window.location.assign(`/download/desktop/${desktopPlatform}`);
-    return "download";
-  }
   if (!isWeb || installed) return "unavailable";
   if (deferredInstallPrompt) {
     const prompt = deferredInstallPrompt;

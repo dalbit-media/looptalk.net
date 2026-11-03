@@ -1,3 +1,8 @@
+import { version } from "../../../package.json";
+import buildLabel from "./buildLabel";
+
+export const BUILD_LABEL = buildLabel(version);
+
 const PRODUCTION_API_URL = "https://looptalk.net";
 const browserApiUrl =
   typeof window !== "undefined" ? window.location.origin : undefined;

@@ -43,12 +43,18 @@ npm run dist:mac --prefix desktop    # dist/LoopTalk.dmg (on macOS)
 npm run dist:linux --prefix desktop  # dist/LoopTalk.AppImage, dist/LoopTalk.deb
 ```
 
-Pushing a `desktop-v*` tag runs `.github/workflows/desktop-release.yml`. It
-builds every installer and publishes them as the latest GitHub release. The
-website's download buttons use `/download/desktop/<platform>`, which redirects
-to `DESKTOP_DOWNLOAD_BASE_URL/<installer>` (by default this repository's latest
-GitHub release). If the repository is private, set
-`DESKTOP_DOWNLOAD_BASE_URL` to a public file host.
+Each local `dist*` run bumps the shared build number (`v.01`, `v.02`, ...) in the
+root and desktop `package.json` files; commit the change. CI builds reuse the
+committed number.
+
+Pushing a `desktop-v*` tag runs `.github/workflows/desktop-release.yml`, which
+builds every installer and publishes them as a GitHub release. The installer is
+optional: on desktop, the website opens the web app in the default browser.
+Browser notifications work there without installing anything. Old
+`/download/desktop/<platform>` links open `/app/` until you set
+`DESKTOP_DOWNLOAD_BASE_URL` to a public HTTPS folder holding the published
+installers. For example, use
+`https://github.com/<owner>/<repo>/releases/latest/download` once a release exists.
 
 Builds are unsigned unless signing secrets are configured. Those secrets are
 `DESKTOP_CSC_LINK` and `DESKTOP_CSC_KEY_PASSWORD`, plus `APPLE_ID`,
