@@ -9,6 +9,7 @@
     "test": "node --test",
     "check": "node scripts/check.js",
     "smoke:release": "node scripts/release-smoke.js",
+    "smoke:web": "node scripts/web-smoke.js",
     "reset": "node scripts/reset.js --confirm-reset",
     "db:seed": "node scripts/seed.js",
     "prisma:generate": "node scripts/prisma.js generate",

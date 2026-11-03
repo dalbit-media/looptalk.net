@@ -16,7 +16,7 @@ const load = (relative, mocks) => {
   });
   const module = { exports: {} };
   vm.runInNewContext(code, {
-    module, exports: module.exports, console,
+    module, exports: module.exports, console, setInterval: () => 1, clearInterval: () => {},
     require: (name) => Object.hasOwn(mocks, name) ? mocks[name] : require(name),
   }, { filename });
   return module.exports;
@@ -164,16 +164,23 @@ const screenFixture = () => {
   const React = require("react");
   const states = [];
   let cursor = 0;
-  let focus;
+  let focuses = [];
   let route = { name: "MyDataHome" };
   const navigations = [];
   const colors = new Proxy({}, { get: () => "#123456" });
   const account = (select) => select({ user: { id: "alice" }, token: "token" });
   account.getState = () => ({ user: { id: "alice" } });
   const deviceCalls = [];
+  const syncCalls = [];
+  let queueBytes = 2048;
   let ownDevices = async () => [];
   const hooks = {
     ...React,
+    useRef: (initial) => {
+      const index = cursor++;
+      if (!(index in states)) states[index] = { current: initial };
+      return states[index];
+    },
     useState: (initial) => {
       const index = cursor++;
       if (!(index in states)) states[index] = initial;
@@ -189,7 +196,7 @@ const screenFixture = () => {
     "react-native": Object.fromEntries(["ActivityIndicator", "FlatList", "Image", "Modal",
       "RefreshControl", "ScrollView", "TouchableOpacity", "View"].map((name) => [name, name])
       .concat([["StyleSheet", { create: (styles) => styles }], ["Platform", { OS: "ios" }]])),
-    "@react-navigation/native": { useFocusEffect: (callback) => { focus = callback; } },
+    "@react-navigation/native": { useFocusEffect: (callback) => { focuses.push(callback); } },
     "@expo/vector-icons/Ionicons": "Icon",
     "@expo/vector-icons/MaterialCommunityIcons": "ProviderIcon",
     "../../../../public/site/cloud-providers": require("../../public/site/cloud-providers"),
@@ -203,11 +210,18 @@ const screenFixture = () => {
     "../../store/authStore": { useAuthStore: account },
     "../../utils/dataLibrary": f.library,
     "../../utils/privateMedia": { privateMediaUrl: async () => { throw new Error("Unexpected media read"); } },
-    "../../utils/secureMessaging": { getOwnDevices: (...args) => { deviceCalls.push(args); return ownDevices(...args); } },
+    "../../utils/secureMessaging": {
+      getOwnDevices: (...args) => { deviceCalls.push(args); return ownDevices(...args); },
+      getServerQueueSize: async () => queueBytes,
+    },
+    "../../store/messageStore": { useMessageStore: (select) => select({
+      syncOwnDevices: async (token) => { syncCalls.push(token); }, historyRevision: 0,
+    }) },
     "../../utils/showAlert": { showAlert: () => {} },
   });
   const render = () => {
     cursor = 0;
+    focuses = [];
     return MyDataScreen({ route, navigation: { navigate: (...args) => navigations.push(args) } });
   };
   const nodes = (element) => {
@@ -218,12 +232,26 @@ const screenFixture = () => {
   const find = (tree, predicate) => nodes(tree).find(predicate);
   const focusScreen = async () => {
     render();
-    focus();
+    focuses.forEach((focus) => focus());
     await new Promise(setImmediate);
     return render();
   };
-  return { ...f, render, nodes, find, focusScreen, navigations, deviceCalls, setOwnDevices: (value) => { ownDevices = value; }, setRoute: (value) => { route = value; } };
+  return { ...f, render, nodes, find, focusScreen, navigations, deviceCalls, syncCalls,
+    setQueueBytes: (value) => { queueBytes = value; },
+    setOwnDevices: (value) => { ownDevices = value; }, setRoute: (value) => { route = value; } };
 };
+
+test("queue size is the first device-sized card and tapping it requests device history sync", async () => {
+  const f = screenFixture();
+  const tree = await f.focusScreen();
+  const row = f.find(tree, (node) => node.props?.testID === "my-devices");
+  const card = row.props.children[0];
+  assert.equal(card.props.accessibilityLabel, "myData.queue, 2.0 KB");
+  const devices = f.nodes(row).filter((node) => node.props?.style?.includes?.(card.props.style));
+  assert.ok(devices.length >= 1, "Uses the same sourceCard style as device cards");
+  await card.props.onPress();
+  assert.deepEqual(f.syncCalls, ["token"]);
+});
 
 test("screen histogram opens galleries/lists and cloud cards stay explicitly disconnected", async () => {
   const f = screenFixture();
@@ -295,21 +323,21 @@ test("device cards sit above the chart and filter by this device or cloud-only s
   assert.deepEqual(plain(f.deviceCalls[0]), ["alice", "token"]);
   const cards = () => f.nodes(f.find(f.render(), (node) => node.props?.testID === "my-devices")).filter((node) => node.type === "TouchableOpacity");
   assert.deepEqual(cards().map((card) => card.props.accessibilityLabel),
-    ["myData.thisDevice, myData.itemCount:2", "myData.otherDevice:undefined, myData.needsCloud", "myData.cloudSync, myData.notConnected"]);
+    ["myData.queue, 2.0 KB", "myData.thisDevice, myData.itemCount:2", "myData.otherDevice:undefined, myData.needsCloud", "myData.cloudSync, myData.notConnected"]);
   const nodes = f.nodes(tree);
   assert.ok(nodes.findIndex((node) => node.props?.testID === "my-devices")
     < nodes.findIndex((node) => node.props?.accessibilityLabel?.startsWith("myData.type.image,")), "devices above chart");
-  cards()[2].props.onPress();
+  cards()[3].props.onPress();
   tree = f.render();
   assert.ok(f.find(tree, (node) => node.props?.children === "myData.sourceLocked"));
   assert.ok(f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:0"));
   f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:0").props.onPress();
   assert.deepEqual(plain(f.navigations.at(-1)), ["DataCategory", { category: "image", source: "cloud" }]);
-  cards()[0].props.onPress();
+  cards()[1].props.onPress();
   tree = f.render();
   assert.equal(f.find(tree, (node) => node.props?.children === "myData.sourceLocked"), undefined);
   assert.ok(f.find(tree, (node) => node.props?.accessibilityLabel === "myData.type.image, myData.itemCount:1"));
-  assert.equal(cards()[0].props.accessibilityState.selected, true);
+  assert.equal(cards()[1].props.accessibilityState.selected, true);
   f.setRoute({ name: "DataCategory", params: { category: null, source: "laptop" } });
   const list = f.find(f.render(), (node) => node.type === "FlatList");
   assert.equal(list.props.data.length, 0);

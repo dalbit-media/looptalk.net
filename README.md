@@ -441,6 +441,9 @@ Personal Notes is created automatically and pinned above other chats. Notes and
 attachments use the existing encrypted delivery and device-local history; only
 the owner's registered devices receive them. Web drawings export strokes directly
 to a white-background PNG and decode data URLs locally without relaxing the CSP.
+The attachment menu has two rows of four actions, including audio call, video
+call, and screen share; unavailable call modes remain visibly disabled. Drawing
+strokes preview live across the full drawing area, including while dragging.
 Photo/video and file pickers allow multiple selections. Before sending, a compact
 review lists the selected items and an unchecked **Original size** option.
 By default, videos are encoded locally to high-quality H.264 MP4 without resizing;

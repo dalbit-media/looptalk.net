@@ -146,6 +146,37 @@ test("opaque ephemeral encrypted relay with isolated SQLite database", { timeout
     assert.equal((await request("/api/conversations")).data[0].id, notes.id);
   });
 
+  await t.test("queue bytes are account-scoped and history transfers target own devices only", async () => {
+    try {
+      const conversations = await request("/api/conversations");
+      const notes = conversations.data.find((item) => item.kind === "NOTES");
+      assert.equal((await request("/api/secure/queue", { user: null })).status, 401);
+      assert.equal((await request("/api/secure/queue")).data.bytes, 0);
+      const dispatch = make([alice2], { kind: "history" });
+      assert.equal((await send(dispatch, { conversationId: notes.id })).status, 201);
+      assert.equal((await request("/api/secure/queue")).data.bytes, payload.length);
+      assert.equal((await request("/api/secure/queue", { user: "bob" })).data.bytes, 0);
+      assert.equal((await send(make([bob], { kind: "history" }), { conversationId: notes.id })).status, 400);
+      assert.equal((await send(make([alice2], { kind: "history" }))).data.code, "HISTORY_OWN_DEVICES_ONLY");
+      assert.equal((await request("/api/secure/sync", { method: "POST", body: { deviceId: bob.deviceId } })).status, 403);
+      assert.equal((await request("/api/secure/sync", { method: "POST", body: {
+        deviceId: alice.deviceId, targetDeviceId: bob.deviceId,
+      } })).status, 403);
+      assert.equal((await request("/api/secure/sync", { method: "POST", body: {
+        deviceId: alice.deviceId,
+      } })).status, 200);
+      assert.deepEqual(events.at(-1), { room: "user_alice", event: "secure_history_requested",
+        payload: { requesterDeviceId: alice.deviceId, targetDeviceId: null } });
+      await ack(dispatch.id, alice2);
+      assert.equal((await request("/api/secure/queue")).data.bytes, 0);
+    } finally {
+      await prisma.conversation.deleteMany({ where: { kind: "NOTES" } });
+      events.length = 0;
+      traffic.length = 0;
+      pushes.length = 0;
+    }
+  });
+
   await t.test("auth first; canonical immutable public keys and device ownership", async () => {
     assert.equal((await request("/api/secure/devices", { user: null })).status, 401);
     assert.equal((await register(alice)).status, 200);

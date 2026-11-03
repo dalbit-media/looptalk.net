@@ -5,7 +5,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { useTranslation } from "../hooks/useTranslation";
 
-export const AttachmentSheet = ({ visible, onClose, onSelect, onDismiss }) => {
+export const AttachmentSheet = ({ visible, onClose, onSelect, onDismiss, canCall = false, canVideoCall = false, canScreenShare = false }) => {
   const t = useTranslation();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
@@ -16,6 +16,9 @@ export const AttachmentSheet = ({ visible, onClose, onSelect, onDismiss }) => {
     { key: "file", icon: "document-attach", label: t("messages.file"), color: "#007AFF" },
     { key: "voice", icon: "mic", label: t("messages.voiceMessage"), color: "#FF3B30" },
     { key: "drawing", icon: "brush", label: t("messages.drawing"), color: "#AF52DE" },
+    { key: "audio", icon: "call", label: t("calls.startAudioCall"), color: "#34C759", disabled: !canCall },
+    { key: "video", icon: "videocam", label: t("calls.startVideoCall"), color: "#007AFF", disabled: !canVideoCall },
+    { key: "screen", icon: "desktop-outline", label: t("calls.startScreenMeeting"), color: "#5856D6", disabled: !canScreenShare },
   ];
 
   return (
@@ -33,7 +36,11 @@ export const AttachmentSheet = ({ visible, onClose, onSelect, onDismiss }) => {
             {options.map((option) => (
               <TouchableOpacity
                 key={option.key}
-                style={styles.option}
+                style={[styles.option, option.disabled && styles.disabled]}
+                accessibilityRole="button"
+                accessibilityLabel={option.label}
+                accessibilityState={{ disabled: Boolean(option.disabled) }}
+                disabled={option.disabled}
                 onPress={() => onSelect(option.key)}
               >
                 <View style={[styles.iconCircle, { backgroundColor: option.color }]}>
@@ -81,6 +88,7 @@ const createStyles = (colors) =>
       alignItems: "center",
       width: "25%",
     },
+    disabled: { opacity: 0.4 },
     iconCircle: {
       width: 56,
       height: 56,

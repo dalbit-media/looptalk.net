@@ -7,12 +7,14 @@ import {
 } from "./messageEncryption";
 import { encodeAttachment, savePrivateMedia, privateMediaUrl, clearPrivateMediaUrls } from "./privateMedia";
 import { MAX_PAYLOAD_BYTES } from "../config/limits";
+import { readLocalConversationLibrary, readConversationMessages, updateConversationMessages } from "../storage/conversationStorage";
 
 const identities = new Map();
 const registrations = new Map();
 const inboxQueues = new Map();
 const dispatchKey = (userId, id) => `looptalk:secure-dispatch:${userId}:${id}`;
 const seenKey = (userId, id) => `looptalk:secure-received:${userId}:${id}`;
+const historyTransfers = new Map();
 
 export const clearSecureSession = (userId) => {
   identities.delete(userId);
@@ -56,12 +58,16 @@ const pinDevice = async (userId, device) => {
   if (!known) await records.setItem(key, value);
 };
 
-const performSecureSend = async ({ userId, token, conversationId, id, messageId, kind, body, persist, options, rosterRetry = false }) => {
+const performSecureSend = async ({ userId, token, conversationId, id, messageId, kind, body, persist, options, targetDeviceId, rosterRetry = false }) => {
   const identity = await ensureSecureDevice(userId, token);
   const key = dispatchKey(userId, id);
   let prepared = await records.getItem(key);
   if (!prepared) {
-    const roster = await api.getRecipientDevices(conversationId, token);
+    const roster = kind === "history" ? await api.getOwnDevices(token) : await api.getRecipientDevices(conversationId, token);
+    if (kind === "history") {
+      roster.devices = roster.devices.filter((device) => device.userId === userId && device.deviceId === targetDeviceId);
+      if (roster.devices.length !== 1) throw new Error("The history sync device is no longer registered");
+    }
     for (const device of roster.devices) await pinDevice(userId, device);
     const payload = {
       version: 1, id, messageId, kind, conversationId,
@@ -85,7 +91,7 @@ const performSecureSend = async ({ userId, token, conversationId, id, messageId,
       // This code guarantees the server has never accepted this dispatch ID.
       await records.removeItem(key);
       return performSecureSend({
-        userId, token, conversationId, id, messageId, kind, body, persist, options, rosterRetry: true,
+        userId, token, conversationId, id, messageId, kind, body, persist, options, targetDeviceId, rosterRetry: true,
       });
     }
     throw error;
@@ -118,6 +124,95 @@ export const getOwnDevices = async (userId, token) => {
     current: device.deviceId === identity.deviceId,
     fingerprint: deviceFingerprint(device.publicKey),
   })).sort((left, right) => Number(right.current) - Number(left.current));
+};
+
+export const getServerQueueSize = async (token) => {
+  const { bytes } = await api.getQueueSize(token);
+  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("Invalid server queue size");
+  return bytes;
+};
+
+export const requestDeviceHistorySync = async (userId, token) => {
+  const identity = await ensureSecureDevice(userId, token);
+  await api.requestHistorySync(identity.deviceId, token);
+};
+
+export const shareDeviceHistory = (userId, token, request, isActive) => {
+  const key = `${userId}:${request.requesterDeviceId}`;
+  if (historyTransfers.has(key)) return historyTransfers.get(key);
+  const transfer = (async () => {
+    if (!isActive()) return;
+    const identity = await ensureSecureDevice(userId, token);
+    if (!isActive() || request.requesterDeviceId === identity.deviceId ||
+        (request.targetDeviceId && request.targetDeviceId !== identity.deviceId)) return;
+    if (!request.targetDeviceId) {
+      await api.requestHistorySync(identity.deviceId, token, request.requesterDeviceId);
+    }
+    const messages = await readLocalConversationLibrary(userId);
+    let failed = 0;
+    for (const message of messages) {
+      if (!isActive()) return;
+      if (!message.id || message.id.startsWith("pending:") ||
+          !["TEXT", "IMAGE", "VIDEO", "VOICE", "DRAWING", "FILE"].includes(message.messageType)) continue;
+      let body = null;
+      try {
+        if (!message.deletedAt) {
+          body = message.messageType === "TEXT" ? {
+            messageType: "TEXT", content: message.content, replyToId: message.replyToId,
+          } : await preparePrivateAttachment({
+            ...message, mimeType: message.mediaMimeType,
+            uri: message.localMediaId
+              ? await privateMediaUrl(userId, message.localMediaId, message.mediaMimeType) : message.mediaUrl,
+            ...(message.localThumbnailId ? { thumbnailUri: await privateMediaUrl(userId, message.localThumbnailId, message.thumbnailMimeType) } : {}),
+          });
+        }
+      } catch (error) {
+        failed++;
+        console.error("Unable to read a local history item for sync:", error);
+        continue;
+      }
+      if (!isActive()) return;
+      const id = randomUUID();
+      try {
+        await sendSecureDelivery({
+          userId, token, id, messageId: id, kind: "history", conversationId: `personal-notes:${userId}`,
+          targetDeviceId: request.requesterDeviceId, persist: async () => {},
+          body: { message: {
+            id: message.id, conversationId: message.conversationId, senderId: message.senderId,
+            sender: message.sender, createdAt: message.createdAt, deletedAt: message.deletedAt,
+            editedAt: message.editedAt, reactions: message.reactions || [],
+          }, body },
+        });
+      } finally {
+        await clearSecureDispatch(userId, id);
+      }
+    }
+    if (failed) throw new Error(`${failed} history items could not be synced. Check local attachments and retry.`);
+  })().finally(() => historyTransfers.delete(key));
+  historyTransfers.set(key, transfer);
+  return transfer;
+};
+
+export const storeDeviceHistory = async (userId, delivery, history, isActive) => {
+  if (delivery.senderId !== userId || delivery.conversationId !== `personal-notes:${userId}`) {
+    throw new Error("History sync is restricted to your own devices");
+  }
+  const message = history.message;
+  if (!message || typeof message.id !== "string" || typeof message.conversationId !== "string" ||
+      typeof message.senderId !== "string" || !Number.isFinite(Date.parse(message.createdAt)) ||
+      (message.deletedAt && !Number.isFinite(Date.parse(message.deletedAt)))) {
+    throw new Error("Invalid device history message");
+  }
+  const existing = await readConversationMessages(userId, message.conversationId);
+  if (!isActive()) throw new Error("The active account changed during history sync");
+  if (existing.some((item) => item.id === message.id)) return;
+  const local = message.deletedAt ? { messageType: "TEXT", content: null } :
+    await materializePrivateMessage(userId, message.id, history.body);
+  if (!isActive()) throw new Error("The active account changed during history sync");
+  await updateConversationMessages(userId, message.conversationId, (current) =>
+    current.some((item) => item.id === message.id) ? current : [...current, {
+      ...message, ...local, encrypted: true, clientMessageId: message.id,
+    }].sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt)));
 };
 
 export const preparePrivateAttachment = async (media) => ({

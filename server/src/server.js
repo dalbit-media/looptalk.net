@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const { validateEnvironment } = require("./config/environment");
 const { performance } = require("node:perf_hooks");
 const { createNextHandler } = require("./utils/nextHandler");
+const { validateWebBuild } = require("./utils/validateWebBuild");
 const { createContentSecurityPolicy } = require("./utils/contentSecurityPolicy");
 const { createCorsPolicy } = require("./utils/corsPolicy");
 const { readAppState } = require("./utils/appState");
@@ -135,7 +136,9 @@ if (hasExpoWebBuild) {
     dotfiles: "deny",
     index: false,
     setHeaders: (res, filePath) => {
-      if (["manifest.webmanifest", "push-sw.js"].includes(path.basename(filePath))) {
+      if (path.extname(filePath) === ".html") {
+        res.setHeader("Cache-Control", "no-store");
+      } else if (["manifest.webmanifest", "push-sw.js"].includes(path.basename(filePath))) {
         res.setHeader("Cache-Control", "no-cache");
       }
     },
@@ -154,7 +157,7 @@ if (hasExpoWebBuild) {
   }));
   app.use("/app", (req, res, next) => {
     if (req.path === "/" || !req.path.includes(".")) {
-      res.sendFile(expoWebIndexFile);
+      res.sendFile(expoWebIndexFile, { headers: { "Cache-Control": "no-store" } });
       return;
     }
     next();
@@ -623,7 +626,10 @@ const startHttpServer = async () => {
 
 const startServer = async () => {
   // API and Socket.IO readiness do not depend on development page compilation.
-  if (!isDevelopment) await nextHandler.prepare();
+  if (!isDevelopment) {
+    validateWebBuild(path.resolve(__dirname, "../../.next"));
+    await nextHandler.prepare();
+  }
   await upgradeWelcomeConversations(prisma);
   await initializeCallInfrastructure(io);
   const port = await startHttpServer();

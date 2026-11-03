@@ -13,6 +13,9 @@ export const getOwnDevices = async (token) => {
   const response = await api.get("/secure/devices", { headers: headers(token) });
   return response.data;
 };
+export const getQueueSize = async (token) => (await api.get("/secure/queue", { headers: headers(token) })).data;
+export const requestHistorySync = async (deviceId, token, targetDeviceId) =>
+  (await api.post("/secure/sync", { deviceId, targetDeviceId }, { headers: headers(token) })).data;
 export const getRecipientDevices = async (conversationId, token) => {
   const response = await api.get(`/secure/conversations/${conversationId}/devices`, { headers: headers(token) });
   return response.data;

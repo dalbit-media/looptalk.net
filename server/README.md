@@ -789,6 +789,28 @@ Clients authenticate with `auth.token`. Supported client events are
 
 ### Production
 
+For PM2 deployments, never run `npm run build` in the directory used by a
+running process: Next.js caches build manifests in memory while the build
+replaces their JavaScript files on disk. Fresh browsers then receive HTML
+referencing missing chunks (HTTP 500), even if `/ready` still returns 200.
+Build in a separate release directory and start/reload PM2 with that release's
+entry point and working directory. Retain the previous release for rollback.
+For a single-directory deployment, stop the named PM2 process first, run
+`npm run build`, then restart that process. This option involves downtime.
+Do not delete the database, uploads, environment files, or browser storage.
+
+Production startup checks bootstrap and lazy-loaded chunk references before
+listening. Exported messenger HTML is never cached; hashed assets remain cached.
+After every deployment, run this read-only check as well as `/ready`:
+
+```bash
+npm run smoke:web --prefix server -- https://looptalk.net
+```
+
+It verifies both website and messenger script/style responses, including HTTP
+status and executable content type. An HTTP 200 HTML document alone does not
+prove that the browser app can start.
+
 `looptalk.net` serves the production backend over HTTPS. A new deployment
 follows this order before creating native production binaries:
 

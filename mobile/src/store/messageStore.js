@@ -15,6 +15,7 @@ import { attachPresenceLifecycle, isPresenceActive } from "../utils/presenceLife
 import {
   sendSecureDelivery, clearSecureDispatch, syncSecureInbox,
   materializePrivateMessage, preparePrivateAttachment, hydratePrivateMedia, clearSecureSession,
+  shareDeviceHistory, storeDeviceHistory, requestDeviceHistorySync,
 } from "../utils/secureMessaging";
 import { showAlert } from "../utils/showAlert";
 import { t } from "../i18n/i18n";
@@ -147,6 +148,7 @@ export const useMessageStore = create((set, get) => ({
   presenceConnected: false,
   outboxRetryTimerId: null,
   secureSyncError: null,
+  historyRevision: 0,
 
   _reportSecureError: (error) => {
     console.error("Encrypted message delivery failed:", error);
@@ -174,7 +176,14 @@ export const useMessageStore = create((set, get) => ({
       typeof body.emoji !== "string" || body.emoji.length > 32 ||
       !["added", "removed"].includes(body.action) || !Number.isFinite(Date.parse(body.createdAt))
     )) throw new Error("Invalid encrypted reaction");
-    if (delivery.kind === "message") {
+    if (delivery.kind === "history") {
+      await storeDeviceHistory(userId, delivery, body, () => get().activeUserId === userId);
+      if (get().activeUserId === userId) set((state) => ({ historyRevision: state.historyRevision + 1 }));
+      if (get().currentConversation?.id === body.message.conversationId && get().activeUserId === userId) {
+        const messages = await hydratePrivateMedia(userId, await readConversationMessages(userId, body.message.conversationId));
+        if (get().activeUserId === userId) set({ messages });
+      }
+    } else if (delivery.kind === "message") {
       const existing = (await readConversationMessages(userId, delivery.conversationId))
         .find((message) => message.id === delivery.messageId);
       if (get().activeUserId !== userId) throw new Error("The active account changed during delivery");
@@ -214,6 +223,15 @@ export const useMessageStore = create((set, get) => ({
     } catch (error) {
       if (get().activeUserId === userId) get()._reportSecureError(error);
     }
+  },
+
+  syncOwnDevices: async (token) => {
+    const userId = get().activeUserId;
+    if (!userId || !token || !get().socket?.connected) throw new Error("Connect this device before syncing");
+    await get().flushOutbox(token);
+    await syncSecureInbox(userId, token, get()._receiveSecureDelivery, () => get().activeUserId === userId);
+    if (get().activeUserId !== userId) throw new Error("The active account changed during sync");
+    await requestDeviceHistorySync(userId, token);
   },
 
   upsertConversation: (conversation) => {
@@ -360,6 +378,11 @@ export const useMessageStore = create((set, get) => ({
     });
     socket.on("new_message", (message) => get().receiveMessage(message).catch(get()._reportSecureError));
     socket.on("secure_message_available", () => get()._syncSecureMessages(token));
+    socket.on("secure_history_requested", (request) => {
+      get().flushOutbox(token)
+        .then(() => shareDeviceHistory(userId, token, request, () => get().activeUserId === userId))
+        .catch(get()._reportSecureError);
+    });
     socket.on("message_edited", (operation) =>
       get().applyMessageOperation(operation, editOperationSpec(operation))
     );

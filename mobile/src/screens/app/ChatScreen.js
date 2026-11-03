@@ -742,7 +742,11 @@ export const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleAttachmentSelect = (key) => {
-    if (key === "camera") {
+    if (key === "audio" || key === "video" || key === "screen") {
+      if ((key === "audio" && !canCall) || (key === "video" && !canVideoCall) || (key === "screen" && !canScreenShare)) return;
+      setAttachmentSheetVisible(false);
+      handleStartCall(key);
+    } else if (key === "camera") {
       handleTakePhotoOrVideo();
     } else if (key === "library") {
       handlePickFromLibrary();
@@ -1543,6 +1547,9 @@ export const ChatScreen = ({ route, navigation }) => {
       )}
 
       <AttachmentSheet
+        canCall={canCall}
+        canVideoCall={canVideoCall}
+        canScreenShare={canScreenShare}
         visible={attachmentSheetVisible}
         onClose={() => setAttachmentSheetVisible(false)}
         onSelect={handleAttachmentSelect}

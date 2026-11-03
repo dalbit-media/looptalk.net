@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator, FlatList, Image, Modal, Platform, RefreshControl, ScrollView,
   StyleSheet, TouchableOpacity, View,
@@ -20,7 +20,8 @@ import {
   normalizeDataTags, saveDataTags, summarizeDataLibrary,
 } from "../../utils/dataLibrary";
 import { openPrivateAttachment, privateMediaUrl } from "../../utils/privateMedia";
-import { getOwnDevices } from "../../utils/secureMessaging";
+import { getOwnDevices, getServerQueueSize } from "../../utils/secureMessaging";
+import { useMessageStore } from "../../store/messageStore";
 import { showAlert } from "../../utils/showAlert";
 
 const localUrl = (url) => typeof url === "string" && /^(blob:|data:|file:|content:)/.test(url);
@@ -75,6 +76,11 @@ export const MyDataScreen = ({ navigation, route }) => {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const userId = useAuthStore((state) => state.user?.id);
   const token = useAuthStore((state) => state.token);
+  const syncOwnDevices = useMessageStore((state) => state.syncOwnDevices);
+  const historyRevision = useMessageStore((state) => state.historyRevision);
+  const [queueBytes, setQueueBytes] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const syncPending = useRef(false);
   const browsing = route.name === "DataCategory";
   const category = route.params?.category || null;
   const selectedTag = route.params?.tag || "";
@@ -92,6 +98,52 @@ export const MyDataScreen = ({ navigation, route }) => {
   const [saving, setSaving] = useState(false);
   const [tagError, setTagError] = useState("");
   const refresh = () => setRevision((value) => value + 1);
+  const syncDevices = async () => {
+    if (syncPending.current) return;
+    syncPending.current = true;
+    setSyncing(true);
+    try {
+      await syncOwnDevices(token);
+      const bytes = await getServerQueueSize(token);
+      if (useAuthStore.getState().user?.id === userId) { setQueueBytes(bytes); refresh(); }
+    } catch (cause) {
+      console.error("Unable to sync own devices:", cause);
+      showAlert(t("common.error"), t("myData.syncFailed"));
+    } finally {
+      syncPending.current = false;
+      setSyncing(false);
+    }
+  };
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let pending = false;
+    if (historyRevision) {
+      loadDataLibrary(userId).then((library) => {
+        if (active && useAuthStore.getState().user?.id === userId) {
+          setEntries(library.entries);
+          setTags(library.tags);
+        }
+      }).catch((cause) => {
+        console.error("Unable to refresh synced data:", cause);
+        if (active) setError(true);
+      });
+    }
+    const updateQueue = async () => {
+      if (!token || pending) return;
+      pending = true;
+      try {
+        const bytes = await getServerQueueSize(token);
+        if (active && useAuthStore.getState().user?.id === userId) setQueueBytes(bytes);
+      } catch (cause) {
+        console.error("Unable to read server queue size:", cause);
+        if (active) setQueueBytes(null);
+      } finally { pending = false; }
+    };
+    updateQueue();
+    const timer = setInterval(updateQueue, 5000);
+    return () => { active = false; clearInterval(timer); };
+  }, [userId, token, historyRevision]));
 
   useFocusEffect(useCallback(() => {
     let active = true;
@@ -196,6 +248,16 @@ export const MyDataScreen = ({ navigation, route }) => {
       </View>
       <Text style={styles.muted}>{t("myData.scope")}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sourceRow} testID="my-devices">
+        <TouchableOpacity style={styles.sourceCard} accessibilityRole="button"
+          accessibilityLabel={`${t("myData.queue")}, ${queueBytes === null ? "—" : formatQueueBytes(queueBytes)}`}
+          accessibilityState={{ disabled: syncing, busy: syncing }} disabled={syncing} onPress={syncDevices}>
+          <View style={styles.sourceHeading}>
+            {syncing ? <ActivityIndicator size="small" color={colors.navigationAccent} /> :
+              <Ionicons name="sync-outline" size={18} color={colors.navigationAccent} />}
+          </View>
+          <Text numberOfLines={1} style={styles.sourceLabel}>{t("myData.queue")}</Text>
+          <Text numberOfLines={1} style={styles.footnote}>{queueBytes === null ? "—" : formatQueueBytes(queueBytes)}</Text>
+        </TouchableOpacity>
         {[
           ...(devices.length ? devices : [{ deviceId: "local", current: true }]).map((device) => ({
             key: device.current ? "local" : device.deviceId,
@@ -351,6 +413,12 @@ export const MyDataScreen = ({ navigation, route }) => {
       </Modal>
     </View>
   );
+};
+
+export const formatQueueBytes = (bytes) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const createStyles = (colors) => StyleSheet.create({

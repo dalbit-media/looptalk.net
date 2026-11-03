@@ -233,11 +233,14 @@ test("review exposes a small unchecked Original size option before sending multi
   assert.ok(busy.filter((node) => node.type === "TouchableOpacity").every((node) => node.props.disabled));
 });
 
-const chatFixture = ({ prepare, send } = {}) => {
+const chatFixture = ({ prepare, send, calling = false } = {}) => {
   const slots = [], prepared = [], sent = [], disposed = [], alerts = [], picks = [];
+  const calls = [];
   let cursor = 0;
   const state = {
-    messages: [], conversations: [{ id: "room", kind: "CHAT" }], typingUsers: new Set(),
+    messages: [], conversations: [{ id: "room", kind: "CHAT", participants: [
+      { userId: "bob", user: { id: "bob", displayName: "Bob" } },
+    ] }], typingUsers: new Set(),
     sendMediaMessage: async (...args) => { sent.push(args); if (send) await send(...args); },
   };
   const mocks = {
@@ -271,7 +274,10 @@ const chatFixture = ({ prepare, send } = {}) => {
     "@expo/vector-icons/Ionicons": { default: "Icon" },
     "../../store/authStore": { useAuthStore: (select) => select({ token: "token", user: { id: "alice" } }) },
     "../../store/messageStore": { useMessageStore: (select) => select(state) },
-    "../../store/callStore": { useCallStore: (select) => select({}) },
+    "../../store/callStore": { useCallStore: (select) => select({
+      isCallingSupported: calling, isVideoCallingSupported: calling, isScreenSharingSupported: calling,
+      startCall: async (...args) => { calls.push(args); },
+    }) },
     "../../store/contactStore": { useContactStore: (select) => select({ contacts: {} }) },
     "../../utils/contactDisplayName": { contactDisplayNames: () => new Map(), resolveDisplayName: () => "" },
     "../../hooks/useTranslation": { useTranslation: () => (key, params) => `${key}${params ? JSON.stringify(params) : ""}` },
@@ -304,8 +310,26 @@ const chatFixture = ({ prepare, send } = {}) => {
     nodes(render()).find((node) => node.type === "AttachmentSheet").props.onSelect(key);
     for (let i = 0; i < 6; i++) await Promise.resolve();
   };
-  return { review, select, prepared, sent, disposed, alerts, picks };
+  const sheet = () => nodes(render()).find((node) => node.type === "AttachmentSheet").props;
+  return { review, select, prepared, sent, disposed, alerts, picks, calls, sheet };
 };
+
+test("attachment call actions close the menu and start the selected mode for the conversation peer", async () => {
+  const f = chatFixture({ calling: true });
+  assert.equal(f.sheet().canCall, true);
+  assert.equal(f.sheet().canVideoCall, true);
+  assert.equal(f.sheet().canScreenShare, true);
+  for (const mode of ["audio", "video", "screen"]) {
+    await f.select(mode);
+    assert.equal(f.sheet().visible, false);
+  }
+  assert.deepEqual(f.calls.map(([conversationId, mode, peer]) => [conversationId, mode, peer.id]), [
+    ["room", "audio", "bob"], ["room", "video", "bob"], ["room", "screen", "bob"],
+  ]);
+  const unsupported = chatFixture();
+  for (const mode of ["audio", "video", "screen"]) await unsupported.select(mode);
+  assert.equal(unsupported.calls.length, 0);
+});
 
 test("chat reviews all selected media before sending and passes original-size and upload progress options", async () => {
   const f = chatFixture();

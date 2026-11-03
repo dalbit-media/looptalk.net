@@ -116,6 +116,20 @@ test("web drawing attaches when the modal mounts, tracks one pointer, and reopen
   assert.ok(nodes(f.render()).find((node) => node.type === "Path"));
 });
 
+test("drawing preview fills the canvas and updates before the pointer is released", () => {
+  const f = fixture();
+  const tree = f.open();
+  const svg = nodes(tree).find((node) => node.props?.pointerEvents === "none");
+  assert.equal(svg.props.width, "100%");
+  assert.equal(svg.props.height, "100%");
+  f.pointer("pointerdown", { clientX: 410, clientY: 420 });
+  assert.equal(nodes(f.render()).find((node) => node.type === "Path").props.d, "M400,400 L400,400");
+  f.pointer("pointermove", { clientX: 510, clientY: 520 });
+  assert.equal(nodes(f.render()).find((node) => node.type === "Path").props.d, "M400,400 L400,400 L500,500");
+  assert.equal(f.button("messages.drawingSend").props.disabled, true, "Stroke is still in progress");
+  f.pointer("pointerup");
+  assert.equal(f.button("messages.drawingSend").props.disabled, false);
+});
 test("failed send preserves strokes; duplicate sends and edits are blocked until completion", async () => {
   let fail = true, resolve;
   const f = fixture({ send: async () => {

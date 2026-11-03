@@ -75,6 +75,14 @@ not provide a shared database. Expo is used only for separately signed Android
 and iOS builds. For Hostinger's `Other` framework mode, use `.next` as the
 output directory and `server/scripts/start.js` as the entry file.
 
+For PM2/Node deployments, build in a separate release directory, then switch
+the process entry point and working directory together. Never replace `.next`
+under a running process: its cached manifests can reference removed scripts,
+causing blank pages in browsers without cached assets. If deploying in place,
+stop the named PM2 process before building and restart it afterward (downtime).
+Keep the database, uploads and environment files intact. See
+[production deployment checks](../server/README.md#production).
+
 Startup synchronizes only safe schema changes; it no longer accepts data loss
 automatically. Stop and review Prisma errors instead of bypassing them.
 For an intentional full reset, stop all instances and follow the
@@ -88,6 +96,7 @@ Verify after deployment:
 ```bash
 curl -f https://looptalk.net/health
 curl -f https://looptalk.net/ready
+npm run smoke:web --prefix server -- https://looptalk.net
 curl -f https://looptalk.net/privacy
 curl -f https://looptalk.net/terms
 curl -f https://looptalk.net/support

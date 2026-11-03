@@ -201,7 +201,7 @@ export const DrawingPad = ({ visible, onClose, onSend }) => {
           collapsable={false}
           {...(Platform.OS === "web" ? {} : panResponder.panHandlers)}
         >
-          <Svg pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Svg width="100%" height="100%" pointerEvents="none" style={StyleSheet.absoluteFill}>
             {paths.map((path, index) => (
               <Path
                 key={index}

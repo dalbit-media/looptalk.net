@@ -83,9 +83,15 @@ test("device safety code is stable and changes with public key", () => {
   assert.notEqual(crypto.deviceFingerprint(key), crypto.deviceFingerprint(identity().publicKey));
 });
 
-const serviceFixture = () => {
+const serviceFixture = ({ ownIdentity } = {}) => {
   const f = fixture();
   const values = new Map();
+  const history = new Map();
+  const conversationStorage = {
+    readLocalConversationLibrary: async () => [...history.values()].flat(),
+    readConversationMessages: async (_userId, id) => history.get(id) || [],
+    updateConversationMessages: async (_userId, id, update) => { history.set(id, update(history.get(id) || [])); },
+  };
   const events = [];
   let pending = true;
   const records = {
@@ -113,14 +119,15 @@ const serviceFixture = () => {
   };
   const service = load("utils/secureMessaging.js", {
     "expo-crypto": { getRandomBytes: random, randomUUID },
-    "../storage/deviceIdentity": { loadOrCreateIdentity: async (userId) => userId === "alice" ? f.sender : f.recipient },
+    "../storage/deviceIdentity": { loadOrCreateIdentity: async (userId) => ownIdentity || (userId === "alice" ? f.sender : f.recipient) },
     "../storage/privateRecords": records,
     "../api/secureMessages": api,
     "./messageEncryption": crypto,
     "./privateMedia": media,
     "../config/limits": require("../src/config/limits"),
+    "../storage/conversationStorage": conversationStorage,
   });
-  return { ...f, service, records, values, events, api, media };
+  return { ...f, service, records, values, events, api, media, history };
 };
 
 test("saves ciphertext and local copy before upload; network retries reuse identical ciphertext", async () => {
@@ -145,6 +152,120 @@ test("saves ciphertext and local copy before upload; network retries reuse ident
   assert.ok(f.values.has(`looptalk:secure-dispatch:alice:${options.id}`));
   await f.service.clearSecureDispatch("alice", options.id);
   assert.ok(!f.values.has(`looptalk:secure-dispatch:alice:${options.id}`));
+});
+
+test("own-device history exchange encrypts old text and attachments only for the requested own device", async () => {
+  const f = serviceFixture();
+  f.api.getOwnDevices = async () => ({ devices: [
+    asDevice(f.sender, "alice"), asDevice(f.otherDevice, "alice"), asDevice(f.recipient, "bob"),
+  ] });
+  const requests = [];
+  f.api.requestHistorySync = async (...args) => requests.push(args);
+  f.history.set("old-room", [
+    { id: randomUUID(), conversationId: "old-room", senderId: "bob", messageType: "TEXT",
+      content: "Old history", createdAt: new Date().toISOString(), encrypted: true },
+    { id: randomUUID(), conversationId: "old-room", senderId: "alice", messageType: "IMAGE",
+      localMediaId: "photo", mediaMimeType: "image/png", createdAt: new Date().toISOString(), encrypted: true },
+  ]);
+  await f.service.shareDeviceHistory("alice", "token", { requesterDeviceId: f.otherDevice.deviceId }, () => true);
+  assert.deepEqual(requests[0], [f.sender.deviceId, "token", f.otherDevice.deviceId]);
+  const posts = f.events.filter(([event]) => event === "post");
+  assert.equal(posts.length, 2);
+  for (const [, conversation, metadata, ciphertext] of posts) {
+    assert.equal(conversation, "personal-notes:alice");
+    assert.equal(metadata.kind, "history");
+    assert.equal(metadata.recipients.length, 1);
+    assert.equal(metadata.recipients[0].deviceId, f.otherDevice.deviceId);
+    const body = crypto.decryptDelivery({
+      ...metadata, conversationId: conversation, senderId: "alice", senderPublicKey: f.sender.publicKey,
+      ...metadata.recipients[0],
+    }, ciphertext, f.otherDevice).body;
+    assert.equal(body.message.conversationId, "old-room");
+    if (body.body.messageType === "IMAGE") assert.equal(body.body.attachment.bytes, "AQID");
+    else assert.equal(body.body.content, "Old history");
+  }
+  assert.equal([...f.values.keys()].some((key) => key.startsWith("looptalk:secure-dispatch:")), false);
+});
+
+test("history import stores missing items without duplicates or overwriting newer local copies", async () => {
+  const f = serviceFixture();
+  const message = { id: randomUUID(), conversationId: "old-room", senderId: "bob", createdAt: new Date().toISOString() };
+  const delivery = { senderId: "alice", conversationId: "personal-notes:alice" };
+  await f.service.storeDeviceHistory("alice", delivery, {
+    message, body: { messageType: "TEXT", content: "Old text" },
+  }, () => true);
+  assert.equal(f.history.get("old-room")[0].content, "Old text");
+  await f.service.storeDeviceHistory("alice", delivery, {
+    message, body: { messageType: "TEXT", content: "Do not replace" },
+  }, () => true);
+  assert.equal(f.history.get("old-room").length, 1);
+  assert.equal(f.history.get("old-room")[0].content, "Old text");
+  await assert.rejects(f.service.storeDeviceHistory("alice", { ...delivery, senderId: "bob" }, {
+    message, body: { messageType: "TEXT", content: "Cross-account" },
+  }, () => true), /own devices/);
+  await assert.rejects(f.service.storeDeviceHistory("alice", delivery, {
+    message: { ...message, id: randomUUID() }, body: { messageType: "TEXT", content: "Cancelled" },
+  }, () => false), /account changed/);
+});
+
+test("two own devices transfer old text and media through encrypted inbox storage and ACK cleanup", async () => {
+  const first = serviceFixture();
+  const second = serviceFixture({ ownIdentity: first.otherDevice });
+  const queue = [];
+  first.api.getOwnDevices = async () => ({ devices: [
+    asDevice(first.sender, "alice"), asDevice(first.otherDevice, "alice"),
+  ] });
+  first.api.requestHistorySync = async () => {};
+  const createdAt = new Date().toISOString();
+  first.history.set("old-room", [
+    { id: randomUUID(), conversationId: "old-room", senderId: "alice", messageType: "TEXT",
+      content: "From another device", createdAt, encrypted: true },
+    { id: randomUUID(), conversationId: "old-room", senderId: "bob", messageType: "IMAGE",
+      localMediaId: "saved-photo", mediaMimeType: "image/png", createdAt, encrypted: true },
+  ]);
+  first.api.sendEncryptedDelivery = async (conversationId, metadata, bytes) => {
+    queue.push({
+      delivery: { ...metadata, conversationId, senderId: "alice", senderPublicKey: first.sender.publicKey,
+        ...metadata.recipients[0] },
+      bytes,
+    });
+  };
+  second.api.getEncryptedInbox = async () => queue.map((item) => item.delivery);
+  second.api.getEncryptedPayload = async (id) => queue.find((item) => item.delivery.id === id).bytes;
+  second.api.acknowledgeDelivery = async (id) => {
+    assert.ok(second.history.get("old-room")?.length, "Local history commits before ACK");
+    queue.splice(queue.findIndex((item) => item.delivery.id === id), 1);
+  };
+  await first.service.shareDeviceHistory("alice", "token", {
+    requesterDeviceId: first.otherDevice.deviceId, targetDeviceId: first.sender.deviceId,
+  }, () => true);
+  assert.equal(queue.length, 2);
+  assert.ok(queue.every((item) => !Buffer.from(item.bytes).includes(Buffer.from("From another device"))));
+  await second.service.syncSecureInbox("alice", "token",
+    (delivery, body) => second.service.storeDeviceHistory("alice", delivery, body, () => true), () => true);
+  assert.equal(queue.length, 0);
+  assert.equal(second.history.get("old-room").length, 2);
+  assert.equal(second.history.get("old-room")[0].content, "From another device");
+  assert.equal(second.history.get("old-room")[1].senderId, "bob");
+  assert.ok(second.history.get("old-room")[1].localMediaId);
+  assert.deepEqual([...second.events.find(([event]) => event === "media")[3]], [1, 2, 3]);
+});
+
+test("history export continues past an unavailable attachment but explicitly reports the incomplete transfer", async () => {
+  const f = serviceFixture();
+  f.api.getOwnDevices = async () => ({ devices: [
+    asDevice(f.sender, "alice"), asDevice(f.otherDevice, "alice"),
+  ] });
+  f.media.privateMediaUrl = async () => { throw new Error("Local attachment is missing"); };
+  f.history.set("old-room", [
+    { id: randomUUID(), conversationId: "old-room", senderId: "alice", messageType: "IMAGE", localMediaId: "missing" },
+    { id: randomUUID(), conversationId: "old-room", senderId: "alice", messageType: "TEXT",
+      content: "Still available", createdAt: new Date().toISOString() },
+  ]);
+  await assert.rejects(f.service.shareDeviceHistory("alice", "token", {
+    requesterDeviceId: f.otherDevice.deviceId, targetDeviceId: f.sender.deviceId,
+  }, () => true), /1 history items could not be synced/);
+  assert.equal(f.events.filter(([event]) => event === "post").length, 1);
 });
 
 test("refuses to upload when local message persistence fails", async () => {
@@ -281,6 +402,7 @@ const storeFixture = () => {
     else await f.records.setItem(key, value);
     return value;
   };
+
   const storage = load("storage/conversationStorage.js", {
     "./privateRecords": f.records,
     "../utils/privateMedia": { readPrivateMedia: async () => "AQID" },
@@ -316,6 +438,19 @@ const storeFixture = () => {
   });
   return { ...f, store, storage, messageApi: api, alerts };
 };
+
+test("queue sync requires an online device and requests own-device history after draining the inbox", async () => {
+  const f = storeFixture();
+  await assert.rejects(f.store.getState().syncOwnDevices("token"), /Connect this device/);
+  f.api.getEncryptedInbox = async () => [];
+  const requests = [];
+  f.api.requestHistorySync = async (...args) => requests.push(args);
+  f.store.setState({ socket: { connected: true } });
+  await f.store.getState().syncOwnDevices("token");
+  assert.deepEqual(requests, [[f.sender.deviceId, "token"]]);
+  f.api.requestHistorySync = async () => { throw new Error("Offline"); };
+  await assert.rejects(f.store.getState().syncOwnDevices("token"), /Offline/);
+});
 
 const enqueueText = async (f, id = randomUUID()) => {
   const entry = {

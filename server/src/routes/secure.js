@@ -9,7 +9,7 @@ const { invitationTraffic } = require("../utils/invitationTraffic");
 
 const router = express.Router();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const KINDS = new Set(["message", "edit", "delete", "reaction"]);
+const KINDS = new Set(["message", "edit", "delete", "reaction", "history"]);
 const SENDER = { id: true, publicUsername: true, publicDisplayName: true };
 const { opaqueUser } = require("../utils/privateAccounts");
 // Keep equal to mobile/src/config/limits.js MAX_PAYLOAD_BYTES (250 MB attachments, base64 + envelope headroom).
@@ -137,6 +137,26 @@ router.get("/devices", route(async (req, res) => {
     where: { userId: req.userId }, select: { deviceId: true, userId: true, publicKey: true }, orderBy: { deviceId: "asc" },
   }) });
 }));
+router.get("/queue", route(async (req, res) => {
+  const [result] = await prisma.$queryRaw`
+    SELECT COALESCE(SUM(length(p.ciphertext)), 0) AS bytes
+    FROM SecurePayload p
+    WHERE EXISTS (SELECT 1 FROM SecureDispatch s WHERE s.id = p.dispatchId AND s.senderId = ${req.userId})
+    OR EXISTS (
+      SELECT 1 FROM SecureEnvelope e JOIN SecureDevice d ON d.deviceId = e.deviceId
+      WHERE e.dispatchId = p.dispatchId AND d.userId = ${req.userId}
+    )`;
+  res.json({ bytes: Number(result.bytes) });
+}));
+router.post("/sync", route(async (req, res) => {
+  const { deviceId, targetDeviceId } = req.body || {};
+  await ownDevice(prisma, deviceId, req.userId);
+  if (targetDeviceId) await ownDevice(prisma, targetDeviceId, req.userId);
+  req.app.get("io")?.to(`user_${req.userId}`).emit("secure_history_requested", {
+    requesterDeviceId: deviceId, targetDeviceId: targetDeviceId || null,
+  });
+  res.json({ requested: true });
+}));
 router.get("/conversations/:conversationId/devices", route(async (req, res) => {
   res.json(await secureTransaction(prisma, (db) => roster(db, req.params.conversationId, req.userId)));
 }));
@@ -162,8 +182,18 @@ router.post("/conversations/:conversationId/messages", (req, res, next) => {
       if (previous.digest !== digest) fail(409, "DISPATCH_CONFLICT", "Dispatch id already used with different data");
       return { dispatch: previous, duplicate: true, recipientUserIds: [] };
     }
-    const { devices } = await roster(db, req.params.conversationId, req.userId);
-    const expected = devices.filter((d) => d.deviceId !== data.senderDeviceId);
+    let expected;
+    if (data.kind === "history") {
+      const conversation = await db.conversation.findUnique({ where: { id: req.params.conversationId } });
+      if (conversation.kind !== "NOTES") fail(403, "HISTORY_OWN_DEVICES_ONLY", "History sync requires Personal Notes");
+      expected = await db.secureDevice.findMany({
+        where: { userId: req.userId, deviceId: { in: data.recipients.map((r) => r.deviceId), not: data.senderDeviceId } },
+      });
+      if (!expected.length) fail(400, "HISTORY_RECIPIENT_REQUIRED", "History sync requires another own device");
+    } else {
+      const { devices } = await roster(db, req.params.conversationId, req.userId);
+      expected = devices.filter((d) => d.deviceId !== data.senderDeviceId);
+    }
     if (expected.length !== data.recipients.length || expected.some((d) =>
       !data.recipients.some((r) => r.deviceId === d.deviceId && r.publicKey === d.publicKey))) {
       fail(409, "RECIPIENTS_CHANGED", "Recipient device roster changed; refresh and encrypt again");
@@ -173,7 +203,7 @@ router.post("/conversations/:conversationId/messages", (req, res, next) => {
     });
     if (data.kind === "message") {
       if (target) fail(409, "MESSAGE_EXISTS", "Logical message id already exists");
-    } else {
+    } else if (data.kind !== "history") {
       if (!target) fail(404, "MESSAGE_NOT_FOUND", "Logical message not found");
       if ((data.kind === "edit" || data.kind === "delete") && target.senderId !== req.userId) {
         fail(403, "OPERATION_NOT_AUTHORIZED", "Only the original sender can edit or delete a message");
@@ -189,7 +219,9 @@ router.post("/conversations/:conversationId/messages", (req, res, next) => {
         } : {}),
       },
     });
-    await db.conversation.update({ where: { id: dispatch.conversationId }, data: { lastMessageAt: dispatch.createdAt } });
+    if (data.kind !== "history") {
+      await db.conversation.update({ where: { id: dispatch.conversationId }, data: { lastMessageAt: dispatch.createdAt } });
+    }
     return { dispatch, duplicate: false, recipientUserIds: [...new Set(expected.map((d) => d.userId))] };
   }, { timeout: 30000 });
   const { dispatch, duplicate, recipientUserIds } = result;

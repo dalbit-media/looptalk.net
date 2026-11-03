@@ -217,12 +217,23 @@ resolved lazily from existing private storage; missing files show an explicit
 unavailable state rather than fetching a remote replacement. Refresh or return
 to the tab to reload local records. Storage failures show a retry action.
 
-Small source cards above the histogram list the account's registered
-encryption devices (`GET /secure/devices`) plus a Cloud sync card. Tapping a
+Small source cards above the histogram start with **Queue** and the account's
+pending encrypted server payload size (unique ciphertext bytes, not a copy per
+recipient). The card has the same size as a device card and refreshes every five
+seconds while focused. Tap it to drain pending messages and request a two-way
+history exchange with other online devices signed into the same account.
+Older text and attachments are encrypted for each own device; missing local
+messages are imported without replacing existing copies or generating unread
+message notifications. Keep both devices open until the queue drains.
+Only ciphertext is relayed, and it is deleted after device storage receipts.
+Disconnected cloud-provider previews are not a backup or sync destination.
+
+The remaining cards list the account's registered encryption devices
+(`GET /secure/devices`) plus a Cloud sync card. Tapping a
 card filters the histogram and browser by source; tap again to clear. Only
 **This device** has readable data. Other devices and Cloud sync are locked,
 show zero items, and point to the cloud connection below, because no data
-leaves a device until cloud sync exists. If the device list cannot be loaded,
+can be browsed remotely; synced copies appear under This device. If the device list cannot be loaded,
 only This device is shown.
 
 The Personal Notes conversation appears as **My memo**: it uses the account's
