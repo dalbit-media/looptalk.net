@@ -139,7 +139,8 @@ cd /srv/looptalk/app
 sudo -u looptalk npm ci
 sudo -u looptalk npm ci --prefix server
 sudo -u looptalk npm ci --prefix mobile
-sudo -u looptalk npm run release:prepare
+sudo -u looptalk npm run check
+sudo -u looptalk npm run build
 ```
 
 ### 4.4 Configure the server
@@ -261,7 +262,8 @@ Also back up `/srv/looptalk/data/uploads`, and test a restore before launch.
 ```sh
 cd /srv/looptalk/app && sudo -u looptalk git pull
 sudo -u looptalk npm ci && sudo -u looptalk npm ci --prefix server && sudo -u looptalk npm ci --prefix mobile
-sudo -u looptalk npm run release:prepare
+sudo -u looptalk npm run check
+sudo -u looptalk npm run build
 sudo systemctl restart looptalk && curl -fsS http://127.0.0.1:3001/ready
 ```
 

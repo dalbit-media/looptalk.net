@@ -144,7 +144,7 @@ Back up the production database and uploads, then run the repository's additive
 schema deployment (`npm run db:push --prefix server`; stop if Prisma reports any
 destructive change) and
 `npm run prisma:generate --prefix server`. Export the updated browser app with
-`npm run export:web`; build the website and restart the server. Release rebuilt
+`npm run build`; restart the server afterward. Release rebuilt
 native clients with the new crypto, filesystem, and sharing modules. Every
 participant must sign in using an updated client to register a device before new
 private messages can be delivered.

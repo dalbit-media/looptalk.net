@@ -1,19 +1,16 @@
 {
   "name": "looptalk",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "scripts": {
-    "postinstall": "npm ci --omit=dev --prefix server && npm run prisma:generate --prefix server",
+    "postinstall": "npm ci --omit=dev --prefix server && npm run prisma:generate --prefix server && npm ci --include=dev --prefix mobile",
     "dev": "npm run dev --prefix server",
     "start": "npm start --prefix server",
-    "build": "npm run version:bump && node scripts/build-web.js",
+    "build": "npm run export:web --prefix mobile && next build --webpack",
     "branding:generate": "node mobile/scripts/generate-brand-assets.js",
-    "export:web": "npm run export:web --prefix mobile",
     "prisma:generate": "npm run prisma:generate --prefix server",
-    "version:bump": "node scripts/bump-build.js",
     "reset": "node server/scripts/reset.js --confirm-reset",
     "check": "npm run check --prefix server && npm run test:client && npm run check --prefix mobile",
-    "release:prepare": "npm run check && npm run build",
     "test": "npm test --prefix server && npm run test:client",
     "test:client": "node --test mobile/test/*.test.cjs",
     "zip": "git archive -o looptalk.zip HEAD"

@@ -67,7 +67,7 @@ before accepting requests. A generation or schema update failure stops startup.
 It logs schema setup progress and elapsed server readiness time.
 
 The API and Socket.IO start without waiting for development page compilation.
-When `mobile/dist/index.html` exists (created by root `npm run export:web`),
+When `mobile/dist/index.html` exists (created by root `npm run build`),
 the exported `/app/` messenger is also immediately available.
 The Next.js website initializes once, on its first request; concurrent
 website requests wait for that same preparation. Website failures are reported

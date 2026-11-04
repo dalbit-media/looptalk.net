@@ -52,18 +52,11 @@ test("successive local, CI and EAS builds advance the displayed number and deskt
   }
 });
 
-test("only explicit combined-release reuse avoids a second version increment", () => {
-  const f = fixture({ CI: "true", LOOPTALK_REUSE_BUILD_VERSION: "1" });
-  f.run();
-  assert.equal(f.commands.length, 0);
-  assert.equal(f.labels[0], "LoopTalk build v.00 (0.0.0)");
-});
-
 test("normal web build and direct mobile export each bump once, with no root-export double bump", () => {
   const main = require("../../package.json").scripts;
   const mobile = require("../package.json").scripts;
-  assert.equal(main.build, "npm run version:bump && node scripts/build-web.js");
-  assert.equal(main["export:web"], "npm run export:web --prefix mobile");
+  assert.equal(main.build, "npm run export:web --prefix mobile && next build --webpack");
+  for (const alias of ["export:web", "version:bump", "release:prepare"]) assert.equal(main[alias], undefined);
   assert.match(mobile["export:web"], /^node \.\.\/scripts\/bump-build\.js && expo export/);
   const dockerfile = fs.readFileSync(path.join(root, "Dockerfile"), "utf8");
   assert.match(dockerfile, /COPY scripts \.\/scripts/);
@@ -72,21 +65,11 @@ test("normal web build and direct mobile export each bump once, with no root-exp
   assert.doesNotMatch(dockerfile, /RUN npm run export:web/);
 });
 
-test("combined web build shares one increment across Expo and Next builds", () => {
-  const calls = [];
-  const requireMock = (name) => name === "node:path" ? path : { spawnSync: (_command, args, options) => {
-    calls.push({ args: Array.from(args), reuse: options.env.LOOPTALK_REUSE_BUILD_VERSION });
-    return { status: 0 };
-  } };
-  requireMock.resolve = () => "next-cli.js";
-  vm.runInNewContext(fs.readFileSync(path.join(root, "scripts", "build-web.js"), "utf8"), {
-    __dirname: path.join(root, "scripts"),
-    process: { execPath: "node", env: { npm_execpath: "npm-cli.js" }, exit: () => assert.fail("Unexpected failure") },
-    require: requireMock,
-  });
-  assert.deepEqual(calls, [
-    { args: ["npm-cli.js", "run", "export:web", "--prefix", "mobile"], reuse: "1" },
-    { args: ["next-cli.js", "build", "--webpack"], reuse: "1" },
-  ]);
-  assert.equal(require("../../package.json").scripts["release:prepare"], "npm run check && npm run build");
+test("root installation restores the mobile export toolchain and native config plugins", () => {
+  const scripts = require("../../package.json").scripts;
+  assert.match(scripts.postinstall, /npm ci --include=dev --prefix mobile/);
+  const mobile = require("../package.json");
+  assert.ok(mobile.dependencies["@config-plugins/react-native-webrtc"]);
+  assert.ok(mobile.dependencies["@sentry/react-native"]);
+  assert.ok(mobile.devDependencies["@babel/core"]);
 });

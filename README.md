@@ -13,6 +13,12 @@ The canonical website build is `npm run build`; `build:next`, server
 `migrate`, `seed`, and `dev:watch` aliases were removed. Use `db:push`, `db:seed`,
 and `dev -- --watch` in the server project instead.
 
+Root `npm install` / `npm ci` also restores the mobile dependencies (including
+build tools), because the web build exports the Expo messenger. For an existing
+installation reporting a missing Expo config plugin, run
+`npm ci --include=dev --prefix mobile`, then `npm run build`. Installing only
+root dependencies with `--ignore-scripts` does not install the mobile project.
+
 [한국어](#한국어) | [日本語](#日本語) | [English](#english)
 
 ## 한국어
@@ -234,7 +240,6 @@ npm start --prefix mobile
 
 ```sh
 npm run check
-npm run export:web
 npm run build
 ```
 
@@ -242,10 +247,10 @@ npm run build
 Prisma 스키마를 확인합니다. 클라이언트 검사는 Expo Doctor를 실행합니다.
 
 빌드 번호는 루트 `package.json` 버전입니다. `0.0.N`은 설정 화면의 정보 항목에
-`v.0N`으로 표시됩니다. `npm run export:web`, 데스크톱 `npm run dist*`,
+`v.0N`으로 표시됩니다. `npm run build`, 데스크톱 `npm run dist*`,
 모바일 `npm run build:ios` / `npm run build:android`를 실행할 때마다
 `npm version`으로 번호가 올라갑니다(데스크톱도 같은 번호). 변경 사항을 커밋하세요.
-CI, EAS, Docker, `release:prepare`는 커밋된 번호를 그대로 사용합니다.
+CI와 Docker에서도 빌드마다 번호가 증가합니다. 웹만 내보내려면 `npm run export:web --prefix mobile`을 사용하세요.
 스토어용 버전(`mobile/app.json`)은 별도로 관리합니다.
 
 ### 문서
@@ -367,7 +372,6 @@ Androidエミュレーターでは`http://10.0.2.2:3001`、iOSシミュレータ
 
 ```sh
 npm run check
-npm run export:web
 npm run build
 ```
 
@@ -376,10 +380,10 @@ npm run build
 Expo Doctorを実行します。
 
 ビルド番号はルート `package.json` のバージョンです。`0.0.N` は設定画面の「について」に
-`v.0N` と表示されます。`npm run export:web`、デスクトップの `npm run dist*`、
+`v.0N` と表示されます。`npm run build`、デスクトップの `npm run dist*`、
 モバイルの `npm run build:ios` / `npm run build:android` を実行するたびに
 `npm version` で番号が上がります（デスクトップも同じ番号）。変更はコミットしてください。
-CI、EAS、Docker、`release:prepare` はコミット済みの番号をそのまま使います。
+CIとDockerでもビルドごとに番号が増えます。Webのみの出力は `npm run export:web --prefix mobile` を使用します。
 ストア用のバージョン（`mobile/app.json`）は別に管理します。
 
 ### ドキュメント
@@ -557,7 +561,6 @@ Run the repository check before submitting changes:
 
 ```sh
 npm run check
-npm run export:web
 npm run build
 ```
 
@@ -565,22 +568,21 @@ The server check parses all server JavaScript, verifies shared Prisma client
 ownership, runs unit tests, and validates the Prisma schema. The client check
 runs Expo Doctor.
 
-For a release build, run `npm run release:prepare`. The server synchronizes
+For a release, run the two commands above. The server synchronizes
 the Prisma schema to SQLite when it starts; back up the database and uploaded
 files before deploying a schema change.
 
 Build numbers come from the root `package.json` version: `0.0.N` is shown as
 `v.01`, `v.02`, `v.03`, ... under Settings > About. `npm run build`,
-`npm run export:web` (including direct `--prefix mobile` exports), the desktop
+`npm run export:web --prefix mobile`, the desktop
 `npm run dist*` scripts and the mobile `npm run build:ios` /
 `npm run build:android` scripts each bump it with `npm version` (desktop
 follows the same number). CI no longer skips increments. Persist/commit the
 updated package manifests and lockfiles between releases so clean checkouts do
 not restart from an old number. `npm run build` rebuilds both the exported
 messenger and Next.js website with one increment, so servers preferring the
-exported messenger cannot show an older build label. Docker and
-`release:prepare` use this same build and explicitly share its number via
-`LOOPTALK_REUSE_BUILD_VERSION=1`; leave this unset for independent builds. The store
+exported messenger cannot show an older build label. Docker uses the same
+command. There is no separate release wrapper or version-reuse flag. The store
 marketing version in `mobile/app.json` is managed separately.
 
 ### Documentation
